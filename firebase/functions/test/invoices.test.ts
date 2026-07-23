@@ -1,0 +1,173 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { convertQty } from "../src/units";
+import type { IngredientDoc, InvoiceDoc } from "../src/models";
+import {
+  clearFirestore,
+  clearStorage,
+  col,
+  get,
+  makeOwner,
+  post,
+  put,
+  seedIngredient,
+  seedInvoice,
+  uniqueId,
+  upload,
+  waitForStatus,
+} from "./helpers";
+
+beforeEach(async () => {
+  await clearFirestore();
+  await clearStorage();
+});
+
+// A minimal, valid-enough JPEG-ish buffer — the mock OCR (no
+// NVIDIA_API_KEY in the emulator) never actually looks at the bytes, so
+// content doesn't matter, only that the upload path (raw body, Storage
+// write, Storage-trigger firing) works end to end.
+const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+
+describe("invoice lifecycle", () => {
+  it("POST /invoices stores the receipt and the OCR trigger moves it to needs_review", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+
+    const created = await upload<{ id: string } & InvoiceDoc>("/invoices", owner.token, FAKE_JPEG);
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("processing");
+
+    const settled = await waitForStatus(owner.token, created.body.id, "needs_review");
+    expect(settled.lineItems.length).toBeGreaterThan(0);
+    expect(Array.isArray(settled.warnings)).toBe(true);
+    expect(settled.total).toBeGreaterThan(0);
+  });
+
+  it("approve rolls prices, adds pantry qty, and clears warnings", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const ingredient = await seedIngredient(owner.rid, {
+      name: "Roma Tomatoes",
+      unit: "kg",
+      theoreticalQty: 5,
+      lastUnitPrice: 3.5,
+      prevUnitPrice: null,
+    });
+    const invoice = await seedInvoice(owner.rid, { warnings: ["line_math"] });
+
+    const { status, body } = await put<{ id: string } & InvoiceDoc>(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Valley Produce Co.",
+      invoiceDate: "2026-07-01",
+      lineItems: [
+        { name: "Roma Tomatoes", qty: 10, unit: "kg", unitPrice: 4, total: 40 },
+      ],
+    });
+
+    expect(status).toBe(200);
+    expect(body.status).toBe("approved");
+    expect(body.warnings).toEqual([]);
+    expect(body.approvedAt).not.toBeNull();
+    expect(body.lineItems[0].ingredientId).toBe(ingredient.id);
+
+    const fresh = (await col(owner.rid, "ingredients").doc(ingredient.id).get()).data() as IngredientDoc;
+    expect(fresh.theoreticalQty).toBeCloseTo(15, 5); // 5 + 10, same unit — no conversion
+    expect(fresh.prevUnitPrice).toBe(3.5); // rolled from the old lastUnitPrice
+    expect(fresh.lastUnitPrice).toBe(4);
+  });
+
+  it("regression: approving a lb line onto kg-stocked ingredient converts qty and re-bases price per kg", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const ingredient = await seedIngredient(owner.rid, {
+      name: "Chicken Breast",
+      unit: "kg",
+      theoreticalQty: 0,
+      lastUnitPrice: null,
+      prevUnitPrice: null,
+    });
+    const invoice = await seedInvoice(owner.rid);
+
+    const { status, body } = await put<{ id: string } & InvoiceDoc>(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Metro Foods",
+      invoiceDate: "2026-07-01",
+      lineItems: [
+        { name: "Chicken Breast", qty: 25, unit: "lb", unitPrice: 2, total: 50 },
+      ],
+    });
+    expect(status).toBe(200);
+    expect(body.status).toBe("approved");
+
+    const ratio = convertQty(1, "lb", "kg")!; // kg per lb
+    const expectedQtyAdd = 25 * ratio;
+    const expectedPricePerKg = +(2 / ratio).toFixed(4);
+
+    const fresh = (await col(owner.rid, "ingredients").doc(ingredient.id).get()).data() as IngredientDoc;
+    expect(fresh.theoreticalQty).toBeCloseTo(expectedQtyAdd, 5); // ~11.34 kg, not 25
+    expect(fresh.lastUnitPrice).toBeCloseTo(expectedPricePerKg, 4); // ~$4.41/kg, not $2/kg
+  });
+
+  it("approve-as-expense archives the invoice and creates a tagged expense, excluded from food math", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const invoice = await seedInvoice(owner.rid, { total: 123.45, vendorName: "Acme Hosting" });
+
+    const { status, body } = await put<{ id: string } & InvoiceDoc>(`/invoices/${invoice.id}/expense`, owner.token, {
+      tag: "Marketing",
+    });
+    expect(status).toBe(200);
+    expect(body.status).toBe("approved");
+    expect(body.expenseTag).toBe("Marketing");
+
+    const expensesSnap = await col(owner.rid, "expenses").where("tag", "==", "Marketing").get();
+    expect(expensesSnap.size).toBe(1);
+    expect(expensesSnap.docs[0].data().amount).toBe(123.45);
+    expect(expensesSnap.docs[0].data().vendorName).toBe("Acme Hosting");
+  });
+
+  it("delivery notes approve with no price/pantry effect, then reconcile manually", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const ingredient = await seedIngredient(owner.rid, {
+      name: "Heavy Cream",
+      unit: "qt",
+      theoreticalQty: 5,
+      lastUnitPrice: 4.6,
+    });
+    const note = await seedInvoice(owner.rid, { docType: "delivery_note" });
+
+    const approve = await put<{ id: string } & InvoiceDoc>(`/invoices/${note.id}/approve`, owner.token, {
+      vendorName: "Bella Dairy",
+      invoiceDate: "2026-07-01",
+      docType: "delivery_note",
+      lineItems: [{ name: "Heavy Cream", qty: 5, unit: "qt", unitPrice: 4.6, total: 23 }],
+    });
+    expect(approve.status).toBe(200);
+    expect(approve.body.docType).toBe("delivery_note");
+
+    const unaffected = (await col(owner.rid, "ingredients").doc(ingredient.id).get()).data() as IngredientDoc;
+    expect(unaffected.theoreticalQty).toBe(5); // unchanged — delivery notes carry no stock/price effect
+    expect(unaffected.lastUnitPrice).toBe(4.6);
+
+    const reconciled = await put<{ id: string } & InvoiceDoc>(`/invoices/${note.id}/reconcile`, owner.token, {
+      invoiceId: "some-matching-invoice-id",
+      handled: true,
+    });
+    expect(reconciled.status).toBe(200);
+    expect((reconciled.body as any).reconInvoiceId).toBe("some-matching-invoice-id");
+    expect((reconciled.body as any).reconHandled).toBe(true);
+  });
+
+  it("reprocess recovers a failed invoice once a real image exists at its imagePath", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+
+    // Upload for real so a receipt actually exists in Storage, then force
+    // the doc back to "failed" (simulating a prior OCR failure) without
+    // touching the already-uploaded image.
+    const created = await upload<{ id: string } & InvoiceDoc>("/invoices", owner.token, FAKE_JPEG);
+    expect(created.status).toBe(201);
+    await waitForStatus(owner.token, created.body.id, "needs_review");
+    await col(owner.rid, "invoices").doc(created.body.id).update({ status: "failed", error: "processing" });
+
+    const { status, body } = await post<{ id: string } & InvoiceDoc>(
+      `/invoices/${created.body.id}/reprocess`,
+      owner.token,
+    );
+    expect(status).toBe(200);
+    expect(body.status).toBe("needs_review"); // mock OCR always succeeds — recovered
+    expect(body.error).toBeNull();
+  });
+});

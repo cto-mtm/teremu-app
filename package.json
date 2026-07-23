@@ -1,0 +1,16 @@
+{
+  "name": "teremu",
+  "private": true,
+  "description": "Teremu monorepo — shared schemas, Vue app, Cloud Functions API",
+  "workspaces": [
+    "shared",
+    "app",
+    "firebase/functions"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace @teremu/shared",
+    "typecheck": "npm run build:shared && npm run typecheck --workspace @teremu/shared && npm run typecheck --workspace teremu-functions && npm run typecheck --workspace teremu-app",
+    "test": "npm run build:shared && npm --prefix firebase run test",
+    "deploy": "node scripts/deploy.mjs"
+  }
+}

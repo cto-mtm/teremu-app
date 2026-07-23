@@ -1,0 +1,46 @@
+const es = {
+  title: 'Escanear facturas',
+  captured: '{n} capturadas',
+  uploading: 'subiendo…',
+  keepGoing: 'Capturada — sigue',
+  done: 'Listo',
+  cameraUnavailable: 'Cámara no disponible. Usa tu galería de fotos.',
+  choosePhotos: 'Elegir fotos',
+  close: 'Cerrar escáner',
+  capture: 'Capturar factura',
+  addFromLibrary: 'Añadir desde galería',
+  uploadFailed: 'Falló la subida — revisa tu conexión e inténtalo de nuevo.',
+  limitReached: 'Límite de escaneos del mes alcanzado — mejora a Pro en Ajustes.',
+  hint: 'Encuadra el recibo entre las esquinas y dispara. Pasa al siguiente — la IA lo digitaliza en segundo plano.',
+  review: 'Revisar ({n})',
+  lastCaptureAlt: 'Última captura',
+  qualityBlur: 'Se ve borrosa — la IA podría leerla mal.',
+  qualityDark: 'Se ve muy oscura — busca más luz.',
+  useAnyway: 'Usar igual',
+  retake: 'Repetir',
+}
+
+// Typed against es: a missing or extra key here is a compile error.
+const en: typeof es = {
+  title: 'Scan invoices',
+  captured: '{n} captured',
+  uploading: 'uploading…',
+  keepGoing: 'Captured — keep going',
+  done: 'Done',
+  cameraUnavailable: 'Camera unavailable. Use your photo library instead.',
+  choosePhotos: 'Choose photos',
+  close: 'Close scanner',
+  capture: 'Capture invoice',
+  addFromLibrary: 'Add from photo library',
+  uploadFailed: 'Upload failed — check your connection and try again.',
+  limitReached: 'Monthly scan limit reached — upgrade to Pro in Settings.',
+  hint: 'Line the receipt up in the corners and shoot. Move on to the next — the AI digitizes it in the background.',
+  review: 'Review ({n})',
+  lastCaptureAlt: 'Last capture',
+  qualityBlur: 'Looks blurry — the AI may misread it.',
+  qualityDark: 'Looks too dark — find more light.',
+  useAnyway: 'Use anyway',
+  retake: 'Retake',
+}
+
+export default { es, en }

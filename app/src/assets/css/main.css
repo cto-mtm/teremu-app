@@ -1,0 +1,132 @@
+/* Webfonts — swap families HERE and in the @theme font tokens below,
+   nothing else to touch. (Gochi Hand = display; Yeseva One = body/UI.) */
+@import url("https://fonts.googleapis.com/css2?family=Yeseva+One&family=Gochi+Hand&display=swap");
+
+@import "tailwindcss";
+@import "./transitions.css";
+
+/* ── "Crisp Culinary" design tokens ─────────────────────────────
+   Bright, minimalist, extreme legibility. The palette is built
+   around EMBER #ff751f (the brand color): brand carries all
+   interactive identity (buttons, active tab, focus, highlights);
+   the neutrals are warmed to sit under it. Herb and coral are
+   SEMANTIC only — herb green = profit / stable prices, coral
+   crimson = margin drops / vendor price hikes (crimson-leaning so
+   an alert never reads as the brand orange). */
+@theme {
+  /* Ember — brand (#ff751f) with tints and shades */
+  --color-ember: #ff751f;
+  --color-ember-50: #fff4ec;
+  --color-ember-100: #ffe4cf;
+  --color-ember-200: #ffc99f;
+  --color-ember-600: #e35c05;
+  --color-ember-700: #bc4a02;
+  /* Warm neutrals */
+  --color-ink: #1c1410;
+  --color-smoke: #7a6f66;
+  --color-cream: #faf5f0;
+  /* Semantic: positive (profit, price drops) */
+  --color-herb: #2e9e5b;
+  --color-herb-50: #ecf8f0;
+  --color-herb-100: #d5f0df;
+  --color-herb-600: #25824a;
+  --color-herb-700: #1e6b3d;
+  /* Semantic: negative (margin slips, price hikes) */
+  --color-coral: #dc3448;
+  --color-coral-50: #fdeef0;
+  --color-coral-100: #fadbe0;
+  --color-coral-600: #b8243a;
+  /* Body + accents: Yeseva One (default everywhere). Display: Gochi
+     Hand — h1 only, via the base-layer rule below (also available as
+     the `font-display` utility). Loaded in index.html. */
+  --font-sans: "Yeseva One", serif;
+  --font-display: "Gochi Hand", cursive;
+  /* Layered: a tight contact shadow + a soft ambient drop */
+  --shadow-card: 0 1px 2px rgba(28, 20, 16, 0.05), 0 10px 30px -14px rgba(28, 20, 16, 0.14);
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-cream font-sans text-ink antialiased;
+  /* Ambient warmth: two soft brand-tinted glows over the cream canvas.
+     Fixed so cards appear to float over it while scrolling. */
+  background-image:
+    radial-gradient(1100px 520px at 85% -12%, rgba(255, 117, 31, 0.1), transparent 60%),
+    radial-gradient(900px 520px at -12% 28%, rgba(46, 158, 91, 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Display font on page titles only; everything else inherits Bodoni. */
+h1 {
+  font-family: var(--font-display);
+}
+
+/* ── Safe areas (iOS notch / Android gesture bar) ───────────────
+   index.html sets viewport-fit=cover; these utilities apply the
+   insets so the same markup is correct in browser and native shells. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ── Reusable component classes ─────────────────────────────────── */
+@layer components {
+  .card {
+    @apply rounded-2xl border border-white/70 p-4 shadow-card;
+    /* Barely-there warm gradient so surfaces don't read as flat white */
+    background-image: linear-gradient(165deg, #ffffff 0%, #fffaf4 100%);
+  }
+  /* Frosted chrome (sidebar, floating buttons, sheets) */
+  .glass {
+    @apply border border-white/60 bg-white/75 backdrop-blur-xl;
+  }
+  /* Brand-gradient text (wordmark, hero numbers if you like) */
+  .text-gradient {
+    background-image: linear-gradient(120deg, #ff8a3d, #ff751f 45%, #e35c05);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  /* Tailwind v4: @apply can't reference custom classes (like `.btn`),
+     only real utilities — so the shared button base is a selector list
+     and each variant adds only its colors. */
+  .btn,
+  .btn-primary,
+  .btn-herb,
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply text-white;
+    background-image: linear-gradient(135deg, #ff8a3d, #ff751f 55%, #f06a10);
+    box-shadow: 0 4px 14px -4px rgba(255, 117, 31, 0.45);
+  }
+  .btn-primary:hover {
+    background-image: linear-gradient(135deg, #ff7f2b, #f06a10 55%, #e35c05);
+  }
+  .btn-herb {
+    @apply text-white;
+    background-image: linear-gradient(135deg, #3cb26c, #2e9e5b 55%, #27874e);
+    box-shadow: 0 4px 14px -4px rgba(46, 158, 91, 0.4);
+  }
+  .btn-herb:hover {
+    background-image: linear-gradient(135deg, #34a862, #27874e 55%, #25824a);
+  }
+  .btn-ghost {
+    @apply bg-gray-100 text-ink hover:bg-gray-200;
+  }
+  .input {
+    @apply w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-ember focus:ring-2 focus:ring-ember/40 focus:outline-none;
+  }
+  .chip-up {
+    @apply inline-flex items-center gap-1 rounded-full bg-coral-50 px-2 py-0.5 text-xs font-semibold text-coral-600;
+  }
+  .chip-down {
+    @apply inline-flex items-center gap-1 rounded-full bg-herb-50 px-2 py-0.5 text-xs font-semibold text-herb-700;
+  }
+}

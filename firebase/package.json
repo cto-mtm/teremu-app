@@ -1,0 +1,12 @@
+{
+  "name": "teremu-firebase",
+  "private": true,
+  "scripts": {
+    "emulators": "npm --prefix functions run build && firebase emulators:start --only functions,firestore,storage,auth --project demo-app",
+    "emulators:all": "npm --prefix functions run build && firebase emulators:start --project demo-app",
+    "emulators:watch": "firebase emulators:start --only functions,firestore,storage,auth --project demo-app",
+    "seed": "npm --prefix functions run seed",
+    "migrate": "npm --prefix functions run migrate",
+    "test": "npm --prefix functions run build && firebase emulators:exec --only functions,firestore,storage,auth --project demo-app \"npm --prefix functions run test\""
+  }
+}

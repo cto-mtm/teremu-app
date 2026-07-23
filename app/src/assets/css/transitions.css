@@ -1,0 +1,58 @@
+/* ════════════════════════════════════════════════════════════
+   VIEW TRANSITION RECIPES
+   Rules of the house:
+   - Animate ONLY transform and opacity (compositor-friendly).
+   - Durations 200–350ms. Easing: cubic-bezier(0.4, 0, 0.2, 1).
+   - Every recipe must look acceptable if it simply cross-fades
+     (that's the automatic fallback).
+   - view-transition-names must be unique per page — derive them
+     from item ids, never hardcode inside a v-for.
+   ════════════════════════════════════════════════════════════ */
+
+/* Recipe 1 — default page cross-fade (applies to everything) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Recipe 2 — hero elements: the morph is automatic; we only tune
+   timing. Applies to every named group (e.g. invoice-<id> and
+   invoice-title-<id> on the Triage card → detail navigation). */
+::view-transition-group(*) {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Recipe 3 — reduced motion: kill everything. The router wrapper
+   already skips the transition; this is defense in depth. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Recipe 4 — within-page list enter/leave/reorder for Vue's
+   <TransitionGroup name="list">. FLIP moves come from .list-move.
+   Used by the Triage inbox (approved invoices animate out). */
+.list-enter-active,
+.list-leave-active {
+  transition:
+    opacity 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.list-leave-active {
+  /* keep layout stable while the row animates out */
+  position: absolute;
+  width: 100%;
+}
+.list-move {
+  transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
