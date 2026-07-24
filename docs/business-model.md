@@ -34,6 +34,7 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | Theoretical pantry + true-up | ✓ | ✓ | ✓ |
 | Grocery list generator | ✓ | ✓ | ✓ |
 | Price-hike & margin alerts (in-app) | ✓ | ✓ | ✓ |
+| Kitchen assistant (AI Q&A over your data) | — | ✓ | ✓ |
 | Email alerts & weekly digest | — | ✓ | ✓ |
 | Vendor directory & spend analytics | Basic (top 3 vendors) | Full | Full, per location |
 | Expense tags (non-food) | 3 tags | Unlimited | Unlimited |
@@ -69,13 +70,13 @@ So on NVIDIA-era assumptions a heavy Pro costs **≈ $11 all-in** ($10 inference
 
 | Archetype (monthly) | Scans | Assistant Qs | Inference | All-in |
 |---|---|---|---|---|
-| Dormant free (likely 50–60% of free base) | ~3 | ~2 | <$0.01 | ~$0.05 |
-| Active free at the 25-scan cap | 25 | ~20 | ~$0.12 | ~$0.25 |
+| Dormant free (likely 50–60% of free base) | ~3 | — (Pro-only) | <$0.01 | ~$0.05 |
+| Active free at the 25-scan cap | 25 | — (Pro-only) | ~$0.06 | ~$0.20 |
 | Typical Pro | ~180 | ~50 | ~$0.60 | ~$1.50 |
 | Heavy Pro | 500 | ~100 | ~$2 | ~$3 |
 | Tail Pro (every call worst-case, 300 Qs) | 500 | 300 | ~$7.50 | ~$10 |
 
-Three readings. First, the blended free-user cost at a realistic dormant/active mix is ~$0.13 — the $0.20 used in §9 is already conservative. Second, the **tail Pro (~$10) is what the NVIDIA-era model assumed an ordinary heavy Pro cost** — the pathological case still clears 3× margin against $29. Third, the assistant, not scanning, is the widest variance driver (its snapshot grows ~20× with restaurant size); its query caps are what keep the tail closed, so treat those limits as pricing infrastructure, not tuning knobs. These archetype shares (how many dormant vs active, real scans/questions per tier) are exactly what the beta instrumentation in §7 must measure — the token math is solid, the *mix* is still assumption.
+Three readings. First, the assistant is Pro-only in the code (`api.ts` paywalls it, with a 10s per-member cooldown as a burst guard), so a free user's inference is scans alone — the blended free-user cost at a realistic dormant/active mix is ~$0.10, and the $0.20 used in §9 is comfortably conservative. Second, the **tail Pro (~$10) is what the NVIDIA-era model assumed an ordinary heavy Pro cost** — the pathological case still clears 3× margin against $29. Third, the assistant, not scanning, is the widest variance driver (its snapshot grows ~20× with restaurant size); its query caps are what keep the tail closed, so treat those limits as pricing infrastructure, not tuning knobs. These archetype shares (how many dormant vs active, real scans/questions per tier) are exactly what the beta instrumentation in §7 must measure — the token math is solid, the *mix* is still assumption.
 
 ### From scenarios to measured distributions
 
@@ -91,7 +92,7 @@ Low/avg/worst is the right *planning prior*, but it is not how AI COGS is modele
 4. **Inference efficiency ratio** = inference COGS ÷ MRR. External benchmarks: inference averages ~23% of revenue at scaling AI-B2B companies; public SaaS with AI features disclose 4–9%; gross-margin profiles run ~50–60% (AI-native), 60–79% (AI-enabled), 80%+ (AI-augmented). At Gemini prices Teremu's heavy Pro is ~7% and blended ~2–4% — an **AI-augmented margin profile (~90% gross margin on Pro)** despite AI being the core loop. That structural surplus *is* the price wedge against Haddock (§10): we can charge 3–6× less per document and still carry SaaS-class margins.
 5. **Free-tier COGS as % of total COGS** — the number that says whether the 43:1/128:1 free-rider math in §9 is holding in practice.
 
-Cadence: weekly during beta (the mix is unknown), monthly once distributions stabilize; any structural break (model price change, new feature, cap change) resets the clock. The earlier $6/$12 serving-cost assumptions in §9 hold — they were conservative. Two structural notes: Firebase's free tier absorbs most of this until roughly the first dozen active restaurants (early-stage burn is effectively inference only), and the cost worth *watching* is Firestore reads — the two read-hungry features (assistant context builds, triage polling) scale with engagement, and a rollup/caching pass buys headroom if reads ever grow past ~30% of COGS. A free user at the 25-scan cap runs ~$0.60–0.70 all-in, which is the whole reason the cap exists: free-tier COGS stays a rounding error even at 20:1 free-to-paid ratios.
+Cadence: weekly during beta (the mix is unknown), monthly once distributions stabilize; any structural break (model price change, new feature, cap change) resets the clock. Two structural notes: Firebase's free tier absorbs most of the GCP bill until roughly the first dozen active restaurants (early-stage burn is effectively inference only), and at Gemini prices **Firestore reads are the dominant COGS line** — the two read-hungry features (assistant context builds, triage polling) scale with engagement, so the rollup/caching pass is the first optimization worth scheduling once real traffic exists, and the read volume deserves the same measurement discipline as tokens (the ~870K-reads estimate above rests on assumed client refresh behavior, not telemetry).
 
 Payback target: CAC under $60 (2-month payback). The realistic channels at this stage are all low-CAC: word of mouth between chefs, restaurant-supplier reps and accountants as referrers (they see the food-cost pain first), and local restaurant-owner groups. Paid acquisition should wait until organic conversion data exists.
 
@@ -140,7 +141,7 @@ Assumptions per month: Pro at $29 minus ~$1.34 payment processing; serving a Pro
 | Conservative | **17 : 1** | **5.4%** |
 | Gemini | **128 : 1** | **0.8%** |
 
-Anything better than those conversion floors and every additional user (free or paid) adds margin. The industry-normal 4–8% conversion clears the base case comfortably and the conservative case at the top of the range — the model works, but it is *not* immune to a generous free tier plus expensive inference. The scan cap is what keeps the ceiling high; raising the free cap from 25 to 50 scans halves it.
+Anything better than those conversion floors and every additional user (free or paid) adds margin. The industry-normal 4–8% conversion clears the base case comfortably and the conservative case at the top of the range — the model works, but it is *not* immune to a generous free tier plus expensive inference. In the NVIDIA-priced scenarios the scan cap is what keeps the ceiling high — raising free from 25 to 50 scans roughly halves it; at Gemini prices the free user's cost is GCP-dominated and the cap's role shifts to pure conversion pressure (see the Gemini paragraph below).
 
 **Covering fixed costs** (net contribution per Pro after carrying its share of free users):
 

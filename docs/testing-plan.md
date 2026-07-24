@@ -94,12 +94,12 @@ Ports Dirumed's helpers, adapted to HTTP + Teremu's Firestore-based membership (
 **8. Migration (multi-location)**
 - `migrate-cli` backfills `users/{uid}/memberships/{rid}` + restaurant `name` idempotently — running twice is a no-op.
 
-## Scripts & CI
+## Scripts & Execution
 
 - `firebase/functions/package.json`: `"test": "vitest run"`, `"test:watch": "vitest"`.
 - `firebase/package.json`: `"test": "npm --prefix functions run build && firebase emulators:exec --project demo-app 'npm --prefix functions run test'"` (build first so `@teremu/shared` is bundled and the served function is current).
 - Root: `"test": "npm run build:shared && npm --prefix firebase run test"`.
-- **CI** (one job, no secrets): `npm install` → `npm run build:shared` → `cd firebase && firebase emulators:exec --project demo-app "npm --prefix functions run test"`. Deterministic (mock OCR, `demo-app`, emulator Stripe-less); emulators boot in seconds.
+- **Local Emulator Test Command**: `npm test` runs the integration tests against the Firebase emulators locally.
 
 ## File layout
 
@@ -151,6 +151,6 @@ Work in phases and **do not proceed past a gate until it's green.** These are th
 
 **Phase 3 — Expand spec by spec.**
 - Add the remaining specs from the coverage matrix one file at a time (`invoices`, `pantry`, `paywalls`, `menu`, `billing`), running the full command green after each. Land the invoice-lifecycle unit-conversion regression and the concurrent scan-cap spec early — they guard the two scariest behaviors.
-- Wire the `test` scripts (functions / firebase / root) and the CI job as described.
+- Wire the `test` scripts (functions / firebase / root) as described.
 
 **Definition of done.** Every spec passes under `firebase emulators:exec --project demo-app` with no secrets set (mock OCR, emulator Stripe-less). Explicitly **not** covered and validated manually: the real `firebase deploy`, real NVIDIA OCR, and real Stripe network. Do **not** run `firebase deploy` or `vite build` as part of this work.
