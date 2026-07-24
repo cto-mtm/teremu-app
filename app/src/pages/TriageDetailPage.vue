@@ -281,7 +281,7 @@ async function approve(): Promise<void> {
             </label>
           </div>
           <!-- Factura vs albarán — OCR's guess, correctable here -->
-          <div v-if="canEdit" class="flex items-center gap-2">
+          <div v-if="canEdit" class="space-y-1">
             <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-semibold">
               <button
                 v-for="dt in ['invoice', 'delivery_note'] as const"
@@ -293,9 +293,9 @@ async function approve(): Promise<void> {
                 {{ t('triage.detail.docType.' + dt) }}
               </button>
             </div>
-            <span v-if="docType === 'delivery_note'" class="text-[11px] text-smoke">
+            <p v-if="docType === 'delivery_note'" class="text-[11px] text-smoke">
               {{ t('triage.detail.docTypeHint') }}
-            </span>
+            </p>
           </div>
         </div>
 
