@@ -15,17 +15,17 @@ Cloud Function `api` (hand-rolled router, zod validation)
         ▼
 Firestore (invoices, ingredients, menuItems, revenue) + Storage (receipt JPEGs)
         ▲
-onReceiptUploaded (Storage trigger) → NVIDIA VLM OCR → line items onto the invoice
+onReceiptUploaded (Storage trigger) → VLM OCR (llm.ts, NVIDIA by default — docs/llm.md) → line items onto the invoice
 ```
 
 ## Local development
 
-The entire stack runs offline in the **Firebase Emulator Suite** under the `demo-app` project id — the `demo-` prefix makes the emulators never touch real Firebase resources and require no `firebase login`. The app targets the emulated function via `VITE_API_URL`. Without an `NVIDIA_API_KEY` secret, the OCR module returns a deterministic mock extraction, so scan → triage → approve → margins works end-to-end on a fresh clone.
+The entire stack runs offline in the **Firebase Emulator Suite** under the `demo-app` project id — the `demo-` prefix makes the emulators never touch real Firebase resources and require no `firebase login`. The app targets the emulated function via `VITE_API_URL`. Without an LLM API key (see `docs/llm.md`), the OCR module returns a deterministic mock extraction, so scan → triage → approve → margins works end-to-end on a fresh clone.
 
 ## Teremu domain flow
 
 1. **Scan**: an on-device quality gate (brightness + variance-of-Laplacian blur check, ~5ms) can hold a bad capture and ask retake/use-anyway. Good captures POST to `POST /invoices`; the function stores the image and creates an invoice with `status: "processing"` — the camera never blocks.
-2. **OCR (staged)**: the Storage trigger sends the image to an NVIDIA vision model, which first *classifies* (`kind: receipt | other` + confidence — non-documents fail distinctly as `not_a_document`) then *extracts* line items. A deterministic *arithmetic validation* stage cross-checks qty × price against line totals and the line sum against the printed total; discrepancies become `warnings` on the invoice and per-line flags rather than failures. Status becomes `needs_review`.
+2. **OCR (staged)**: the Storage trigger sends the image to a vision model (provider-agnostic — `docs/llm.md`), which first *classifies* (`kind: receipt | other` + confidence — non-documents fail distinctly as `not_a_document`) then *extracts* line items. A deterministic *arithmetic validation* stage cross-checks qty × price against line totals and the line sum against the printed total; discrepancies become `warnings` on the invoice and per-line flags rather than failures. Status becomes `needs_review`.
 3. **Triage**: the app lists `needs_review` invoices; approving one (`PUT /invoices/:id/approve`) rolls each ingredient's price (`prev ← last, last ← new`) and adds purchased qty to the Theoretical Pantry — one atomic batch.
 4. **Margins**: menu items store recipes (ingredient + qty per plate); plate cost is computed from the rolling `lastUnitPrice`, client-side, live.
 5. **Pantry**: theoretical qty = purchases − sales. `POST /revenue` (with optional dishes-sold counts) depletes it via recipes; `PUT /ingredients/:id/count` overwrites with a physical count (monthly true-up).

@@ -9,7 +9,7 @@ npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebas
 - `shared/` — `@teremu/shared`: schema **vocabulary** (units, categories, doc type, permissions) imported by both the app and the API. Build with `npm run build --workspace @teremu/shared` (must run before typechecking the others).
 - `app/` — Vue 3 + Vite web app, wrapped by Capacitor for iOS/Android
 - `firebase/` — Firebase Hosting config + Cloud Functions API (invoice OCR, pantry, margins) + emulator scripts
-- `docs/` — Internal documentation (read `docs/animations.md` before touching any animation, `docs/i18n.md` before touching any user-facing string)
+- `docs/` — Internal documentation (read `docs/animations.md` before touching any animation, `docs/i18n.md` before touching any user-facing string, `docs/llm.md` before touching any AI call — all LLM traffic goes through `firebase/functions/src/llm.ts`; the provider is env config, never hardcoded in callers)
 
 ## Schemas (shared vs mirrored)
 

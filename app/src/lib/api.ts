@@ -29,11 +29,9 @@ const EMULATOR_URL = 'http://127.0.0.1:5001/demo-app/us-central1/api'
 
 const BASE_URL =
   import.meta.env.VITE_API_URL ??
-  // Forgot `cp .env.example .env`? Dev still points at the emulator;
-  // prod builds fall back to the deployed function.
   (import.meta.env.DEV
     ? EMULATOR_URL
-    : 'https://us-central1-REPLACE_ME.cloudfunctions.net/api')
+    : 'https://us-central1-teremu-app.cloudfunctions.net/api')
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 

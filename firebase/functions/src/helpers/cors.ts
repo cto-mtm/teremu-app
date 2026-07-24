@@ -1,12 +1,11 @@
 import type { Request } from "firebase-functions/v2/https";
 import type { Response } from "express";
 
-// REPLACE_ME: swap example.com for your production domain(s).
 // The LAST TWO entries are what the iOS/Android Capacitor shells send as
 // Origin — do NOT delete them or the native apps lose API access.
 const ALLOWED_ORIGINS = [
-  "https://example.com",
-  "https://www.example.com",
+  "https://app.teremu.com",
+  "https://www.teremu.com",
   "http://localhost:5173",
   "http://127.0.0.1:5173", // Vite is reachable under both hostnames
   "capacitor://localhost",

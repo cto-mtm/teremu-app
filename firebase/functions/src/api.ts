@@ -54,49 +54,11 @@ import {
 } from "./pipeline.js";
 import { inviteEmail, sendMail } from "./mail.js";
 
-// NVIDIA OCR key (see ocr.ts). In the emulator, put it in
+// LLM provider key (see llm.ts — the secret keeps its historical name
+// but holds whichever provider's key). In the emulator, put it in
 // functions/.secret.local or export it in your shell — or set nothing
 // and OCR runs in mock mode, which is the designed offline behavior.
 const NVIDIA_API_KEY = defineSecret("NVIDIA_API_KEY");
-
-const ROUTES = [
-  "GET /health (public)",
-  "GET /me",
-  "GET /invoices?days=180 [triage|finance|vendors read]",
-  "POST /invoices (raw image/jpeg body) [scan]",
-  "GET /invoices/:id [triage read]",
-  "GET /invoices/:id/image [triage read]",
-  "PUT /invoices/:id/approve [triage edit]",
-  "PUT /invoices/:id/expense [triage edit]",
-  "PUT /invoices/:id/reconcile [triage edit]",
-  "POST /invoices/:id/reprocess [triage edit]",
-  "GET /ingredients [pantry|menu read]",
-  "POST /ingredients [pantry|menu edit]",
-  "PUT /ingredients/:id [pantry edit]",
-  "PUT /ingredients/:id/count [pantry edit]",
-  "GET /menu-items [menu|finance|pantry read]",
-  "POST /menu-items [menu edit]",
-  "PUT /menu-items/:id [menu edit]",
-  "POST /menu/scan (raw image/jpeg body) [menu edit] (quota-free)",
-  "POST /menu/draft-recipes [menu edit] (quota-free)",
-  "GET /revenue?days=365 [finance read]",
-  "POST|PUT|DELETE /revenue(/:id) [finance edit]",
-  "GET /expenses?days=365 [finance|vendors read]",
-  "POST|PUT|DELETE /expenses(/:id) [finance edit]",
-  "GET|POST /members, PUT|DELETE /members/:uid [owner]",
-  "DELETE /members/me [non-owner: leave the active location]",
-  "DELETE /invites/:emailKey [owner]",
-  "POST /restaurants {name} [any member: create a new location]",
-  "PUT /restaurants/:rid {name} [owner, :rid must be the active location]",
-  "DELETE /restaurants/:rid [owner, :rid must be the active location]",
-  "POST /billing/checkout {interval} [owner] (Stripe Checkout)",
-  "POST /billing/portal [owner] (Stripe customer portal)",
-  "PUT /billing/plan [owner, emulator only]",
-  "GET /vendor-contacts [vendors|pantry read]",
-  "PUT /vendor-contacts/:key [pantry edit]",
-  "POST /orders [pantry edit]",
-  "POST /assistant [any member]",
-];
 
 // Windowed list queries (Firestore best practice: bound reads by a time
 // window + generous limit instead of unbounded scans; long-range
@@ -545,11 +507,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "POST" && seg.length === 1) {
       const body = inviteSchema.parse(req.body);
       // Seat gate: members + pending invites count against the plan.
-      const [membersCount, invitesCount] = await Promise.all([
-        col("members").count().get(),
-        db.collection("invites").where("restaurantId", "==", rid).count().get(),
+      const [membersSnap, invitesSnap] = await Promise.all([
+        col("members").get(),
+        db.collection("invites").where("restaurantId", "==", rid).get(),
       ]);
-      if (membersCount.data().count + invitesCount.data().count >= planInfo.limits.members) {
+      if (membersSnap.size + invitesSnap.size >= planInfo.limits.members) {
         return paywall("member_limit");
       }
       // Deterministic id per (email, location) — re-inviting the same
@@ -761,7 +723,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     }
   }
 
-  return json(res, 404, { error: `no route for ${m} ${req.path}`, routes: ROUTES });
+  return json(res, 404, { error: `no route for ${m} ${req.path}` });
 }
 
 export const api = onRequest(

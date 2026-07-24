@@ -1,5 +1,6 @@
 import { getFirestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
+import { chatCompletion, llmApiKey } from "./llm.js";
 import { can, type Member } from "./tenancy.js";
 import {
   expenseDocSchema,
@@ -14,9 +15,6 @@ import {
  * the data as context — a member without finance access asks the same
  * assistant, but revenue/expenses simply aren't in what the model sees.
  */
-
-const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_MODEL = "meta/llama-4-maverick-17b-128e-instruct";
 
 async function buildContext(rid: string, member: Member): Promise<Record<string, unknown>> {
   const db = getFirestore();
@@ -98,37 +96,31 @@ export async function askAssistant(
   history: { role: "user" | "assistant"; content: string }[] = [],
 ): Promise<string> {
   const context = await buildContext(rid, member);
-  const apiKey = process.env.NVIDIA_API_KEY;
 
-  if (!apiKey) {
+  if (!llmApiKey()) {
     // Offline/emulator mode: honest placeholder that proves the wiring.
     const parts: string[] = ["(demo sin IA)"];
     if (Array.isArray(context.ingredients)) parts.push(`${(context.ingredients as unknown[]).length} ingredientes`);
     if (Array.isArray(context.dishes)) parts.push(`${(context.dishes as unknown[]).length} platos`);
     if (Array.isArray(context.recentDocuments)) parts.push(`${(context.recentDocuments as unknown[]).length} documentos recientes`);
-    return `Sin NVIDIA_API_KEY solo puedo confirmar el contexto disponible: ${parts.join(", ")}. Configura la clave para respuestas reales.`;
+    return `Sin clave de IA solo puedo confirmar el contexto disponible: ${parts.join(", ")}. Configura la clave para respuestas reales.`;
   }
 
-  const res = await fetch(NVIDIA_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: process.env.NVIDIA_MODEL || DEFAULT_MODEL,
-      max_tokens: 600,
-      temperature: 0.2,
-      messages: [
+  try {
+    const answer = await chatCompletion(
+      [
         { role: "system", content: SYSTEM },
         // Session turns (client-held) so follow-ups resolve; the DATA
         // snapshot still rebuilds fresh on every call.
         ...history.slice(-10),
         { role: "user", content: `DATA:\n${JSON.stringify(context)}\n\nQUESTION: ${question}` },
       ],
-    }),
-  });
-  if (!res.ok) {
-    logger.error(`Assistant NVIDIA API ${res.status}`, await res.text().catch(() => ""));
+      { maxTokens: 600, temperature: 0.2, label: "assistant" },
+    );
+    return answer.trim();
+  } catch (err) {
+    // Don't leak upstream error bodies to the client.
+    logger.error("Assistant LLM error", err);
     throw new Error("assistant upstream error");
   }
-  const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  return json.choices?.[0]?.message?.content?.trim() ?? "";
 }

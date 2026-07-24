@@ -304,5 +304,4 @@ export const draftRecipesSchema = z.object({
   dishes: z.array(z.string().min(1).max(120)).min(1).max(60),
 });
 
-export const normalizeName = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+// normalizeName is re-exported from @teremu/shared (via the barrel above).

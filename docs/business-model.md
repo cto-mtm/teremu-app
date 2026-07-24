@@ -47,6 +47,8 @@ Design intents behind the numbers: 25 scans ≈ one delivery-heavy week — enou
 
 **Why menu size is deliberately *not* a gate.** Capping menu items was considered and rejected. A dish doc costs us effectively nothing (inference, not storage, is COGS — see §4), so a cap would be pure price discrimination on the one thing that *is* the core promise: the margin on every plate. Cap it and a bar (40–80 drink SKUs) or any restaurant with a wine/cocktail list hits the wall almost immediately, gets a dashboard that's silently wrong on part of the menu, and churns — the exact activation failure competitors suffer, just moved behind a paywall. So "unlimited menu, dishes and drinks" is a free-tier *feature we market*, a direct contrast to tools that make menu setup painful, and the reason the photo-to-menu wizard is also quota-free. Upgrade pressure stays on the metrics that genuinely scale with the business: scans, seats, and history.
 
+**Why the menu wizard stays unmetered (revisited at Gemini prices).** A full wizard run — menu photo → dishes, then AI recipe drafts — costs **~$0.005, worst case ~$0.02** (`docs/llm.md`), and it happens roughly once per restaurant lifetime, with occasional re-runs for seasonal menus. Metering it would tax the single highest-leverage moment in the funnel: it runs at *minute five*, before any habit exists, and its output is the anchor — a restaurant that has its full menu costed in Teremu has built the switching cost that makes the scan cap bite later. Charging $0.02-worth of tokens to protect against that is backwards; the wizard is CAC we don't pay in dollars. The only guard worth having is an abuse valve, not a paywall — a per-restaurant daily cap generous enough that no real user ever sees it (e.g., 30 wizard runs/day) purely to bound scripted abuse of the free endpoint.
+
 ## 4. Unit economics (order-of-magnitude)
 
 **Inference dominates; infrastructure is noise.** Per-invoice inference at current NVIDIA pricing lands around $0.01–0.03 including retries — $10 for a heavy Pro month of 500 scans. The full GCP bill for that same heavy restaurant (3 members, daily use, 100 assistant questions) itemizes to roughly **$1/month**:
@@ -59,7 +61,37 @@ Design intents behind the numbers: 25 scans ≈ one delivery-heavy week — enou
 | Cloud Functions | ~$0.18 | ~60K API invocations + OCR wait time |
 | Auth / Hosting | ~$0 | Google sign-in is free; SPA is ~1 MB |
 
-So a heavy Pro costs **≈ $11 all-in** ($10 inference + $1 GCP) against $29; a typical Pro (~180 scans) ≈ $4–5. The earlier $6/$12 serving-cost assumptions in §9 hold — they were conservative. Two structural notes: Firebase's free tier absorbs most of this until roughly the first dozen active restaurants (early-stage burn is effectively inference only), and the cost worth *watching* is Firestore reads — the two read-hungry features (assistant context builds, triage polling) scale with engagement, and a rollup/caching pass buys headroom if reads ever grow past ~30% of COGS. A free user at the 25-scan cap runs ~$0.60–0.70 all-in, which is the whole reason the cap exists: free-tier COGS stays a rounding error even at 20:1 free-to-paid ratios.
+**The Gemini lever.** The provider is config, not code (`docs/llm.md`), and the planned switch to `gemini-3.1-flash-lite` ($0.25/1M input, $1.50/1M output, checked 2026-07-24) reprices a scan at ~2.5K input + ~1K output tokens ≈ **$0.0025 including retries** — call it $0.003. A heavy Pro month becomes ~$1.25 of scan inference plus ~$0.60 for 100 assistant questions (those are dominated by the data snapshot, ~20K tokens each): **≈ $2 of inference, ≈ $3 all-in** instead of $11. At that point inference stops being the dominant COGS line and Firestore reads take over — the "cost worth watching" below flips from the model bill to the database.
+
+So on NVIDIA-era assumptions a heavy Pro costs **≈ $11 all-in** ($10 inference + $1 GCP) against $29; a typical Pro (~180 scans) ≈ $4–5. On Gemini pricing those become ≈ $3 and ≈ $1.50 respectively, and a capped free user falls from ~$0.60–0.70 to **~$0.20**.
+
+**Per-archetype usage model (Gemini prices).** Single-point estimates hide variance, so here is the low/avg/worst structure. Per-call costs come from the token model in `docs/llm.md`; crucially, the worst cases are *bounded by the code* (output `max_tokens` caps, the 300-name catalog cap in the OCR prompt, the assistant snapshot's query limits), so "worst" means every cap hit plus a retry — not an open tail:
+
+| Archetype (monthly) | Scans | Assistant Qs | Inference | All-in |
+|---|---|---|---|---|
+| Dormant free (likely 50–60% of free base) | ~3 | ~2 | <$0.01 | ~$0.05 |
+| Active free at the 25-scan cap | 25 | ~20 | ~$0.12 | ~$0.25 |
+| Typical Pro | ~180 | ~50 | ~$0.60 | ~$1.50 |
+| Heavy Pro | 500 | ~100 | ~$2 | ~$3 |
+| Tail Pro (every call worst-case, 300 Qs) | 500 | 300 | ~$7.50 | ~$10 |
+
+Three readings. First, the blended free-user cost at a realistic dormant/active mix is ~$0.13 — the $0.20 used in §9 is already conservative. Second, the **tail Pro (~$10) is what the NVIDIA-era model assumed an ordinary heavy Pro cost** — the pathological case still clears 3× margin against $29. Third, the assistant, not scanning, is the widest variance driver (its snapshot grows ~20× with restaurant size); its query caps are what keep the tail closed, so treat those limits as pricing infrastructure, not tuning knobs. These archetype shares (how many dormant vs active, real scans/questions per tier) are exactly what the beta instrumentation in §7 must measure — the token math is solid, the *mix* is still assumption.
+
+### From scenarios to measured distributions
+
+Low/avg/worst is the right *planning prior*, but it is not how AI COGS is modeled operationally. LLM cost distributions are **right-skewed**: most calls are cheap, a small fraction are expensive, and the arithmetic mean is systematically misleading — industry practice (the discipline is being called *TokenOps*, FinOps applied to tokens) is to track **percentiles**. The scenarios above should be retired the month real telemetry exists. What replaces them:
+
+**Instrumentation (built).** Every provider response includes exact token counts, and `llm.ts` now emits a structured `llm_usage` log line per call (`label` = ocr / menu-extract / recipe-drafts / assistant, model, prompt + completion tokens). Cloud Logging → a logs-based metric or BigQuery sink → multiply by the price sheet in `docs/llm.md`. Nothing is estimated; COGS is *observed*. When per-restaurant attribution is worth having (it will be, for the fair-use conversation), thread the `rid` into the label — every call site already has it in scope.
+
+**The KPI set:**
+
+1. **Unit cost per feature at P50 / P95 / P99** — cost per scan, per assistant question, per wizard run. P50 is the pricing input; P95 is what limits and fair-use should be *designed around*; P99 is the review trigger.
+2. **P99 ÷ P50 ratio per call type** — the degenerate-output detector. Industry heuristic: a ratio above ~50× means something is unbounded and fixing `max_tokens` typically cuts output spend 15–40%. Ours should sit far below that *because* every call already has a per-operation cap — this ratio is the regression alarm that keeps it true.
+3. **Inference cost per active restaurant, as a per-tier distribution** — replaces the archetype table. The gap between the median and P99 restaurant is what calibrates the free tier's included usage and tells us when a "fair use" clause needs enforcement teeth.
+4. **Inference efficiency ratio** = inference COGS ÷ MRR. External benchmarks: inference averages ~23% of revenue at scaling AI-B2B companies; public SaaS with AI features disclose 4–9%; gross-margin profiles run ~50–60% (AI-native), 60–79% (AI-enabled), 80%+ (AI-augmented). At Gemini prices Teremu's heavy Pro is ~7% and blended ~2–4% — an **AI-augmented margin profile (~90% gross margin on Pro)** despite AI being the core loop. That structural surplus *is* the price wedge against Haddock (§10): we can charge 3–6× less per document and still carry SaaS-class margins.
+5. **Free-tier COGS as % of total COGS** — the number that says whether the 43:1/128:1 free-rider math in §9 is holding in practice.
+
+Cadence: weekly during beta (the mix is unknown), monthly once distributions stabilize; any structural break (model price change, new feature, cap change) resets the clock. The earlier $6/$12 serving-cost assumptions in §9 hold — they were conservative. Two structural notes: Firebase's free tier absorbs most of this until roughly the first dozen active restaurants (early-stage burn is effectively inference only), and the cost worth *watching* is Firestore reads — the two read-hungry features (assistant context builds, triage polling) scale with engagement, and a rollup/caching pass buys headroom if reads ever grow past ~30% of COGS. A free user at the 25-scan cap runs ~$0.60–0.70 all-in, which is the whole reason the cap exists: free-tier COGS stays a rounding error even at 20:1 free-to-paid ratios.
 
 Payback target: CAC under $60 (2-month payback). The realistic channels at this stage are all low-CAC: word of mouth between chefs, restaurant-supplier reps and accountants as referrers (they see the food-cost pain first), and local restaurant-owner groups. Paid acquisition should wait until organic conversion data exists.
 
@@ -71,7 +103,7 @@ Benchmarks to steer by: free→paid conversion of 4–8% is healthy for prosumer
 
 ## 6. KPIs
 
-Activation: first *approved* invoice within 48 h of sign-up (not just a scan — approval means they trusted the extraction). Habit: ≥2 scanning sessions per week in weeks 2–4. Conversion: % of activated restaurants on Pro by day 45. Revenue: MRR, net revenue retention (expansion comes from the Grupo tier — a customer adding locations, each its own Pro subscription). Cost: inference cost per active restaurant, watched monthly.
+Activation: first *approved* invoice within 48 h of sign-up (not just a scan — approval means they trusted the extraction). Habit: ≥2 scanning sessions per week in weeks 2–4. Conversion: % of activated restaurants on Pro by day 45. Revenue: MRR, net revenue retention (expansion comes from the Grupo tier — a customer adding locations, each its own Pro subscription). Cost: inference cost per active restaurant as a per-tier P50/P95/P99 distribution (from the `llm_usage` telemetry — §4), plus the inference-efficiency ratio (inference COGS ÷ MRR), watched weekly in beta and monthly after.
 
 ## 7. Rollout sequence
 
@@ -96,9 +128,9 @@ Until `STRIPE_SECRET_KEY` is set, checkout/portal return 501 (`billing_not_confi
 
 ## 9. Breakeven math: how many free users can each Pro carry?
 
-Assumptions per month: Pro at $29 minus ~$1.34 payment processing; serving a Pro costs $6 (base: ~180 scans × $0.02 + infra) or $12 (conservative: heavy usage); a free user costs $0.50 (base — capped scans, many dormant) or $0.90 (conservative).
+Assumptions per month: Pro at $29 minus ~$1.34 payment processing; serving a Pro costs $6 (base: ~180 scans × $0.02 + infra) or $12 (conservative: heavy usage); a free user costs $0.50 (base — capped scans, many dormant) or $0.90 (conservative). A third scenario prices inference at Gemini 3.1 Flash-Lite rates (§4): serving a Pro ~$2 (typical usage lands near $1.50, heavy near $3), a free user ~$0.20.
 
-**Contribution per Pro:** $21.66 base / $15.66 conservative.
+**Contribution per Pro:** $21.66 base / $15.66 conservative / **$25.66 Gemini**.
 
 **The number that matters — the free-rider ceiling.** Each Pro's contribution can subsidize `contribution ÷ free-user-cost` free users before variable margin hits zero:
 
@@ -106,6 +138,7 @@ Assumptions per month: Pro at $29 minus ~$1.34 payment processing; serving a Pro
 |---|---|---|
 | Base | **43 : 1** | **2.3%** |
 | Conservative | **17 : 1** | **5.4%** |
+| Gemini | **128 : 1** | **0.8%** |
 
 Anything better than those conversion floors and every additional user (free or paid) adds margin. The industry-normal 4–8% conversion clears the base case comfortably and the conservative case at the top of the range — the model works, but it is *not* immune to a generous free tier plus expensive inference. The scan cap is what keeps the ceiling high; raising the free cap from 25 to 50 scans halves it.
 
@@ -117,7 +150,17 @@ Anything better than those conversion floors and every additional user (free or 
 | 5% | $12.16 | 25 (≈500 users) | 206 (≈4.1k) | 823 (≈16.5k) |
 | 8% | $15.91 | 19 (≈240 users) | 157 (≈2k) | 629 (≈7.9k) |
 
-Reading: a bootstrapped solo operation ($300/mo of tooling) breaks even at roughly **500 total restaurants with 5% conversion (25 paying)** — a reachable first-year number in one city. A $2,500/mo operation needs ~4,000 restaurants at 5%, which is a regional business. In the conservative cost case, 5% conversion *loses* money — the levers that restore it are the scan cap, cheaper inference (prices keep falling), or nudging Pro to $35–39.
+And the same table at Gemini inference costs:
+
+| Conversion | Net per Pro (Gemini) | Paid needed: $300/mo fixed | $2,500/mo | $10,000/mo |
+|---|---|---|---|---|
+| 3% | $19.19 | 16 (≈520 users) | 131 (≈4.4k) | 522 (≈17.4k) |
+| 5% | $21.86 | 14 (≈275 users) | 115 (≈2.3k) | 458 (≈9.2k) |
+| 8% | $23.36 | 13 (≈160 users) | 108 (≈1.35k) | 429 (≈5.4k) |
+
+Reading: on NVIDIA-era numbers, a bootstrapped solo operation ($300/mo of tooling) breaks even at roughly **500 total restaurants with 5% conversion (25 paying)** — a reachable first-year number in one city. A $2,500/mo operation needs ~4,000 restaurants at 5%, which is a regional business. In the conservative cost case, 5% conversion *loses* money — the levers that restore it are the scan cap, cheaper inference (prices keep falling), or nudging Pro to $35–39.
+
+**What the Gemini scenario changes structurally.** Solo breakeven drops to ~275 total restaurants at 5%, and even a 3% conversion — below the healthy-freemium floor — is comfortably profitable, so the model stops being fragile to a generous free tier. The conversion floor falls from 2.3–5.4% to under 1%, which converts the scan cap from a *cost-survival* mechanism into a pure *conversion-pressure* mechanism: raising free from 25 to 50 scans would cost ~$0.06/user/month, so if activation data ever says the cap bites before the "aha" moment, raising it is nearly free. The caveats: these are July 2026 list prices for a model tier Google retires aggressively (re-verify in `docs/llm.md` before flipping), extraction quality on the lite tier must hold on real crumpled invoices (mis-extractions cost retries and, worse, user trust — validate on `docs/ocr-samples.md` first), and once inference is ~$2, **Firestore reads become the biggest COGS line**, moving the rollup/caching pass from "if reads grow" to the first optimization worth scheduling.
 
 ## 10. Competitive: Haddock (haddock.app, YC W22)
 

@@ -1,5 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
+import { chatCompletion, llmApiKey } from "./llm.js";
 import { categorySchema, unitSchema, type Category, type Unit } from "./models.js";
 
 /**
@@ -10,31 +11,11 @@ import { categorySchema, unitSchema, type Category, type Unit } from "./models.j
  *  1. extractMenu:   menu photo → dish names + prices + sections
  *  2. draftRecipes:  dish names + pantry catalog → estimated recipes
  *
- * Without an NVIDIA_API_KEY both fall back to deterministic mocks so
+ * Without an LLM API key both fall back to deterministic mocks so
  * the whole wizard works offline (designed behavior, not an error).
  */
-const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_MODEL = "meta/llama-4-maverick-17b-128e-instruct";
-
-async function callModel(content: unknown[], maxTokens: number): Promise<string> {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) throw new Error("no key"); // callers mock before reaching here
-  const res = await fetch(NVIDIA_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: process.env.NVIDIA_MODEL || DEFAULT_MODEL,
-      max_tokens: maxTokens,
-      temperature: 0.2,
-      messages: [{ role: "user", content }],
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`NVIDIA API ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  return json.choices?.[0]?.message?.content ?? "";
+function callModel(content: unknown[], maxTokens: number, label: string): Promise<string> {
+  return chatCompletion([{ role: "user", content }], { maxTokens, temperature: 0.2, label });
 }
 
 /** Defensive: strip markdown fences / commentary around the JSON. */
@@ -84,8 +65,8 @@ export interface MenuScanResult {
 }
 
 export async function extractMenu(imageBase64: string): Promise<MenuScanResult> {
-  if (!process.env.NVIDIA_API_KEY) {
-    logger.warn("NVIDIA_API_KEY not set — returning mock menu extraction");
+  if (!llmApiKey()) {
+    logger.warn("LLM API key not set — returning mock menu extraction");
     return mockMenu();
   }
   const raw = await callModel(
@@ -94,6 +75,7 @@ export async function extractMenu(imageBase64: string): Promise<MenuScanResult> 
       { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
     ],
     3072,
+    "menu-extract",
   );
   const parsed = menuResponseSchema.parse(firstJson(raw));
   if (parsed.error) return { dishes: [], unreadable: true };
@@ -178,14 +160,14 @@ export async function draftRecipes(
   dishes: string[],
   catalog: CatalogEntry[],
 ): Promise<RecipeDraft[]> {
-  if (!process.env.NVIDIA_API_KEY) {
-    logger.warn("NVIDIA_API_KEY not set — returning mock recipe drafts");
+  if (!llmApiKey()) {
+    logger.warn("LLM API key not set — returning mock recipe drafts");
     return mockDrafts(dishes, catalog);
   }
   const prompt = `${DRAFT_PROMPT}\n\nCATALOG:\n${JSON.stringify(
     catalog.slice(0, 300).map((c) => c.name),
   )}\n\nDISHES:\n${JSON.stringify(dishes)}`;
-  const raw = await callModel([{ type: "text", text: prompt }], 4096);
+  const raw = await callModel([{ type: "text", text: prompt }], 4096, "recipe-drafts");
   const parsed = draftsResponseSchema.parse(firstJson(raw));
   const byName = new Map(catalog.map((c) => [c.name.toLowerCase().trim(), c]));
   const byDish = new Map(

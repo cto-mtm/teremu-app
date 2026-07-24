@@ -1,13 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
+import { chatCompletion, llmApiKey } from "./llm.js";
 import { categorySchema, docTypeSchema, unitSchema, type LineItem } from "./models.js";
-
-// NVIDIA build.nvidia.com — OpenAI-compatible endpoint. Get a free nvapi-
-// key by opening any model page and clicking "Get API Key", then:
-//   firebase functions:secrets:set NVIDIA_API_KEY
-// Any vision-language model in the catalog works; override via NVIDIA_MODEL.
-const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_MODEL = "meta/llama-4-maverick-17b-128e-instruct";
 
 const EXTRACTION_PROMPT = `You are an expert at reading restaurant vendor invoices and receipts, including crumpled, handwritten, or poorly printed ones.
 
@@ -103,19 +97,18 @@ function sanitize(
 }
 
 /**
- * OCR a receipt image. With NVIDIA_API_KEY set (secret in prod,
- * plain env / functions/.secret.local in the emulator) it calls the
- * real vision model; without one it returns a deterministic mock so
- * the scan → triage → approve flow works fully offline. This is the
- * local-first fallback, not an error.
+ * OCR a receipt image. With an LLM API key set (secret in prod,
+ * plain env / functions/.secret.local in the emulator — see llm.ts)
+ * it calls the real vision model; without one it returns a
+ * deterministic mock so the scan → triage → approve flow works fully
+ * offline. This is the local-first fallback, not an error.
  */
 export async function extractInvoice(
   imageBase64: string,
   knownIngredients: string[] = [],
 ): Promise<OcrResult> {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) {
-    logger.warn("NVIDIA_API_KEY not set — returning mock OCR extraction");
+  if (!llmApiKey()) {
+    logger.warn("LLM API key not set — returning mock OCR extraction");
     return mockExtraction();
   }
 
@@ -124,30 +117,18 @@ export async function extractInvoice(
       ? `${EXTRACTION_PROMPT}\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`
       : EXTRACTION_PROMPT;
 
-  const res = await fetch(NVIDIA_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: process.env.NVIDIA_MODEL || DEFAULT_MODEL,
-      max_tokens: 2048,
-      temperature: 0.1,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
-          ],
-        },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`NVIDIA API ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  const raw = json.choices?.[0]?.message?.content ?? "";
+  const raw = await chatCompletion(
+    [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 2048, temperature: 0.1, label: "ocr" },
+  );
   const match = raw.match(/\{[\s\S]*\}/); // defensive: strip fences/commentary
   if (!match) throw new Error("Model returned no JSON");
   const parsed = ocrResponseSchema.parse(JSON.parse(match[0]));

@@ -3,10 +3,9 @@
 
 import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RevenueEntry, Unit } from './types'
 import { convertQty } from './units'
+import { normalizeName } from '@teremu/shared'
 
-/** Mirror of the server's normalizeName (models.ts) for name matching. */
-export const normalizeName = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
+export { normalizeName }
 
 /**
  * A FOOD invoice: approved, not diverted to a tagged expense, and not a

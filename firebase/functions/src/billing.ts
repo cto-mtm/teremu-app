@@ -1,6 +1,6 @@
 import { getFirestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
-import { defineSecret, defineString } from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import Stripe from "stripe";
 
 // Explicit alias so the exported secret refs don't force TS to name a
@@ -8,42 +8,18 @@ import Stripe from "stripe";
 type SecretParam = ReturnType<typeof defineSecret>;
 import type { Plan } from "./plan.js";
 
-/**
- * Stripe billing (see docs/business-model.md §8).
- *
- * Configuration — all set once, no code changes:
- *   Secrets (firebase functions:secrets:set NAME):
- *     STRIPE_SECRET_KEY       sk_live_… / sk_test_…
- *     STRIPE_WEBHOOK_SECRET   whsec_…  (from the webhook endpoint)
- *   Params (functions/.env or `firebase functions:config`):
- *     STRIPE_PRICE_PRO_MONTHLY  price_…  (the Pro monthly recurring price)
- *     STRIPE_PRICE_PRO_YEARLY   price_…  (the Pro yearly recurring price)
- *     APP_URL                   https://app.teremu.com  (checkout return URL)
- *
- * Products/prices themselves live in the Stripe dashboard; we only
- * reference their price IDs. Until STRIPE_SECRET_KEY is set, billing is
- * "not configured": POST /billing/checkout returns 501 and the emulator
- * PUT /billing/plan switch is used for testing instead.
- *
- * The subscription's plan state is mirrored onto restaurants/{rid}:
- *   plan, planInterval, stripeCustomerId, stripeSubscriptionId.
- * Firestore is the source of truth the app reads; Stripe drives it via
- * the webhook, so a failed webhook never charges without unlocking (and
- * a cancellation always re-locks).
- */
-
 export const STRIPE_SECRET_KEY: SecretParam = defineSecret("STRIPE_SECRET_KEY");
 export const STRIPE_WEBHOOK_SECRET: SecretParam = defineSecret("STRIPE_WEBHOOK_SECRET");
-
-const PRICE_MONTHLY = defineString("STRIPE_PRICE_PRO_MONTHLY", { default: "" });
-const PRICE_YEARLY = defineString("STRIPE_PRICE_PRO_YEARLY", { default: "" });
-const APP_URL = defineString("APP_URL", { default: "" });
 
 export type BillingInterval = "month" | "year";
 
 /** Whether live billing is wired up (else callers fall back to 501). */
 export function billingConfigured(): boolean {
-  return Boolean(process.env.STRIPE_SECRET_KEY && PRICE_MONTHLY.value() && PRICE_YEARLY.value());
+  return Boolean(
+    process.env.STRIPE_SECRET_KEY &&
+      process.env.STRIPE_PRICE_PRO_MONTHLY &&
+      process.env.STRIPE_PRICE_PRO_YEARLY,
+  );
 }
 
 function stripe(): Stripe {
@@ -55,7 +31,10 @@ function stripe(): Stripe {
 }
 
 function priceFor(interval: BillingInterval): string {
-  const price = interval === "year" ? PRICE_YEARLY.value() : PRICE_MONTHLY.value();
+  const price =
+    interval === "year"
+      ? process.env.STRIPE_PRICE_PRO_YEARLY
+      : process.env.STRIPE_PRICE_PRO_MONTHLY;
   if (!price) throw new Error(`no Stripe price configured for ${interval}`);
   return price;
 }
@@ -63,7 +42,7 @@ function priceFor(interval: BillingInterval): string {
 function returnBase(origin: string | undefined): string {
   // Prefer the configured APP_URL; fall back to the request origin so
   // dev/preview builds return to wherever the user actually is.
-  return (APP_URL.value() || origin || "").replace(/\/+$/, "");
+  return (process.env.APP_URL || origin || "").replace(/\/+$/, "");
 }
 
 /**

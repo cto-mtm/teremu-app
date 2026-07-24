@@ -34,9 +34,11 @@ Works with no Firebase project and no real Google account — the emulator scrip
 
 **Daily workflow:** two terminals — `npm run emulators:watch` in `firebase/` (plus `npm run build:watch` in `firebase/functions/` for the tightest loop; the emulator hot-reloads functions when `lib/` changes) and `npm run dev` in `app/`.
 
-## Real OCR (NVIDIA)
+## Real OCR (NVIDIA by default, any OpenAI-compatible provider)
 
-Get a free `nvapi-` key at [build.nvidia.com](https://build.nvidia.com) (open any model → *Get API Key*). Locally, put `NVIDIA_API_KEY=nvapi-...` in `firebase/functions/.secret.local` or export it before starting the emulators. For production: `firebase functions:secrets:set NVIDIA_API_KEY`. Default model is `meta/llama-4-maverick-17b-128e-instruct`; override with the `NVIDIA_MODEL` env var.
+Get a free `nvapi-` key at [build.nvidia.com](https://build.nvidia.com) (open any model → *Get API Key*). Locally, put `NVIDIA_API_KEY=nvapi-...` in `firebase/functions/.secret.local` or export it before starting the emulators. For production: `firebase functions:secrets:set NVIDIA_API_KEY`. Default model is `meta/llama-4-maverick-17b-128e-instruct`; override with the `LLM_MODEL` env var.
+
+All AI calls go through `firebase/functions/src/llm.ts`, which speaks the OpenAI chat/completions dialect. Switching provider is config, not code: set `LLM_PROVIDER=gemini` in `firebase/functions/.env` (presets Gemini's OpenAI-compatible endpoint) and put the Gemini key in the same secret — or point `LLM_URL` at any other compatible endpoint. `LLM_MODEL` overrides the preset default. Full details + provider pricing comparison: [docs/llm.md](docs/llm.md).
 
 ## Billing (Stripe)
 

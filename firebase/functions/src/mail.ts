@@ -18,8 +18,8 @@ import { logger } from "firebase-functions/v2";
 
 const MAIL_COLLECTION = "mail";
 
-// PLACEHOLDER — set your verified sender identity before production.
-const FROM = "Teremu <no-reply@REPLACE_ME.com>";
+// Set your verified sender identity before production.
+const FROM = "Teremu <no-reply@teremu.com>";
 
 export interface MailInput {
   to: string | string[];
@@ -47,7 +47,7 @@ export async function sendMail(input: MailInput): Promise<void> {
   }
 }
 
-// ── Message builders (PLACEHOLDER copy — replace before launch) ─────
+// ── Message builders ─────────────────────────────────────────────────
 // Future consumers to add here: weekly digest, price-hike alerts,
 // margin-slip warnings, monthly count reminders.
 
@@ -64,7 +64,7 @@ export function orderEmail(
     .join("");
   return {
     to: vendorEmail,
-    subject: `Pedido — ${vendorName}`, // PLACEHOLDER
+    subject: `Pedido — ${vendorName}`,
     html: `
       <p>Hola ${vendorName},</p>
       <p>Queremos hacer el siguiente pedido:</p>
@@ -72,7 +72,7 @@ export function orderEmail(
       ${note ? `<p>${note}</p>` : ""}
       <p>Cualquier duda, responde a ${fromEmail}.</p>
       <p style="color:#7a6f66;font-size:12px">Enviado con Teremu.</p>
-    `, // PLACEHOLDER — final copy/branding pending
+    `,
   };
 }
 
@@ -80,13 +80,13 @@ export function orderEmail(
 export function inviteEmail(toEmail: string, inviterEmail: string): MailInput {
   return {
     to: toEmail,
-    subject: "Te invitaron a Teremu", // PLACEHOLDER
+    subject: "Te invitaron a Teremu",
     html: `
       <p>Hola,</p>
       <p><strong>${inviterEmail}</strong> te invitó a su restaurante en Teremu.</p>
       <p>Entra con tu cuenta de Google (${toEmail}) y tendrás acceso automáticamente:</p>
-      <p><a href="https://REPLACE_ME.web.app/login">Abrir Teremu</a></p>
+      <p><a href="https://app.teremu.com/login">Abrir Teremu</a></p>
       <p style="color:#7a6f66;font-size:12px">Si no esperabas esta invitación, ignora este correo.</p>
-    `, // PLACEHOLDER — final copy/branding pending
+    `,
   };
 }
