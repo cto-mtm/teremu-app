@@ -374,6 +374,23 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
+    <!-- Loading skeleton -->
+    <template v-if="kitchen.loading && !kitchen.revenue.length">
+      <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div v-for="i in 4" :key="i" class="card animate-pulse">
+          <div class="h-3 w-20 rounded bg-gray-200" />
+          <div class="mt-3 h-7 w-24 rounded bg-gray-200" />
+        </div>
+      </div>
+      <div class="card animate-pulse">
+        <div class="h-4 w-40 rounded bg-gray-200" />
+        <div class="mt-4 h-[200px] rounded bg-gray-100" />
+      </div>
+    </template>
+
+    <!-- Loaded content -->
+    <template v-else>
+
     <!-- Stat cards -->
     <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
       <div class="card">
@@ -672,6 +689,7 @@ watch(showExpense, (open) => {
         </div>
       </div>
     </div>
+    </template>
 
     <!-- Expense sheet -->
     <Transition name="list">
