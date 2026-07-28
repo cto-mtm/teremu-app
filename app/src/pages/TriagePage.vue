@@ -21,6 +21,17 @@ function candidatesFor(note: Invoice): Invoice[] {
   return reconciliationCandidates(store.invoices, note)
 }
 
+/** Drop a scan that will never be an invoice out of the inbox. */
+async function dismiss(id: string): Promise<void> {
+  if (!confirm(t('triage.dismissConfirm'))) return
+  if (!(await store.discard(id))) alert(t('triage.dismissFailed'))
+}
+
+/** Undo a mistaken dismissal — the scan returns to the inbox as it was. */
+async function restore(id: string): Promise<void> {
+  if (!(await store.discard(id, false))) alert(t('triage.restoreFailed'))
+}
+
 async function linkNote(note: Invoice, event: Event): Promise<void> {
   const invoiceId = (event.target as HTMLSelectElement).value
   if (invoiceId) await store.reconcile(note.id, { invoiceId })
@@ -42,7 +53,7 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-2">
         <h1 class="text-xl font-bold">{{ t('triage.title') }}</h1>
         <button
@@ -57,17 +68,39 @@ onUnmounted(() => {
           </svg>
         </button>
       </div>
-      <RouterLink to="/scan" class="btn-primary">{{ t('pulse.scanCta') }}</RouterLink>
+      <RouterLink to="/scan" class="btn-primary self-start sm:self-auto">{{ t('pulse.scanCta') }}</RouterLink>
     </div>
 
-    <!-- What-is-this explainer -->
-    <Transition name="list">
-      <div v-if="showInfo" class="card space-y-2 border-ember-100 bg-ember-50 text-sm leading-relaxed">
-        <p>{{ t('triage.info.p1') }}</p>
-        <p>{{ t('triage.info.p2') }}</p>
-        <p>{{ t('triage.info.p3') }}</p>
-      </div>
-    </Transition>
+    <!-- What-is-this explainer modal -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div
+          v-if="showInfo"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          @click.self="showInfo = false"
+        >
+          <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg space-y-3">
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-semibold text-ink">{{ t('triage.title') }}</h2>
+              <button
+                class="flex h-6 w-6 items-center justify-center rounded-full text-smoke hover:bg-gray-100 hover:text-ink"
+                :aria-label="t('triage.info.close')"
+                @click="showInfo = false"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div class="space-y-2 text-sm leading-relaxed text-smoke">
+              <p>{{ t('triage.info.p1') }}</p>
+              <p>{{ t('triage.info.p2') }}</p>
+              <p>{{ t('triage.info.p3') }}</p>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <div v-if="store.pending.length === 0" class="card py-10 text-center text-sm text-smoke">
       {{ t('triage.empty') }}
@@ -75,7 +108,13 @@ onUnmounted(() => {
 
     <!-- Recipe 4: rows animate in/out (approve removes them) with FLIP moves -->
     <TransitionGroup v-else name="list" tag="div" class="relative space-y-2">
-      <InvoiceCard v-for="inv in store.pending" :key="inv.id" :invoice="inv" />
+      <InvoiceCard
+        v-for="inv in store.pending"
+        :key="inv.id"
+        :invoice="inv"
+        :can-dismiss="canEdit"
+        @dismiss="dismiss"
+      />
     </TransitionGroup>
 
     <!-- Reconciliation report: every delivery note vs its invoice -->
@@ -162,6 +201,30 @@ onUnmounted(() => {
           </div>
           <div class="text-sm font-semibold">{{ n(inv.total ?? 0, 'currency') }}</div>
         </RouterLink>
+      </div>
+    </template>
+
+    <!-- Dismissed scans: kept, not deleted — a mistaken dismissal is
+         undone from here (the API puts the scan back where it was). -->
+    <template v-if="canEdit && store.discarded.length > 0">
+      <h2 class="pt-2 text-sm font-semibold text-smoke">{{ t('triage.discardedTitle') }}</h2>
+      <div class="space-y-2">
+        <div
+          v-for="inv in store.discarded"
+          :key="inv.id"
+          class="card flex items-center justify-between py-3 opacity-70"
+        >
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium">{{ inv.vendorName ?? t('triage.detail.invoiceFallback') }}</div>
+            <div class="text-xs text-smoke">{{ d(new Date(inv.createdAt), 'short') }}</div>
+          </div>
+          <button
+            class="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-gray-200"
+            @click="restore(inv.id)"
+          >
+            {{ t('triage.restore') }}
+          </button>
+        </div>
       </div>
     </template>
   </div>

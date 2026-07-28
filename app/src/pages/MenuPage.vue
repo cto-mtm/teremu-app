@@ -188,9 +188,9 @@ async function save(): Promise<void> {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <h1 class="text-xl font-bold">{{ t('menu.title') }}</h1>
-      <div v-if="auth.can('menu', 'edit')" class="flex gap-2">
+      <div v-if="auth.can('menu', 'edit')" class="flex flex-wrap gap-2">
         <BaseButton @click="wizardOpen = true">
           <span class="inline-flex items-center gap-1.5">
             <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

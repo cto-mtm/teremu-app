@@ -115,35 +115,36 @@ watch(
     <!-- Left nav: off-canvas drawer on mobile, sticky sidebar from md up -->
     <aside
       v-if="authStore.user && !bare"
-      class="pt-safe pb-safe glass fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-y-0 border-l-0 transition-transform duration-200 md:sticky md:top-0 md:z-auto md:w-56 md:translate-x-0"
+      class="pt-safe pb-safe glass fixed inset-y-0 left-0 z-50 flex h-screen w-[280px] max-w-[85vw] shrink-0 flex-col border-y-0 border-l-0 transition-transform duration-200 md:sticky md:top-0 md:z-auto md:w-56 md:max-w-none md:translate-x-0"
       :class="navOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'"
     >
-      <div class="flex items-center justify-between pr-2">
+      <div class="flex items-center justify-between px-4 py-4 md:px-3 md:py-5">
         <RouterLink
           to="/"
-          class="font-display flex items-center gap-2 px-3 py-5 text-lg font-extrabold tracking-tight"
+          class="font-display flex items-center gap-2 text-lg font-extrabold tracking-tight"
         >
-          <!-- alt="" — decorative; the adjacent wordmark carries the name -->
           <img :src="logoColor" alt="" aria-hidden="true" class="h-8 w-8 shrink-0" />
           <span><span class="text-gradient">Teremu</span><span class="text-ember">.</span></span>
         </RouterLink>
         <button
-          class="p-2 text-smoke md:hidden"
+          class="flex h-8 w-8 items-center justify-center rounded-lg text-smoke hover:bg-gray-100 hover:text-ink md:hidden"
           :aria-label="t('shell.closeNav')"
           @click="navOpen = false"
         >
-          ✕
+          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
         </button>
       </div>
 
       <LocationSwitcher v-if="authStore.profile" />
 
-      <nav class="flex-1 space-y-1 px-2">
+      <nav class="flex-1 space-y-1 px-3 md:px-2">
         <RouterLink
           v-for="tab in tabs"
           :key="tab.to"
           :to="tab.to"
-          class="relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium"
+          class="relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium md:py-2.5"
           :class="isActive(tab.to) ? 'bg-ember-50 text-ember-700' : 'text-smoke hover:bg-gray-50 hover:text-ink'"
           :aria-label="tab.label"
         >
@@ -181,9 +182,9 @@ watch(
         </RouterLink>
       </nav>
 
-      <div class="space-y-1 px-2 pb-4">
+      <div class="space-y-1 px-3 pb-5 md:px-2 md:pb-4">
         <button
-          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink"
+          class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink md:py-2.5"
           :aria-label="t('assistant.open')"
           @click="assistantOpen = true"
         >
@@ -195,7 +196,7 @@ watch(
         </button>
         <RouterLink
           to="/settings"
-          class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium"
+          class="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium md:py-2.5"
           :class="isActive('/settings') ? 'bg-ember-50 text-ember-700' : 'text-smoke hover:bg-gray-50 hover:text-ink'"
           :aria-label="t('shell.settings')"
         >
@@ -206,7 +207,7 @@ watch(
           <span>{{ t('shell.settings') }}</span>
         </RouterLink>
         <button
-          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink"
+          class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink md:py-2.5"
           :aria-label="t('auth.signOut')"
           @click="authStore.signOut"
         >
@@ -218,8 +219,8 @@ watch(
       </div>
     </aside>
 
-    <!-- pt-16 on mobile clears the floating hamburger -->
-    <main :class="bare ? 'flex-1' : 'min-w-0 flex-1 px-4 pt-16 pb-6 md:px-8 md:py-6'">
+    <!-- pt-14 on mobile clears the floating hamburger -->
+    <main :class="bare ? 'flex-1' : 'min-w-0 flex-1 px-4 pt-14 pb-6 md:px-8 md:py-6'">
       <!-- The auth guard holds navigation until the auth state is known,
            so the slot is empty during that first beat. -->
       <div v-if="!authStore.ready" class="py-20 text-center text-sm text-smoke">

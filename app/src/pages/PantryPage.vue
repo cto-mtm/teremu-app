@@ -176,12 +176,12 @@ async function commit(id: string): Promise<void> {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-start justify-between gap-3">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 class="text-xl font-bold">{{ t('pantry.title') }}</h1>
         <p class="mt-1 text-xs text-smoke">{{ t('pantry.subtitle') }}</p>
       </div>
-      <div class="flex shrink-0 flex-wrap justify-end gap-2">
+      <div class="flex shrink-0 flex-wrap gap-2">
         <BaseButton v-if="canEdit" variant="ghost" @click="showAdd = true">
           + {{ t('pantry.add.cta') }}
         </BaseButton>

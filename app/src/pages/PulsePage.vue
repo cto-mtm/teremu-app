@@ -359,9 +359,9 @@ watch(showExpense, (open) => {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <h1 class="text-xl font-bold">{{ t('pulse.title') }}</h1>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         <template v-if="canEdit">
           <BaseButton variant="ghost" :disabled="csvBusy" :title="t('pulse.csv.hint')" @click="csvInput?.click()">
             {{ csvBusy ? t('common.action.saving') : t('pulse.csv.cta') }}
