@@ -8,6 +8,7 @@ import { useSettingsStore } from '../stores/settings'
 import { groceryList, normalizeName, productionPlan, type GroceryRow } from '../lib/domain'
 import { CATEGORIES, type Category, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
+import PageLoader from '../components/PageLoader.vue'
 
 /**
  * The Theoretical Pantry — a reference table, not a daily ledger.
@@ -302,7 +303,9 @@ async function commit(id: string): Promise<void> {
       </div>
     </Transition>
 
-    <div v-if="kitchen.ingredients.length === 0" class="card py-10 text-center text-sm text-smoke">
+    <PageLoader v-if="kitchen.loading && !kitchen.ingredients.length" :cards="0" :lines="6" />
+
+    <div v-else-if="kitchen.ingredients.length === 0" class="card py-10 text-center text-sm text-smoke">
       {{ t('pantry.empty') }}
     </div>
 

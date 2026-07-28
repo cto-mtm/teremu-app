@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { normalizeName, vendorSummaries } from '../lib/domain'
+import PageLoader from '../components/PageLoader.vue'
 
 /** Vendor directory: food vendors (invoices) + service payees (expenses). */
 const { t, n, d } = useI18n()
@@ -55,7 +56,9 @@ const vendors = computed(() => {
   <div class="space-y-4">
     <h1 class="text-xl font-bold">{{ t('vendors.title') }}</h1>
 
-    <div v-if="all.length > 0" class="flex flex-wrap gap-2">
+    <PageLoader v-if="invoicesStore.loading && !all.length" :cards="0" :lines="5" />
+
+    <div v-else-if="all.length > 0" class="flex flex-wrap gap-2">
       <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
       <select v-model="tagFilter" class="input w-auto">
         <option value="all">{{ t('common.filter.allTags') }}</option>
@@ -73,7 +76,7 @@ const vendors = computed(() => {
       </select>
     </div>
 
-    <div v-if="all.length === 0" class="card py-10 text-center text-sm text-smoke">
+    <div v-if="!invoicesStore.loading && all.length === 0" class="card py-10 text-center text-sm text-smoke">
       {{ t('vendors.empty') }}
     </div>
     <div v-else-if="vendors.length === 0" class="card py-8 text-center text-sm text-smoke">

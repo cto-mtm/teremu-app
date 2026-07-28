@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth'
 import { reconcileDeliveryNotes, reconciliationCandidates } from '../lib/domain'
 import type { Invoice } from '../lib/types'
 import InvoiceCard from '../components/InvoiceCard.vue'
+import PageLoader from '../components/PageLoader.vue'
 
 const { t, n, d } = useI18n()
 const store = useInvoicesStore()
@@ -102,7 +103,9 @@ onUnmounted(() => {
       </Transition>
     </Teleport>
 
-    <div v-if="store.pending.length === 0" class="card py-10 text-center text-sm text-smoke">
+    <PageLoader v-if="store.loading && !store.invoices.length" :cards="0" :lines="4" />
+
+    <div v-else-if="store.pending.length === 0" class="card py-10 text-center text-sm text-smoke">
       {{ t('triage.empty') }}
     </div>
 

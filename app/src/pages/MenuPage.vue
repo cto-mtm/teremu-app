@@ -10,6 +10,7 @@ import { compatibleUnits } from '../lib/units'
 import { CATEGORIES, type Category, type MenuItem, type RecipeLine, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import MenuScanWizard from '../components/MenuScanWizard.vue'
+import PageLoader from '../components/PageLoader.vue'
 
 /**
  * Menu Margin Mapping — every dish costed from this week's rolling
@@ -204,7 +205,9 @@ async function save(): Promise<void> {
       </div>
     </div>
 
-    <div v-if="kitchen.activeMenuItems.length > 0" class="flex flex-wrap gap-2">
+    <PageLoader v-if="kitchen.loading && !kitchen.menuItems.length" :cards="0" :lines="4" />
+
+    <div v-else-if="kitchen.activeMenuItems.length > 0" class="flex flex-wrap gap-2">
       <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
       <select v-model="sortBy" class="input w-auto">
         <option value="margin">{{ t('common.filter.sortMargin') }}</option>
@@ -213,7 +216,7 @@ async function save(): Promise<void> {
       </select>
     </div>
 
-    <div v-if="kitchen.activeMenuItems.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
+    <div v-if="!kitchen.loading && kitchen.activeMenuItems.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
       <p>{{ t('menu.empty') }}</p>
       <BaseButton v-if="auth.can('menu', 'edit')" @click="wizardOpen = true">
         <span class="inline-flex items-center gap-1.5">
