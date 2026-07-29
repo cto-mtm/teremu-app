@@ -54,7 +54,9 @@ async function manageBilling(): Promise<void> {
 }
 
 async function togglePlan(): Promise<void> {
-  const next = auth.profile?.plan === 'pro' ? 'free' : 'pro'
+  // Dev-only cycle through every tier: free → pro → max → free.
+  const cycle = { free: 'pro', pro: 'max', max: 'free' } as const
+  const next = cycle[auth.profile?.plan ?? 'free']
   const res = await apiFetch('/billing/plan', { method: 'PUT', body: JSON.stringify({ plan: next }) })
   if (res.ok) await auth.reloadProfile()
 }
@@ -131,7 +133,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     <div v-if="auth.profile" class="card space-y-3">
       <div class="flex items-center justify-between">
         <div class="text-sm font-semibold">{{ t('settings.plan.title') }}</div>
-        <span :class="auth.profile.plan === 'pro' ? 'chip-down' : 'chip-up'">
+        <span :class="auth.profile.plan !== 'free' ? 'chip-down' : 'chip-up'">
           {{ t('settings.plan.' + auth.profile.plan) }}
         </span>
       </div>

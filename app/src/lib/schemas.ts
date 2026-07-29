@@ -170,10 +170,10 @@ export const locationSchema = z.object({
   rid: z.string(),
   name: z.string(),
   role: z.enum(['owner', 'member']),
-  plan: z.enum(['free', 'pro']),
+  plan: z.enum(['free', 'pro', 'max']),
   // Billing is per location — each is its own subscription, monthly or
-  // yearly (the "Grupo" tier is just Pro × N locations, not a distinct
-  // SKU). Null on the free plan.
+  // yearly (the "Grupo" tier is just paid plans × N locations, not a
+  // distinct SKU). Null on the free plan.
   interval: z.enum(['month', 'year']).nullable(),
 })
 
@@ -184,7 +184,7 @@ export const meSchema = z.object({
   role: z.enum(['owner', 'member']),
   perms: permsSchema,
   email: z.string(),
-  plan: z.enum(['free', 'pro']),
+  plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
   locations: z.array(locationSchema),
 })

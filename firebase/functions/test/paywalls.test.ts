@@ -32,25 +32,51 @@ describe("freemium paywalls", () => {
     expect(body.error).toBe("scan_limit");
   });
 
-  it("never overruns the scan cap under concurrent uploads (transactional counter)", async () => {
+  // 60s + a small burst: the Firestore emulator serializes contending
+  // transactions with lock waits and exponential backoff (production
+  // resolves the same contention in ms), and the previous test's 25
+  // queued OCR triggers are still draining while this one runs. Six
+  // contenders race exactly like ten — the property under test is "the
+  // counter never overruns", not a load benchmark.
+  it("never overruns the scan cap under concurrent uploads (transactional counter)", { timeout: 60_000 }, async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
-    // Fast-forward to 20/25 used this month without 20 real uploads.
+    // Fast-forward to 22/25 used this month without 22 real uploads.
     await getFirestore()
       .collection("restaurants")
       .doc(owner.rid)
-      .set({ scanPeriod: monthKey(), scanCount: 20 }, { merge: true });
+      .set({ scanPeriod: monthKey(), scanCount: 22 }, { merge: true });
 
-    // 10 concurrent uploads against 5 remaining slots.
+    // 6 concurrent uploads against 3 remaining slots.
     const results = await Promise.all(
-      Array.from({ length: 10 }, () => upload("/invoices", owner.token, FAKE_JPEG)),
+      Array.from({ length: 6 }, () => upload("/invoices", owner.token, FAKE_JPEG)),
     );
     const okCount = results.filter((r) => r.status === 201).length;
     const blockedCount = results.filter((r) => r.status === 402).length;
-    expect(okCount).toBe(5);
-    expect(blockedCount).toBe(5);
+    expect(okCount).toBe(3);
+    expect(blockedCount).toBe(3);
 
     const restDoc = await getFirestore().collection("restaurants").doc(owner.rid).get();
     expect(restDoc.get("scanCount")).toBe(25); // never overran, even under a race
+  });
+
+  it("max tier raises the caps: 1,500 scans and 10 seats", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    expect(PLAN_LIMITS.max.scans).toBe(1500);
+    expect(PLAN_LIMITS.max.members).toBe(10);
+    await setPlan(owner.rid, "max");
+
+    // The profile reports the raised quota, and a scan that would be
+    // over Pro's 500 cap sails through on Max.
+    const me = await get<{ plan: string; usage: { scanLimit: number } }>("/me", owner.token);
+    expect(me.body.plan).toBe("max");
+    expect(me.body.usage.scanLimit).toBe(1500);
+
+    await getFirestore()
+      .collection("restaurants")
+      .doc(owner.rid)
+      .set({ scanPeriod: monthKey(), scanCount: 500 }, { merge: true });
+    const { status } = await upload("/invoices", owner.token, FAKE_JPEG);
+    expect(status).toBe(201);
   });
 
   it("blocks inviting past the member cap (free = 1 seat, the owner)", async () => {

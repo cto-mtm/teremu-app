@@ -23,24 +23,26 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 
 ## 3. Tiers
 
-| | **Gratis** | **Pro** — *el plan del chef* | **Grupo** |
-|---|---|---|---|
-| Price (placeholder) | $0 | **$29/mo** or $290/yr (2 months free) | Same as Pro, billed per location |
-| Invoice scans (OCR) | 25 / month | 500 / month fair use | 500 / month, per location |
-| Team members | Owner only | Up to 5, granular permissions | Up to 5, granular permissions — per location |
-| History window | 90 days | Full history | Full history, per location |
-| Menu items (dishes + drinks) | **Unlimited** | Unlimited | Unlimited |
-| Dish margins & menu engineering matrix | ✓ | ✓ | ✓, per location |
-| Theoretical pantry + true-up | ✓ | ✓ | ✓ |
-| Grocery list generator | ✓ | ✓ | ✓ |
-| Price-hike & margin alerts (in-app) | ✓ | ✓ | ✓ |
-| Kitchen assistant (AI Q&A over your data) | — | ✓ | ✓ |
-| Email alerts & weekly digest | — | ✓ | ✓ |
-| Vendor directory & spend analytics | Basic (top 3 vendors) | Full | Full, per location |
-| Expense tags (non-food) | 3 tags | Unlimited | Unlimited |
-| Data export (CSV) | — | ✓ | ✓ |
-| POS integration *(roadmap)* | — | ✓ | ✓ |
-| Support | Community | Priority (48 h) | Dedicated |
+| | **Gratis** | **Pro** — *el plan del chef* | **Max** | **Grupo** |
+|---|---|---|---|---|
+| Price (live in Stripe) | $0 | **$39/mo** or $390/yr (2 months free) | **$59/mo** or $590/yr | Pro or Max, billed per location |
+| Invoice scans (OCR) | 25 / month | 500 / month fair use | 1,500 / month fair use | Per location |
+| Team members | Owner only | Up to 5, granular permissions | Up to 10, granular permissions | Per location |
+| History window | 90 days | Full history | Full history | Full history, per location |
+| Menu items (dishes + drinks) | **Unlimited** | Unlimited | Unlimited | Unlimited |
+| Dish margins & menu engineering matrix | ✓ | ✓ | ✓ | ✓, per location |
+| Theoretical pantry + true-up | ✓ | ✓ | ✓ | ✓ |
+| Grocery list generator | ✓ | ✓ | ✓ | ✓ |
+| Price-hike & margin alerts (in-app) | ✓ | ✓ | ✓ | ✓ |
+| Kitchen assistant (AI Q&A over your data) | — | ✓ | ✓ | ✓ |
+| Email alerts & weekly digest | — | ✓ | ✓ | ✓ |
+| Vendor directory & spend analytics | Basic (top 3 vendors) | Full | Full | Full, per location |
+| Expense tags (non-food) | 3 tags | Unlimited | Unlimited | Unlimited |
+| Data export (CSV) | — | ✓ | ✓ | ✓ |
+| POS integration *(roadmap)* | — | ✓ | ✓ | ✓ |
+| Support | Community | Priority (48 h) | Priority (48 h) | Dedicated |
+
+**Pricing update (2026-07-27).** Pro re-anchored from the $29 placeholder to **$39** (the recovered-margin math supports it, and lowering later is painless where raising is a churn event), and **Max** added at **$59** — 1,500 scans, 10 seats — to harvest the price umbrella under Haddock's 85–159€ entry from the customers who resemble Haddock's, without taxing free→Pro conversion. §9's breakeven tables still assume $29, so they now read conservative. Max costs ~$4.50/month worst-case to serve at Gemini prices, so its margin profile matches Pro's.
 
 **Grupo is not a distinct SKU** — it's the multi-location switcher (built — see `docs/multi-location-plan.md`) plus N independent Pro subscriptions, one per restaurant, each on its own monthly/yearly cadence. A person can own or work at several locations with a different role and permissions at each; every limit above (scans, seats, history) applies per location, because each location's Stripe subscription, plan, and usage are tracked independently on its own `restaurants/{rid}` doc. What Grupo does *not* yet include is consolidated cross-location reporting (one dashboard summing all locations) — that's real engineering, deliberately out of scope for now (see "Out of scope" in the multi-location plan), and the natural next step once it's worth building.
 
@@ -120,7 +122,7 @@ The permission system already carries per-member gating; plan gating is the same
 **Billing (built — Stripe).** `billing.ts` implements Stripe Checkout (monthly or yearly, chosen on the pricing page) and the customer portal (change card / switch interval / cancel). The `stripeWebhook` function is the *only* thing that flips `plan` in production: it verifies the signature and mirrors the subscription state onto `restaurants/{rid}` (`plan`, `planInterval`, `stripeCustomerId`, `stripeSubscriptionId`). Firestore is the source of truth the app reads, so a dropped webhook never unlocks Pro without payment, and a cancellation always re-locks. Configuration is all dashboard/secret, no code:
 
 - Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
-- Params (`functions/.env`): `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_YEARLY` (price IDs of the Pro product's two recurring prices), `APP_URL` (checkout return base).
+- Params (`functions/.env`): `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_YEARLY`, `STRIPE_PRICE_MAX_MONTHLY`, `STRIPE_PRICE_MAX_YEARLY` (price IDs of each product's two recurring prices — all four required or billing stays 501), `APP_URL` (checkout return base). The webhook derives the tier from which price the subscription actually carries, so the price IDs are also what map Stripe → `plan: "pro" | "max"`.
 - Point a Stripe webhook endpoint at the deployed `stripeWebhook` URL, subscribing to `checkout.session.completed` and `customer.subscription.*`.
 
 Until `STRIPE_SECRET_KEY` is set, checkout/portal return 501 (`billing_not_configured`) and the emulator-only `PUT /billing/plan` switches tiers for testing. The two recurring prices are the only Stripe objects that must exist; everything else is created on the fly.

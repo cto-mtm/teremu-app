@@ -6,6 +6,7 @@ import { getStorage } from "firebase-admin/storage";
 import type { Response } from "express";
 import { ZodError } from "zod";
 import { handleCors } from "./helpers/cors.js";
+import { REGION } from "./region.js";
 import { can, emailKey, requireMember, type Member } from "./tenancy.js";
 import {
   approveAsExpenseSchema,
@@ -14,6 +15,7 @@ import {
   countSchema,
   createIngredientSchema,
   DEFAULT_RESTAURANT_NAME,
+  discardSchema,
   draftRecipesSchema,
   expenseSchema,
   inviteSchema,
@@ -36,7 +38,7 @@ import {
 import { askAssistant } from "./assistant.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { orderEmail } from "./mail.js";
-import { consumeScan, getPlanInfo } from "./plan.js";
+import { consumeScan, getPlanInfo, planOf } from "./plan.js";
 import {
   billingConfigured,
   cancelSubscription,
@@ -109,15 +111,15 @@ async function route(req: Request, res: Response): Promise<unknown> {
       membershipsSnap.docs.map(async (m2) => {
         const restSnap = await db.collection("restaurants").doc(m2.id).get();
         const membership = m2.data() as MembershipDoc;
-        const plan = (restSnap.get("plan") as string | undefined) === "pro" ? "pro" : "free";
+        const plan = planOf(restSnap.get("plan"));
         return {
           rid: m2.id,
           name: (restSnap.get("name") as string | undefined) ?? DEFAULT_RESTAURANT_NAME,
           role: membership.role,
           plan,
           // Billing is per location (see docs/business-model.md §3) — the
-          // Grupo tier is just Pro × N locations, each on its own cadence.
-          interval: plan === "pro" && restSnap.get("planInterval") === "year" ? "year" : plan === "pro" ? "month" : null,
+          // Grupo tier is just paid plans × N locations, each on its own cadence.
+          interval: plan === "free" ? null : restSnap.get("planInterval") === "year" ? "year" : "month",
         };
       })
     );
@@ -249,6 +251,28 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (body.invoiceId !== undefined) patch.reconInvoiceId = body.invoiceId;
         if (body.handled !== undefined) patch.reconHandled = body.handled;
         await ref.update(patch);
+        const fresh = await ref.get();
+        return json(res, 200, { id, ...fresh.data() });
+      }
+      if (m === "PUT" && action === "discard") {
+        if (!can(member, "triage", "edit")) return forbidden(res);
+        const { discarded } = discardSchema.parse(req.body);
+        const snap = await ref.get();
+        if (!snap.exists) return json(res, 404, { error: "invoice not found" });
+        const inv = snap.data() as InvoiceDoc;
+        if (discarded) {
+          // Only a scan that has come to rest. "processing" is excluded
+          // because the background OCR would write its own status right
+          // over the dismissal; "approved" already moved stock and money.
+          if (inv.status !== "needs_review" && inv.status !== "failed")
+            return json(res, 400, { error: `cannot discard a ${inv.status} invoice` });
+          await ref.update({ status: "discarded" });
+        } else {
+          if (inv.status !== "discarded")
+            return json(res, 400, { error: "invoice is not discarded" });
+          // Back to where it was: OCR either failed or produced a draft.
+          await ref.update({ status: inv.error ? "failed" : "needs_review" });
+        }
         const fresh = await ref.get();
         return json(res, 200, { id, ...fresh.data() });
       }
@@ -695,12 +719,22 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (member.role !== "owner") return forbidden(res);
     if (m === "POST" && id === "checkout") {
       if (!billingConfigured()) return json(res, 501, { error: "billing_not_configured" });
-      const { interval } = z
-        .object({ interval: z.enum(["month", "year"]).default("month") })
+      const { plan, interval } = z
+        .object({
+          plan: z.enum(["pro", "max"]).default("pro"),
+          interval: z.enum(["month", "year"]).default("month"),
+        })
         .parse(req.body ?? {});
+      // Checkout creates a NEW subscription. A restaurant that already
+      // has a live one must change plan via the portal, or Stripe would
+      // happily bill two subscriptions at once.
+      if (planOf((await db.collection("restaurants").doc(rid).get()).get("plan")) !== "free") {
+        return json(res, 409, { error: "already_subscribed" });
+      }
       const url = await createCheckoutSession({
         rid,
         email: member.email,
+        plan,
         interval,
         origin: req.headers.origin,
       });
@@ -712,12 +746,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
       if (!url) return json(res, 400, { error: "no_subscription" });
       return json(res, 200, { url });
     }
-    // Emulator-only plan switch so both tiers are testable without Stripe.
+    // Emulator-only plan switch so every tier is testable without Stripe.
     if (m === "PUT" && id === "plan") {
       if (process.env.FUNCTIONS_EMULATOR !== "true") {
         return json(res, 501, { error: "billing_not_configured" });
       }
-      const { plan } = z.object({ plan: z.enum(["free", "pro"]) }).parse(req.body);
+      const { plan } = z.object({ plan: z.enum(["free", "pro", "max"]) }).parse(req.body);
       await db.collection("restaurants").doc(rid).set({ plan }, { merge: true });
       return json(res, 200, { ok: true, plan });
     }
@@ -728,7 +762,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
 
 export const api = onRequest(
   {
-    region: "us-central1",
+    region: REGION,
     maxInstances: 10,
     secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY],
     memory: "512MiB",

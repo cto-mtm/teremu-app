@@ -12,13 +12,25 @@ export const STRIPE_SECRET_KEY: SecretParam = defineSecret("STRIPE_SECRET_KEY");
 export const STRIPE_WEBHOOK_SECRET: SecretParam = defineSecret("STRIPE_WEBHOOK_SECRET");
 
 export type BillingInterval = "month" | "year";
+export type PaidPlan = "pro" | "max";
 
-/** Whether live billing is wired up (else callers fall back to 501). */
+const PRICE_ENV: Record<PaidPlan, Record<BillingInterval, string>> = {
+  pro: { month: "STRIPE_PRICE_PRO_MONTHLY", year: "STRIPE_PRICE_PRO_YEARLY" },
+  max: { month: "STRIPE_PRICE_MAX_MONTHLY", year: "STRIPE_PRICE_MAX_YEARLY" },
+};
+
+/** Whether live billing is wired up (else callers fall back to 501).
+ * All four price IDs are required — a partially configured ladder would
+ * 500 on whichever plan is missing, which is worse than a clean 501.
+ * TEREMU_TEST_MOCKS (set by the firebase test script) forces "not
+ * configured" so the suite is hermetic despite real local secrets. */
 export function billingConfigured(): boolean {
+  if (process.env.TEREMU_TEST_MOCKS) return false;
   return Boolean(
     process.env.STRIPE_SECRET_KEY &&
-      process.env.STRIPE_PRICE_PRO_MONTHLY &&
-      process.env.STRIPE_PRICE_PRO_YEARLY,
+      Object.values(PRICE_ENV).every((byInterval) =>
+        Object.values(byInterval).every((envName) => process.env[envName]),
+      ),
   );
 }
 
@@ -30,12 +42,9 @@ function stripe(): Stripe {
   return new Stripe(key);
 }
 
-function priceFor(interval: BillingInterval): string {
-  const price =
-    interval === "year"
-      ? process.env.STRIPE_PRICE_PRO_YEARLY
-      : process.env.STRIPE_PRICE_PRO_MONTHLY;
-  if (!price) throw new Error(`no Stripe price configured for ${interval}`);
+function priceFor(plan: PaidPlan, interval: BillingInterval): string {
+  const price = process.env[PRICE_ENV[plan][interval]];
+  if (!price) throw new Error(`no Stripe price configured for ${plan}/${interval}`);
   return price;
 }
 
@@ -46,19 +55,24 @@ function returnBase(origin: string | undefined): string {
 }
 
 /**
- * Create a Checkout Session for the Pro plan at the chosen interval.
+ * Create a Checkout Session for a paid plan at the chosen interval.
  * Reuses the restaurant's Stripe customer if one exists so a re-subscribe
  * doesn't duplicate customers. `rid` rides along on both the session
  * (client_reference_id) and the subscription metadata, so every webhook
  * event maps back to exactly one restaurant.
+ *
+ * Checkout is for NEW subscriptions only — a restaurant that already has
+ * one changes plan through the customer portal (createPortalSession), or
+ * a second live subscription would double-bill. The API layer enforces it.
  */
 export async function createCheckoutSession(args: {
   rid: string;
   email: string;
+  plan: PaidPlan;
   interval: BillingInterval;
   origin: string | undefined;
 }): Promise<string> {
-  const { rid, email, interval, origin } = args;
+  const { rid, email, plan, interval, origin } = args;
   const db = getFirestore();
   const ref = db.collection("restaurants").doc(rid);
   const existingCustomer = (await ref.get()).get("stripeCustomerId") as string | undefined;
@@ -66,7 +80,7 @@ export async function createCheckoutSession(args: {
 
   const session = await stripe().checkout.sessions.create({
     mode: "subscription",
-    line_items: [{ price: priceFor(interval), quantity: 1 }],
+    line_items: [{ price: priceFor(plan, interval), quantity: 1 }],
     client_reference_id: rid,
     ...(existingCustomer ? { customer: existingCustomer } : { customer_email: email }),
     subscription_data: { metadata: { rid } },
@@ -120,9 +134,19 @@ export async function cancelSubscription(rid: string): Promise<void> {
 
 // ── Webhook ─────────────────────────────────────────────────────────
 
-/** subscription status → our two-state plan. */
-function planFromStatus(status: Stripe.Subscription.Status): Plan {
-  return status === "active" || status === "trialing" ? "pro" : "free";
+/** subscription state → our plan: dead → free, else the tier whose
+ * price was actually bought. An unrecognized price falls back to "pro"
+ * (fail-open to the cheaper tier, logged for investigation). */
+function planFromSubscription(sub: Stripe.Subscription): Plan {
+  if (!(sub.status === "active" || sub.status === "trialing")) return "free";
+  const priceId = sub.items.data[0]?.price?.id;
+  for (const plan of Object.keys(PRICE_ENV) as PaidPlan[]) {
+    if (Object.values(PRICE_ENV[plan]).some((envName) => process.env[envName] === priceId)) {
+      return plan;
+    }
+  }
+  logger.warn("Stripe price not in configured ladder — defaulting to pro", { priceId });
+  return "pro";
 }
 
 async function applySubscription(sub: Stripe.Subscription): Promise<void> {
@@ -131,10 +155,22 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
     logger.warn("Stripe subscription without rid metadata", { sub: sub.id });
     return;
   }
+  // Stripe does not guarantee event ordering: a delayed `updated` event
+  // processed after `deleted` would re-apply its stale active status and
+  // resurrect a cancelled plan. Re-fetch so every event applies the
+  // subscription's CURRENT state; on failure fall back to the snapshot
+  // (Stripe retries non-2xx deliveries anyway).
+  try {
+    const fresh = await stripe().subscriptions.retrieve(sub.id);
+    if (!fresh.metadata?.rid) fresh.metadata = { ...fresh.metadata, rid };
+    sub = fresh;
+  } catch (err) {
+    logger.warn("Could not re-fetch subscription — applying event snapshot", { sub: sub.id, err });
+  }
   const interval = sub.items.data[0]?.price?.recurring?.interval;
   await getFirestore().collection("restaurants").doc(rid).set(
     {
-      plan: planFromStatus(sub.status),
+      plan: planFromSubscription(sub),
       planInterval: interval === "year" ? "year" : "month",
       stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
       stripeSubscriptionId: sub.id,

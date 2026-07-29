@@ -23,16 +23,27 @@ const busy = ref(false)
 
 const FREE_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9'] as const
 const PRO_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10'] as const
+const MAX_ITEMS = ['i1', 'i2'] as const
 
-async function upgrade(): Promise<void> {
+async function upgrade(toPlan: 'pro' | 'max'): Promise<void> {
   busy.value = true
   const res = await apiFetch(
     '/billing/checkout',
-    { method: 'POST', body: JSON.stringify({ interval: interval.value }) },
+    { method: 'POST', body: JSON.stringify({ plan: toPlan, interval: interval.value }) },
     billingUrlSchema,
   )
   busy.value = false
   // Success → hand off to Stripe's hosted checkout page.
+  if (res.ok) window.location.href = res.data.url
+  else alert(t('settings.plan.checkoutPlaceholder'))
+}
+
+/** Already subscribed → plan changes go through the Stripe portal
+ * (a second checkout would create a second, parallel subscription). */
+async function changePlan(): Promise<void> {
+  busy.value = true
+  const res = await apiFetch('/billing/portal', { method: 'POST' }, billingUrlSchema)
+  busy.value = false
   if (res.ok) window.location.href = res.data.url
   else alert(t('settings.plan.checkoutPlaceholder'))
 }
@@ -68,7 +79,7 @@ async function upgrade(): Promise<void> {
       </div>
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-2">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <!-- Free -->
       <div class="card space-y-4" :class="plan === 'free' ? 'border-ember/50' : ''">
         <div class="flex items-center justify-between">
@@ -115,8 +126,42 @@ async function upgrade(): Promise<void> {
             <span>{{ t(`pricing.pro.${k}`) }}</span>
           </li>
         </ul>
-        <BaseButton v-if="isOwner && plan === 'free'" class="w-full" :disabled="busy" @click="upgrade">
+        <BaseButton v-if="isOwner && plan === 'free'" class="w-full" :disabled="busy" @click="upgrade('pro')">
           {{ busy ? t('common.action.saving') : t('pricing.upgradeCta') }}
+        </BaseButton>
+      </div>
+
+      <!-- Max -->
+      <div
+        class="card relative space-y-4 overflow-hidden"
+        :class="plan === 'max' ? 'border-herb/60' : ''"
+      >
+        <div class="flex items-center justify-between">
+          <div class="text-sm font-semibold">{{ t('pricing.max.name') }}</div>
+          <span v-if="plan === 'max'" class="chip-down">{{ t('pricing.current') }}</span>
+        </div>
+        <div>
+          <span class="text-3xl font-bold">
+            {{ interval === 'year' ? t('pricing.max.priceYear') : t('pricing.max.priceMonth') }}
+          </span>
+          <span class="ml-1 text-xs text-smoke">
+            {{ interval === 'year' ? t('pricing.max.periodYear') : t('pricing.max.periodMonth') }}
+          </span>
+          <div v-if="interval === 'year'" class="mt-0.5 text-xs text-herb-700">{{ t('pricing.max.yearlyEquiv') }}</div>
+        </div>
+        <p class="text-xs text-smoke">{{ t('pricing.max.tagline') }}</p>
+        <p class="text-xs font-semibold text-ink">{{ t('pricing.max.includes') }}</p>
+        <ul class="space-y-2 text-sm">
+          <li v-for="k in MAX_ITEMS" :key="k" class="flex gap-2">
+            <span class="text-herb-600" aria-hidden="true">✓</span>
+            <span>{{ t(`pricing.max.${k}`) }}</span>
+          </li>
+        </ul>
+        <BaseButton v-if="isOwner && plan === 'free'" class="w-full" :disabled="busy" @click="upgrade('max')">
+          {{ busy ? t('common.action.saving') : t('pricing.upgradeCtaMax') }}
+        </BaseButton>
+        <BaseButton v-else-if="isOwner && plan === 'pro'" variant="ghost" class="w-full" :disabled="busy" @click="changePlan">
+          {{ busy ? t('common.action.saving') : t('pricing.changeCta') }}
         </BaseButton>
       </div>
     </div>

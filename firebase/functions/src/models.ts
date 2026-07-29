@@ -232,7 +232,7 @@ export const restaurantDocSchema = z.object({
   name: z.string(),
   createdAt: z.number(),
   ownerUid: z.string(),
-  plan: z.enum(["free", "pro"]),
+  plan: z.enum(["free", "pro", "max"]),
   scanPeriod: z.string().nullable(),
   scanCount: z.number(),
 });
@@ -280,6 +280,11 @@ export const orderSchema = z.object({
 export const reconcileSchema = z.object({
   invoiceId: z.string().nullable().optional(), // manual link (or clear)
   handled: z.boolean().optional(), // mark resolved / reopen
+});
+
+/** PUT /invoices/:id/discard — drop a scan from Triage, or put it back. */
+export const discardSchema = z.object({
+  discarded: z.boolean().default(true),
 });
 
 /** POST /assistant — Q&A over the member's visible data. The client may

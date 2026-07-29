@@ -99,7 +99,7 @@ function clearConversation(): void {
 
         <!-- Pro gate -->
         <div
-          v-if="auth.profile?.plan !== 'pro'"
+          v-if="auth.profile?.plan === 'free'"
           class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
         >
           <svg viewBox="0 0 24 24" class="h-9 w-9 text-ember" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -149,7 +149,7 @@ function clearConversation(): void {
         </div>
 
         <!-- Composer -->
-        <form v-if="auth.profile?.plan === 'pro'" class="flex gap-2 border-t border-gray-100 p-4" @submit.prevent="ask">
+        <form v-if="auth.profile?.plan !== 'free'" class="flex gap-2 border-t border-gray-100 p-4" @submit.prevent="ask">
           <input
             v-model="question"
             class="input flex-1"

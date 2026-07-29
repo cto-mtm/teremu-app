@@ -24,11 +24,11 @@ const active = computed(
   () => locations.value.find((l) => l.rid === auth.profile?.restaurantId) ?? null,
 )
 
-/** "Free" / "Pro" / "Pro · yr" — billing is per location (see
+/** "Free" / "Pro" / "Max · yr" — billing is per location (see
  * docs/business-model.md §3), so each one shows its own cadence. */
-function planLabel(loc: { plan: 'free' | 'pro'; interval: 'month' | 'year' | null }): string {
+function planLabel(loc: { plan: 'free' | 'pro' | 'max'; interval: 'month' | 'year' | null }): string {
   const base = t('settings.plan.' + loc.plan)
-  return loc.plan === 'pro' && loc.interval === 'year' ? `${base} · ${t('locations.yearly')}` : base
+  return loc.plan !== 'free' && loc.interval === 'year' ? `${base} · ${t('locations.yearly')}` : base
 }
 
 function toggle(): void {
@@ -81,7 +81,7 @@ async function createLocation(): Promise<void> {
       @click="toggle"
     >
       <span class="min-w-0 flex-1 truncate font-semibold">{{ active.name }}</span>
-      <span :class="active.plan === 'pro' ? 'chip-down' : 'chip-up'">
+      <span :class="active.plan !== 'free' ? 'chip-down' : 'chip-up'">
         {{ planLabel(active) }}
       </span>
       <svg
@@ -117,7 +117,7 @@ async function createLocation(): Promise<void> {
         <span class="shrink-0 text-[11px] text-smoke">
           {{ loc.role === 'owner' ? t('settings.members.owner') : t('settings.members.member') }}
         </span>
-        <span class="shrink-0" :class="loc.plan === 'pro' ? 'chip-down' : 'chip-up'">
+        <span class="shrink-0" :class="loc.plan !== 'free' ? 'chip-down' : 'chip-up'">
           {{ planLabel(loc) }}
         </span>
       </button>
