@@ -20,6 +20,16 @@ import {
  */
 const hasRealConfig = Boolean(import.meta.env.VITE_FIREBASE_API_KEY)
 
+// A production build with no VITE_FIREBASE_* used to fall through to the
+// branch below and ship a live site whose sign-in pointed at the
+// VISITOR's own 127.0.0.1:9099. Silent, and only visible once a real
+// user tried to log in. Fail loudly at boot instead.
+if (import.meta.env.PROD && !hasRealConfig) {
+  throw new Error(
+    'Missing VITE_FIREBASE_* config: a production build needs app/.env.production (see app/.env.example).',
+  )
+}
+
 const app = initializeApp(
   hasRealConfig
     ? {

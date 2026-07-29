@@ -19,17 +19,15 @@ if (readFileSync(join(ROOT, "firebase/.firebaserc"), "utf8").includes("REPLACE_M
   process.exit(1);
 }
 
-// 1. Shared package first — both the app and functions depend on it.
-run("npm run build --workspace @teremu/shared");
+// 1. Shared, then the SPA, then the functions bundle. Deliberately the
+// same `npm run build` the emulator and CI paths use — a deploy must
+// never build differently from what was tested.
+run("npm run build");
 
-// 2. Web app (vue-tsc + vite -> app/dist), copied into Hosting's public dir.
-run("npm run build --workspace teremu-app");
+// 2. The built SPA becomes Hosting's public dir.
 rmSync(join(ROOT, "firebase/app"), { recursive: true, force: true });
 cpSync(join(ROOT, "app/dist"), join(ROOT, "firebase/app"), { recursive: true });
 
-// 3. Functions bundle — esbuild inlines @teremu/shared into lib/index.js.
-run("npm run build --workspace teremu-functions");
-
-// 4. Deploy Hosting + Functions from the firebase/ folder.
+// 3. Deploy Hosting + Functions from the firebase/ folder.
 run("firebase deploy", join(ROOT, "firebase"));
 console.log("Deployed.");

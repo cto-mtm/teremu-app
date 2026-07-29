@@ -6,10 +6,17 @@ import { createRequire } from "node:module";
  *
  * Runtime `dependencies` (firebase-admin, firebase-functions, stripe,
  * zod) are marked EXTERNAL so Firebase installs them in the Cloud
- * Function environment. `@teremu/shared` is a devDependency and is NOT
- * external, so esbuild inlines its code directly into lib/index.js —
- * the cloud runtime never has to resolve the unpublished workspace
- * package. Typechecking is separate (`npm run typecheck` = tsc --noEmit).
+ * Function environment. Everything else — `@teremu/shared` above all —
+ * is inlined straight into lib/index.js, so the cloud runtime never has
+ * to resolve the unpublished workspace package.
+ *
+ * That is also why `@teremu/shared` is deliberately NOT listed in this
+ * package.json: `firebase deploy` uploads this file and installs from
+ * it in Cloud Build, which can only see the public npm registry, and
+ * `@teremu/shared@*` is not published there ("404 Not Found — not in
+ * this registry" fails the deploy). It resolves locally through the
+ * workspace symlink in the repo-root node_modules.
+ * Typechecking is separate (`npm run typecheck` = tsc --noEmit).
  *
  * Pass --watch to rebuild lib/ on every change to src/. That is what
  * `npm run emulators:watch` expects: the emulator reloads the function

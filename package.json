@@ -8,16 +8,19 @@
     "firebase/functions"
   ],
   "scripts": {
+    "build": "npm run build:shared && npm run build --workspace teremu-app && npm run build --workspace teremu-functions",
     "build:shared": "npm run build --workspace @teremu/shared",
+    "build:functions": "npm run build:shared && npm run build --workspace teremu-functions",
     "clean": "node scripts/clean-deps.mjs",
     "clean:install": "npm run clean && npm install && npm run build:shared",
     "typecheck": "npm run build:shared && npm run typecheck --workspace @teremu/shared && npm run typecheck --workspace teremu-functions && npm run typecheck --workspace teremu-app",
     "test": "npm run build:shared && npm --prefix firebase run test",
     "test:nvidia": "node scripts/test-nvidia.mjs",
-    "functions:watch": "npm --prefix firebase/functions run build:watch",
-    "emulators": "npm --prefix firebase run emulators",
-    "emulators:watch": "npm --prefix firebase run emulators:watch",
-    "emulators:all": "npm --prefix firebase run emulators:all",
+    "dev": "npm run build:shared && npm run dev --workspace teremu-app",
+    "functions:watch": "npm run build:shared && npm --prefix firebase/functions run build:watch",
+    "emulators": "npm run build:shared && npm --prefix firebase run emulators",
+    "emulators:watch": "npm run build:shared && npm --prefix firebase run emulators:watch",
+    "emulators:all": "npm run build:shared && npm --prefix firebase run emulators:all",
     "deploy": "node scripts/deploy.mjs"
   }
 }

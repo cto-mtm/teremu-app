@@ -7,6 +7,9 @@
     "emulators:watch": "firebase emulators:start --only functions,firestore,storage,auth --project demo-app",
     "seed": "npm --prefix functions run seed",
     "migrate": "npm --prefix functions run migrate",
-    "test": "npm --prefix functions run build && firebase emulators:exec --only functions,firestore,storage,auth --project demo-app \"npm --prefix functions run test\""
+    "test": "npm --prefix functions run build && cross-env TEREMU_TEST_MOCKS=1 firebase emulators:exec --only functions,firestore,storage,auth --project demo-app \"npm --prefix functions run test\""
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }
