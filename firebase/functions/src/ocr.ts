@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmApiKey } from "./llm.js";
+import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
 import { categorySchema, docTypeSchema, unitSchema, type LineItem } from "./models.js";
 
 const EXTRACTION_PROMPT = `You are an expert at reading restaurant vendor invoices and receipts, including crumpled, handwritten, or poorly printed ones.
@@ -29,6 +29,7 @@ Rules:
 - Map ambiguous units to the closest allowed unit ("ea", "pc" -> "each"; "#" -> "lb").
 - Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
 - Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
+- Never write a " character inside a value: spell inches as "in" ("12 in", not 12") and drop quotes around brand names.
 - If the image is a purchase document but too blurry/dark to read, reply {"error": "unreadable"}.`;
 
 export interface OcrResult {
@@ -127,11 +128,14 @@ export async function extractInvoice(
         ],
       },
     ],
-    { maxTokens: 2048, temperature: 0.1, label: "ocr" },
+    {
+      maxTokens: 2048,
+      temperature: 0.1,
+      label: "ocr",
+      json: { name: "invoice_extraction", schema: ocrResponseSchema },
+    },
   );
-  const match = raw.match(/\{[\s\S]*\}/); // defensive: strip fences/commentary
-  if (!match) throw new Error("Model returned no JSON");
-  const parsed = ocrResponseSchema.parse(JSON.parse(match[0]));
+  const parsed = ocrResponseSchema.parse(parseModelJson(raw));
   if (parsed.error)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).

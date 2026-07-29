@@ -53,6 +53,19 @@ Costs include a ~1.2× retry allowance; worst-case columns assume a retry on top
 1. **Image resolution** dominates scan input. Gemini tokenizes images in 768×768 tiles (~258 tokens each). The app already downscales captures to ≤1600px before upload (`app/src/lib/domain.ts`, `downscaleReceipt`) ≈ ~6 tiles ≈ **~1.5K tokens** — so the "avg" column is the verified normal case, and the 6K worst case only applies to images that bypass the app's scanner (e.g., future direct uploads). Keep that downscale step: it is a cost control, not just a bandwidth one.
 2. **Assistant snapshot scales with restaurant size** (~20× spread between a new restaurant and one hitting every query cap). The caps make the worst case ~$0.009/question; a mature restaurant asking daily questions costs more per month from the assistant than from scanning.
 
+## Getting JSON back
+
+The three JSON-shaped calls (OCR, menu scan, recipe drafts) pass `json: { name, schema }` to `chatCompletion`, which sends `response_format: {type: "json_schema"}` so the provider **constrains decoding** to the shape. Malformed JSON and off-vocabulary units/categories become unrepresentable instead of merely discouraged by the prompt.
+
+The schema on the wire is derived from the zod schema the reply is already parsed with (`modelJsonSchema` → `z.toJSONSchema(…, { io: "output" })`), so there is no second source of truth to drift. It is pruned to the keywords every provider accepts — `type`, `enum`, `properties`, `required`, `items`, `anyOf`, `additionalProperties`, `description`. Value constraints (`pattern`, `minimum`, `default`) are dropped: OpenAI's strict mode rejects them, others ignore them, and zod re-validates on the way in anyway. The decoder enforces **shape**; zod enforces **values**.
+
+Two fallbacks behind that, because "the provider honors it" is not guaranteed:
+
+1. A model that rejects `response_format` gets one silent retry without it. If the retry **succeeds** — proof the schema param was the problem, not the request itself — that model is skipped for the rest of the process (`llm_structured_output_unsupported` logged once). A 400 the request earned on its own fails both ways and does not poison the skip-list. Free NVIDIA endpoints and custom `LLM_URL` targets are the likely cases.
+2. **`parseModelJson`** reads every reply — never a bare `JSON.parse`. It parses strictly first and only falls back to a repair pass for markdown fences, trailing commas, replies cut off by `max_tokens`, and the one that actually bit us: an unescaped quote inside a value (`"Bandeja 12" x 8""`). This matters even on Gemini, whose compat layer *silently ignores* params it does not support — an unconstrained reply can arrive with no error to detect it by. It logs `llm_json_repaired` (recovered) or `llm_json_unparseable` (lost, with the payload).
+
+`llm_usage` carries a `structured` field, so a rise in unconstrained calls or repairs is queryable in Cloud Logging rather than something you find in a stack trace. Covered by `test/llm-json.test.ts`.
+
 ## Caveats
 
 - Gemini's OpenAI compatibility layer is officially **beta**: unknown params are *silently ignored*, and Gemini-specific features (thinking budgets etc.) need `extra_body`. Our payloads only use core params, so exposure is minimal.

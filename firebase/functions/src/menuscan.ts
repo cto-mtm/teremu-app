@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmApiKey } from "./llm.js";
+import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
 import { categorySchema, unitSchema, type Category, type Unit } from "./models.js";
 
 /**
@@ -14,15 +14,13 @@ import { categorySchema, unitSchema, type Category, type Unit } from "./models.j
  * Without an LLM API key both fall back to deterministic mocks so
  * the whole wizard works offline (designed behavior, not an error).
  */
-function callModel(content: unknown[], maxTokens: number, label: string): Promise<string> {
-  return chatCompletion([{ role: "user", content }], { maxTokens, temperature: 0.2, label });
-}
-
-/** Defensive: strip markdown fences / commentary around the JSON. */
-function firstJson(raw: string): unknown {
-  const match = raw.match(/[[{][\s\S]*[\]}]/);
-  if (!match) throw new Error("Model returned no JSON");
-  return JSON.parse(match[0]);
+function callModel(
+  content: unknown[],
+  maxTokens: number,
+  label: string,
+  json: { name: string; schema: z.ZodType },
+): Promise<string> {
+  return chatCompletion([{ role: "user", content }], { maxTokens, temperature: 0.2, label, json });
 }
 
 // ── 1. Menu extraction ──────────────────────────────────────────────
@@ -43,6 +41,7 @@ Rules:
 - "price": the printed price as a number. If a dish shows several prices (sizes), use the smallest and keep the name as printed. Use null only when no price is printed.
 - "section": the heading the item appears under ("Entrantes", "Postres", ...), or null.
 - Skip descriptions, ingredients lists, and allergen notes — names and prices only.
+- Never write a " character inside a value: drop the quotes around a quoted dish name (Pizza "Diavola" -> Pizza Diavola).
 - If the image is not a menu (a receipt, a person, a room...), reply {"isMenu": false, "dishes": []}.
 - If it is a menu but unreadable, reply {"error": "unreadable"}.`;
 
@@ -76,8 +75,9 @@ export async function extractMenu(imageBase64: string): Promise<MenuScanResult> 
     ],
     3072,
     "menu-extract",
+    { name: "menu_extraction", schema: menuResponseSchema },
   );
-  const parsed = menuResponseSchema.parse(firstJson(raw));
+  const parsed = menuResponseSchema.parse(parseModelJson(raw));
   if (parsed.error) return { dishes: [], unreadable: true };
   if (!parsed.isMenu) return { dishes: [], notMenu: true };
   return {
@@ -104,16 +104,18 @@ function mockMenu(): MenuScanResult {
 
 const DRAFT_PROMPT = `You are a restaurant chef costing dishes. For each DISH below, estimate a realistic per-plate recipe.
 
-Reply with ONLY a JSON array (no markdown fences, no commentary) in exactly this shape:
+Reply with ONLY a JSON object (no markdown fences, no commentary) in exactly this shape:
 
-[
-  {
-    "dish": "copy the DISH name exactly",
-    "lines": [
-      { "match": "EXACT name from CATALOG if the ingredient is the same product, else null", "name": "ingredient name (used when match is null)", "qty": 180, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen", "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other" }
-    ]
-  }
-]
+{
+  "drafts": [
+    {
+      "dish": "copy the DISH name exactly",
+      "lines": [
+        { "match": "EXACT name from CATALOG if the ingredient is the same product, else null", "name": "ingredient name (used when match is null)", "qty": 180, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen", "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other" }
+      ]
+    }
+  ]
+}
 
 Rules:
 - 2 to 8 lines per dish: the main components that drive cost. Skip salt, pepper, water.
@@ -135,7 +137,9 @@ const draftSchema = z.object({
   lines: z.array(draftLineSchema).catch([]),
 });
 
-const draftsResponseSchema = z.array(draftSchema).catch([]);
+// Object root, not a bare array: every provider's structured-output
+// mode accepts an object at the top level; some reject an array.
+const draftsResponseSchema = z.object({ drafts: z.array(draftSchema).catch([]) });
 
 export interface CatalogEntry {
   id: string;
@@ -167,11 +171,17 @@ export async function draftRecipes(
   const prompt = `${DRAFT_PROMPT}\n\nCATALOG:\n${JSON.stringify(
     catalog.slice(0, 300).map((c) => c.name),
   )}\n\nDISHES:\n${JSON.stringify(dishes)}`;
-  const raw = await callModel([{ type: "text", text: prompt }], 4096, "recipe-drafts");
-  const parsed = draftsResponseSchema.parse(firstJson(raw));
+  const raw = await callModel([{ type: "text", text: prompt }], 4096, "recipe-drafts", {
+    name: "recipe_drafts",
+    schema: draftsResponseSchema,
+  });
+  // Unconstrained, a model may still answer with the bare array the
+  // prompt used to ask for — accept both shapes.
+  const value = parseModelJson(raw);
+  const parsed = draftsResponseSchema.parse(Array.isArray(value) ? { drafts: value } : value);
   const byName = new Map(catalog.map((c) => [c.name.toLowerCase().trim(), c]));
   const byDish = new Map(
-    parsed.map((d) => [d.dish.toLowerCase().trim(), d.lines] as const),
+    parsed.drafts.map((d) => [d.dish.toLowerCase().trim(), d.lines] as const),
   );
   // Return in request order; a dish the model skipped gets an empty draft.
   return dishes.map((dish) => ({
