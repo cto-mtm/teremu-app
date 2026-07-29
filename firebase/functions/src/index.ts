@@ -3,6 +3,7 @@ import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
+import { REGION } from "./region.js";
 import {
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
@@ -25,7 +26,7 @@ const NVIDIA_API_KEY = defineSecret("NVIDIA_API_KEY");
  * checkout.session.completed + customer.subscription.* events.
  */
 export const stripeWebhook = onRequest(
-  { region: "us-central1", secrets: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET] },
+  { region: REGION, secrets: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET] },
   async (req, res) => {
     const signature = req.headers["stripe-signature"];
     if (typeof signature !== "string") {
@@ -36,7 +37,8 @@ export const stripeWebhook = onRequest(
       await handleWebhook(req.rawBody, signature);
       res.status(200).send("ok");
     } catch (err) {
-      // 400 tells Stripe to retry (signature/parse failures included).
+      // Any non-2xx makes Stripe retry the delivery (with backoff, up
+      // to ~3 days) — so a transient Firestore/Stripe hiccup self-heals.
       logger.error("Stripe webhook error", err);
       res.status(400).send(err instanceof Error ? err.message : "webhook error");
     }
@@ -47,9 +49,14 @@ export const stripeWebhook = onRequest(
  * Fires whenever POST /invoices stores a receipt JPEG. Runs OCR in the
  * background so the scanner UI never waits. Works in the Storage
  * emulator too (mock OCR when no NVIDIA_API_KEY is set).
+ *
+ * REGION: us-east1, like every function here — an Eventarc storage
+ * trigger MUST live in the same region as its bucket ("a function in
+ * region us-central1 cannot listen to a bucket in region us-east1" is a
+ * hard deploy failure), and the default bucket is us-east1.
  */
 export const onReceiptUploaded = onObjectFinalized(
-  { region: "us-central1", secrets: [NVIDIA_API_KEY], memory: "512MiB", timeoutSeconds: 120 },
+  { region: REGION, secrets: [NVIDIA_API_KEY], memory: "512MiB", timeoutSeconds: 120 },
   async (event) => {
     const path = event.data.name ?? "";
     // receipts/{restaurantId}/{invoiceId}.jpg — per-workspace namespace.

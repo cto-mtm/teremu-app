@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import Stripe from "stripe";
 import { getFirestore } from "firebase-admin/firestore";
-import { clearFirestore, get, makeOwner, post, put, setPlan, uniqueId } from "./helpers";
+import { clearFirestore, FUNCTIONS_BASE, get, makeOwner, post, put, setPlan, uniqueId } from "./helpers";
 
 /**
  * The webhook test needs a real (if fake) STRIPE_SECRET_KEY +
@@ -13,7 +13,7 @@ import { clearFirestore, get, makeOwner, post, put, setPlan, uniqueId } from "./
  */
 const FAKE_WEBHOOK_SECRET = "whsec_teremu_ci_fake_0000000000000000000000000000";
 
-const STRIPE_WEBHOOK_URL = "http://127.0.0.1:5001/demo-app/us-central1/stripeWebhook";
+const STRIPE_WEBHOOK_URL = `${FUNCTIONS_BASE}/stripeWebhook`;
 
 function subscriptionEvent(args: {
   rid: string;

@@ -12,7 +12,7 @@ Pure client math in `app/src/lib/domain.ts` is unit-test-shaped but out of scope
 
 Dirumed's API is **Hono**, so its tests call `app.request(path, …)` in-process — fast, and it runs the real middleware. Teremu's API is a hand-rolled `onRequest` / `route(req, res)` router with **native binary handling** (`req.rawBody` for raw `image/jpeg` uploads, `res.send(buffer)` for image downloads). Porting that to Hono means an Express↔Fetch adapter around firebase-functions, which is precisely where raw-body bugs hide — a risky rewrite of working, deployed code for mostly test-ergonomics gains.
 
-So Teremu tests hit the **emulated function over HTTP** (`http://127.0.0.1:5001/demo-app/us-central1/api`). Zero production-code change, fully black-box (exercises the real `onRequest`, CORS, routing, and binary paths). This is the faithful equivalent of Dirumed's in-process approach. If in-process speed ever matters, extract `route()` into a callable — no framework required. Hono is reserved for a greenfield service or a deliberate, separately-verified API rework.
+So Teremu tests hit the **emulated function over HTTP** (`http://127.0.0.1:5001/demo-app/us-east1/api` — the path embeds the functions region, see `src/region.ts`). Zero production-code change, fully black-box (exercises the real `onRequest`, CORS, routing, and binary paths). This is the faithful equivalent of Dirumed's in-process approach. If in-process speed ever matters, extract `route()` into a callable — no framework required. Hono is reserved for a greenfield service or a deliberate, separately-verified API rework.
 
 ## Runner & scaffold (house standard: Vitest)
 

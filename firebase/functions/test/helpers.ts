@@ -35,13 +35,17 @@ import {
   type RestaurantDoc,
 } from "../src/models";
 import { emailKey } from "../src/tenancy";
+import { REGION } from "../src/region";
 
 const PROJECT_ID = "demo-app";
 const FUNCTIONS_HOST = "127.0.0.1:5001";
 const AUTH_HOST = "127.0.0.1:9099";
 const FIRESTORE_HOST = "127.0.0.1:8080";
-const REGION = "us-central1";
-const BASE_URL = `http://${FUNCTIONS_HOST}/${PROJECT_ID}/${REGION}/api`;
+// The emulator serves each function under its declared region, so this
+// must track REGION in src/region.ts — imported rather than repeated so
+// a region move can't leave the suite pointing at a 404.
+export const FUNCTIONS_BASE = `http://${FUNCTIONS_HOST}/${PROJECT_ID}/${REGION}`;
+const BASE_URL = `${FUNCTIONS_BASE}/api`;
 
 if (getApps().length === 0) {
   // Mirrors the default bucket name Firebase derives from the project id
@@ -209,7 +213,7 @@ export async function seedInvite(rid: string, email: string, perms: Perms): Prom
 /** Emulator-only plan switch (paywall setup without Stripe) — writes
  * directly rather than going through PUT /billing/plan so it stays a
  * neutral fixture; the endpoint itself is exercised by billing.test.ts. */
-export async function setPlan(rid: string, plan: "free" | "pro"): Promise<void> {
+export async function setPlan(rid: string, plan: "free" | "pro" | "max"): Promise<void> {
   await db().collection("restaurants").doc(rid).set({ plan }, { merge: true });
 }
 

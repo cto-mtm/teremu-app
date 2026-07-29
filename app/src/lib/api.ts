@@ -25,13 +25,17 @@ async function authHeaders(): Promise<Record<string, string>> {
   }
 }
 
-const EMULATOR_URL = 'http://127.0.0.1:5001/demo-app/us-central1/api'
+// Both URLs embed the functions region — it must match REGION in
+// firebase/functions/src/region.ts (us-east1, where the Storage bucket
+// is). The emulator serves each function under its declared region, so
+// a mismatch here is a 404 in local dev, not just in prod.
+const EMULATOR_URL = 'http://127.0.0.1:5001/demo-app/us-east1/api'
 
 const BASE_URL =
   import.meta.env.VITE_API_URL ??
   (import.meta.env.DEV
     ? EMULATOR_URL
-    : 'https://us-central1-teremu-app.cloudfunctions.net/api')
+    : 'https://us-east1-teremu-app.cloudfunctions.net/api')
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
