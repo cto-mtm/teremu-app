@@ -136,6 +136,13 @@ async function retry(): Promise<void> {
   }
 }
 
+/** Dismiss the scan without approving it — junk, duplicate, wrong page. */
+async function dismiss(): Promise<void> {
+  if (!confirm(t('triage.dismissConfirm'))) return
+  if (await store.discard(invoiceId.value)) void router.push('/triage')
+  else alert(t('triage.dismissFailed'))
+}
+
 async function approve(): Promise<void> {
   busy.value = true
   const ok = await store.approve(
@@ -375,6 +382,15 @@ async function approve(): Promise<void> {
           </BaseButton>
         </div>
       </template>
+    </div>
+
+    <!-- Escape hatch for a scan that should never become an invoice.
+         Excluded while processing: OCR would write its status right
+         back over the dismissal (the API rejects it for that reason). -->
+    <div v-if="canEdit && !readonly && invoice.status !== 'processing'" class="text-center">
+      <button class="text-xs font-semibold text-smoke hover:text-coral" @click="dismiss">
+        {{ t('triage.dismiss') }}
+      </button>
     </div>
 
     <div v-if="canEdit && !readonly" class="sticky bottom-6 pt-2">

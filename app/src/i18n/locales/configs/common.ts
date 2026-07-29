@@ -25,6 +25,7 @@ const es = {
     needs_review: 'Por revisar',
     approved: 'Aprobada',
     failed: 'Fallida',
+    discarded: 'Descartada',
   },
   category: {
     produce: 'Verduras y frutas',
@@ -89,6 +90,7 @@ const en: typeof es = {
     needs_review: 'Needs review',
     approved: 'Approved',
     failed: 'Failed',
+    discarded: 'Dismissed',
   },
   category: {
     produce: 'Produce',

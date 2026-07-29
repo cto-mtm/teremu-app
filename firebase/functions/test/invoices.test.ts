@@ -151,6 +151,39 @@ describe("invoice lifecycle", () => {
     expect((reconciled.body as any).reconHandled).toBe(true);
   });
 
+  it("discard takes a scan out of triage and can put it back where it was", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const inv = await seedInvoice(owner.rid, {});
+    await col(owner.rid, "invoices").doc(inv.id).update({ status: "failed", error: "not_a_document" });
+
+    const dismissed = await put<{ id: string } & InvoiceDoc>(`/invoices/${inv.id}/discard`, owner.token, {
+      discarded: true,
+    });
+    expect(dismissed.status).toBe(200);
+    expect(dismissed.body.status).toBe("discarded");
+    // Kept, not deleted — the image and the record survive the dismissal.
+    expect(dismissed.body.imagePath).toBe(inv.imagePath);
+
+    const restored = await put<{ id: string } & InvoiceDoc>(`/invoices/${inv.id}/discard`, owner.token, {
+      discarded: false,
+    });
+    expect(restored.status).toBe(200);
+    expect(restored.body.status).toBe("failed"); // it still carries an error
+  });
+
+  it("discard refuses an approved invoice — its stock and price effects are already applied", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const inv = await seedInvoice(owner.rid, {});
+    await put(`/invoices/${inv.id}/approve`, owner.token, {
+      vendorName: "Metro Foods",
+      invoiceDate: "2026-07-01",
+      lineItems: [{ name: "Yellow Onions", qty: 4, unit: "lb", unitPrice: 0.95, total: 3.8 }],
+    });
+
+    const refused = await put(`/invoices/${inv.id}/discard`, owner.token, { discarded: true });
+    expect(refused.status).toBe(400);
+  });
+
   it("reprocess recovers a failed invoice once a real image exists at its imagePath", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
 

@@ -15,6 +15,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
   )
   const triageCount = computed(() => pending.value.length)
   const approved = computed(() => invoices.value.filter((i) => i.status === 'approved'))
+  const discarded = computed(() => invoices.value.filter((i) => i.status === 'discarded'))
   const byId = computed(() => new Map(invoices.value.map((i) => [i.id, i])))
 
   async function refresh(): Promise<void> {
@@ -94,6 +95,23 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return res.ok
   }
 
+  /**
+   * Dismiss a scan from Triage — the junk photos and duplicates that
+   * would otherwise sit in the inbox forever showing an error. The
+   * document is kept (status `discarded`, out of `pending`), so passing
+   * `false` puts it back.
+   */
+  async function discard(id: string, discarded = true): Promise<boolean> {
+    const res = await apiFetch<Invoice>(
+      `/invoices/${id}/discard`,
+      { method: 'PUT', body: JSON.stringify({ discarded }) },
+      invoiceSchema,
+    )
+    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    else error.value = res.error
+    return res.ok
+  }
+
   async function reprocess(id: string): Promise<boolean> {
     const res = await apiFetch<Invoice>(`/invoices/${id}/reprocess`, { method: 'POST' }, invoiceSchema)
     if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
@@ -114,6 +132,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     pending,
     triageCount,
     approved,
+    discarded,
     byId,
     refresh,
     reset,
@@ -121,6 +140,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     approve,
     approveAsExpense,
     reconcile,
+    discard,
     reprocess,
   }
 })

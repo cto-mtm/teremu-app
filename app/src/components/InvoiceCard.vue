@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import type { Invoice } from '../lib/types'
 
-const props = defineProps<{ invoice: Invoice }>()
+const props = defineProps<{ invoice: Invoice; canDismiss?: boolean }>()
+const emit = defineEmits<{ dismiss: [id: string] }>()
 const { t, n, d } = useI18n()
 
 // Processing normally resolves in seconds; past 90s assume the trigger
@@ -25,12 +26,15 @@ const clickable = computed(
 </script>
 
 <template>
-  <component
-    :is="clickable ? RouterLink : 'div'"
-    :to="clickable ? `/triage/${invoice.id}` : undefined"
-    class="card flex items-center gap-3"
-    :class="clickable ? 'hover:border-ember/40' : 'opacity-70'"
-  >
+  <!-- The link and the dismiss button are siblings: a button nested
+       inside an <a> is invalid HTML and screen readers expose it
+       inconsistently. -->
+  <div class="card flex items-center gap-3" :class="clickable ? 'hover:border-ember/40' : 'opacity-70'">
+    <component
+      :is="clickable ? RouterLink : 'div'"
+      :to="clickable ? `/triage/${invoice.id}` : undefined"
+      class="flex min-w-0 flex-1 items-center gap-3"
+    >
     <!-- HERO SOURCE: this thumbnail morphs into the detail page's receipt
          image. The name MUST be derived from the id — a static name inside
          a v-for would collide (unique-per-page rule, see docs/animations.md). -->
@@ -88,5 +92,17 @@ const clickable = computed(
       {{ t('triage.review') }} →
     </span>
     <span v-else-if="invoice.status === 'failed'" class="shrink-0 text-coral">⚠</span>
-  </component>
+    </component>
+
+    <!-- A scan that will never be an invoice (a hand, a menu, a blur)
+         has nothing to review — let it leave the inbox from here. -->
+    <button
+      v-if="canDismiss && invoice.status === 'failed'"
+      class="-mr-1 shrink-0 rounded-full px-2 py-1 text-smoke hover:bg-coral-50 hover:text-coral"
+      :aria-label="t('triage.dismiss')"
+      @click="emit('dismiss', invoice.id)"
+    >
+      ✕
+    </button>
+  </div>
 </template>

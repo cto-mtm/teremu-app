@@ -2,6 +2,7 @@ const es = {
   title: 'Bandeja de triaje',
   info: {
     open: '¿Qué es esto?',
+    close: 'Cerrar',
     p1: 'Cada foto que escaneas se digitaliza con IA en segundo plano y aterriza aquí. Toca "Revisar" para ver el recibo junto a la transcripción, corrige lo que haga falta y aprueba: los precios y la despensa se actualizan solos.',
     p2: 'Un aviso ámbar significa que las cuentas del documento no cuadran (cantidad × precio ≠ total) — las líneas sospechosas se marcan en coral para que las compares con la foto. Un documento fallido te dice por qué y se puede reintentar.',
     p3: 'Los albaranes (notas de entrega) no tocan tus números: se concilian abajo contra su factura para detectar cobros de más o facturas que nunca llegaron.',
@@ -14,6 +15,12 @@ const es = {
   failedUnreadable: 'La IA no pudo leer este recibo. Vuelve a tomar la foto o repítelo.',
   failedNotDocument: 'Esto no parece una factura ni un recibo. Toma una foto del documento.',
   failedProcessing: 'Error de procesamiento — reintenta.',
+  dismiss: 'Descartar',
+  dismissConfirm: '¿Descartar este escaneo? Saldrá de la bandeja sin tocar tus números.',
+  dismissFailed: 'No se pudo descartar — inténtalo de nuevo.',
+  discardedTitle: 'Descartadas',
+  restore: 'Restaurar',
+  restoreFailed: 'No se pudo restaurar — inténtalo de nuevo.',
   review: 'Revisar',
   recentTitle: 'Aprobadas recientemente',
   recon: {
@@ -64,6 +71,7 @@ const en: typeof es = {
   title: 'Triage Inbox',
   info: {
     open: "What's this?",
+    close: 'Close',
     p1: 'Every photo you scan is AI-digitized in the background and lands here. Tap "Review" to see the receipt next to its transcription, fix anything, and approve — prices and pantry update on their own.',
     p2: "An amber notice means the document's own math doesn't add up (qty × price ≠ total) — suspect lines get a coral ring so you can compare them against the photo. A failed document tells you why and can be retried.",
     p3: "Delivery notes never touch your numbers: they reconcile below against their invoice, catching overcharges and invoices that never arrived.",
@@ -76,6 +84,12 @@ const en: typeof es = {
   failedUnreadable: "The AI couldn't read this receipt. Retake the photo or try again.",
   failedNotDocument: "This doesn't look like an invoice or receipt. Take a photo of the document.",
   failedProcessing: 'Processing error — retry.',
+  dismiss: 'Dismiss',
+  dismissConfirm: 'Dismiss this scan? It leaves the inbox without touching your numbers.',
+  dismissFailed: "Couldn't dismiss — try again.",
+  discardedTitle: 'Dismissed',
+  restore: 'Restore',
+  restoreFailed: "Couldn't restore — try again.",
   review: 'Review',
   recentTitle: 'Recently approved',
   recon: {

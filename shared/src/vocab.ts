@@ -22,8 +22,11 @@ export const UNITS = [
 export const unitSchema = z.enum(UNITS);
 export type Unit = z.infer<typeof unitSchema>;
 
+// "discarded" is the operator dismissing a scan from Triage (a photo of
+// a hand, a duplicate). The document and its image are kept — it just
+// leaves the inbox — so a mistaken dismissal is recoverable.
 export const invoiceStatusSchema = z.enum([
-  "processing", "needs_review", "approved", "failed",
+  "processing", "needs_review", "approved", "failed", "discarded",
 ]);
 export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
 

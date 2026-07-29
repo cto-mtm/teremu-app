@@ -116,7 +116,15 @@ export async function processInvoiceImage(
     );
   } catch (err) {
     logger.error(`OCR failed for invoice ${invoiceId}`, err);
-    await ref.update({ status: "failed", error: "processing" });
+    try {
+      await ref.update({ status: "failed", error: "processing" });
+    } catch {
+      // The doc can be gone by the time this queued event runs (the test
+      // suite clears Firestore between tests; a deploy could too). An
+      // unhandled rejection here kills the whole functions instance —
+      // there is nothing left to mark failed, so just log it.
+      logger.warn(`invoice ${invoiceId} vanished before its failure could be recorded`);
+    }
   }
 }
 
