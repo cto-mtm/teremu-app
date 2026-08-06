@@ -68,6 +68,8 @@ export interface ApiOptions {
   rid?: string;
   /** Raw binary body (image upload endpoints) — sets Content-Type: image/jpeg. */
   raw?: Buffer;
+  /** Extra request headers (e.g. X-More-Pages for multi-page captures). */
+  headers?: Record<string, string>;
 }
 
 export interface ApiResult<T = any> {
@@ -77,7 +79,7 @@ export interface ApiResult<T = any> {
 
 /** Low-level request against the emulated `api` function. */
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<ApiResult<T>> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...opts.headers };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.rid) headers["X-Restaurant-Id"] = opts.rid;
 
@@ -117,8 +119,13 @@ export const put = <T = any>(path: string, token: string | undefined, body?: unk
   api<T>(path, { token, method: "PUT", body, rid });
 export const del = <T = any>(path: string, token?: string, rid?: string) =>
   api<T>(path, { token, method: "DELETE", rid });
-export const upload = <T = any>(path: string, token: string | undefined, bytes: Buffer, rid?: string) =>
-  api<T>(path, { token, method: "POST", raw: bytes, rid });
+export const upload = <T = any>(
+  path: string,
+  token: string | undefined,
+  bytes: Buffer,
+  rid?: string,
+  headers?: Record<string, string>,
+) => api<T>(path, { token, method: "POST", raw: bytes, rid, headers });
 
 // ── Auth: mint real ID tokens via the Auth emulator ──────────────────
 
@@ -400,3 +407,6 @@ export async function clearStorage(): Promise<void> {
 
 /** Short, collision-resistant id suffix for per-test uids/emails. */
 export const uniqueId = (): string => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/** Minimal valid JPEG header — enough for the API's content-type check. */
+export const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);

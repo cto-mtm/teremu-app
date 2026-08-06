@@ -5,6 +5,7 @@ import {
   clearFirestore,
   clearStorage,
   col,
+  FAKE_JPEG,
   get,
   makeOwner,
   post,
@@ -20,12 +21,6 @@ beforeEach(async () => {
   await clearFirestore();
   await clearStorage();
 });
-
-// A minimal, valid-enough JPEG-ish buffer — the mock OCR (no
-// NVIDIA_API_KEY in the emulator) never actually looks at the bytes, so
-// content doesn't matter, only that the upload path (raw body, Storage
-// write, Storage-trigger firing) works end to end.
-const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
 
 describe("invoice lifecycle", () => {
   it("POST /invoices stores the receipt and the OCR trigger moves it to needs_review", async () => {
@@ -182,6 +177,45 @@ describe("invoice lifecycle", () => {
 
     const refused = await put(`/invoices/${inv.id}/discard`, owner.token, { discarded: true });
     expect(refused.status).toBe(400);
+  });
+
+  it("multi-page: pages accumulate under one invoice and complete runs one OCR over all of them", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+
+    // Page 1: X-More-Pages holds the Storage trigger off (pagesPending).
+    const created = await upload<{ id: string } & InvoiceDoc>("/invoices", owner.token, FAKE_JPEG, undefined, {
+      "X-More-Pages": "1",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("processing");
+    expect(created.body.pagesPending).toBe(true);
+    expect(created.body.imagePaths).toEqual([created.body.imagePath]);
+
+    // Pages 2 and 3 append in order, quota-free.
+    const p2 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    expect(p2.status).toBe(201);
+    expect(p2.body.pages).toBe(2);
+    const p3 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    expect(p3.body.pages).toBe(3);
+
+    // Complete closes the capture and runs the pipeline inline.
+    const done = await put<{ id: string } & InvoiceDoc>(`/invoices/${created.body.id}/complete`, owner.token, {});
+    expect(done.status).toBe(200);
+    expect(done.body.status).toBe("needs_review"); // mock OCR succeeds
+    expect(done.body.pagesPending).toBe(false);
+    expect(done.body.imagePaths).toHaveLength(3);
+    expect(done.body.lineItems.length).toBeGreaterThan(0);
+
+    // No more pages after completion; a second complete is a 400 too.
+    const late = await upload(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    expect(late.status).toBe(400);
+    const again = await put(`/invoices/${created.body.id}/complete`, owner.token, {});
+    expect(again.status).toBe(400);
+
+    // Every page is retrievable (?page=N, 1-based; out of range → page 1).
+    const img = await get<Buffer>(`/invoices/${created.body.id}/image?page=3`, owner.token);
+    expect(img.status).toBe(200);
+    expect(Buffer.isBuffer(img.body)).toBe(true);
   });
 
   it("reprocess recovers a failed invoice once a real image exists at its imagePath", async () => {

@@ -6,6 +6,19 @@ const es = {
   unitsDesc: 'Sistema ofrecido al capturar cantidades y en las recetas. No convierte datos ya guardados.',
   metric: 'Métrico',
   imperial: 'Imperial',
+  labor: {
+    title: 'Mano de obra',
+    desc: 'Tarifa por hora de cocina. Cada plato con tiempo de preparación suma ese tiempo × la tarifa a su costo. Vacío = costear solo ingredientes.',
+    unit: '$/hora',
+    placeholder: '15',
+    saved: 'Guardado',
+  },
+  location: {
+    title: 'Nombre del local',
+    desc: 'Nombre visible en el selector de ubicaciones y para los miembros del equipo.',
+    placeholder: 'Mi restaurante',
+    saved: 'Guardado',
+  },
   plan: {
     title: 'Plan',
     free: 'Gratis',
@@ -26,7 +39,6 @@ const es = {
     remove: 'Quitar',
     owner: 'Propietario',
     member: 'Miembro',
-    failed: 'No se pudo guardar — inténtalo de nuevo.',
     limit: 'Tu plan no permite más miembros — mejora a Pro.',
     area: {
       scan: 'Escanear',
@@ -57,6 +69,19 @@ const en: typeof es = {
   unitsDesc: 'System offered when capturing quantities and in recipes. Existing data is never converted.',
   metric: 'Metric',
   imperial: 'Imperial',
+  labor: {
+    title: 'Labor',
+    desc: 'Hourly kitchen rate. Every dish with prep time adds that time × the rate to its plate cost. Empty = ingredients-only costing.',
+    unit: '$/hour',
+    placeholder: '15',
+    saved: 'Saved',
+  },
+  location: {
+    title: 'Location name',
+    desc: 'Visible in the location switcher and to team members.',
+    placeholder: 'My restaurant',
+    saved: 'Saved',
+  },
   plan: {
     title: 'Plan',
     free: 'Free',
@@ -77,7 +102,6 @@ const en: typeof es = {
     remove: 'Remove',
     owner: 'Owner',
     member: 'Member',
-    failed: 'Could not save — try again.',
     limit: 'Your plan has no seats left — upgrade to Pro.',
     area: {
       scan: 'Scan',

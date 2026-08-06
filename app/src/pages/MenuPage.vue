@@ -30,12 +30,14 @@ const search = ref('')
 const sortBy = ref<'margin' | 'name' | 'price'>('margin')
 
 const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
+// Restaurant labor rate (Settings) — 0/unset keeps costs ingredients-only.
+const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 
 const rows = computed(() => {
   const q = search.value.toLowerCase().trim()
   const list = kitchen.activeMenuItems
     .filter((m) => !q || m.name.toLowerCase().includes(q))
-    .map((m) => ({ m, ...actualMarginPct(m, kitchen.ingredientMap, menuMap.value) }))
+    .map((m) => ({ m, ...actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value) }))
   switch (sortBy.value) {
     case 'name':
       return list.sort((a, b) => a.m.name.localeCompare(b.m.name))
@@ -52,6 +54,7 @@ const editing = ref<MenuItem | 'new' | null>(null)
 const name = ref('')
 const price = ref('')
 const target = ref('70')
+const prepMin = ref('')
 const recipe = ref<RecipeLine[]>([])
 const busy = ref(false)
 
@@ -138,7 +141,7 @@ async function confirmCreateIngredient(): Promise<void> {
     creatingFor.value = null
     newIngName.value = ''
   } else {
-    alert(kitchen.error?.includes('exists') ? t('pantry.add.exists') : t('pantry.add.failed'))
+    alert(kitchen.error?.includes('exists') ? t('menu.editor.ingredientExists') : t('menu.editor.ingredientFailed'))
   }
 }
 
@@ -148,11 +151,13 @@ function openEditor(item: MenuItem | 'new'): void {
     name.value = ''
     price.value = ''
     target.value = '70'
+    prepMin.value = ''
     recipe.value = []
   } else {
     name.value = item.name
     price.value = String(item.price)
     target.value = String(item.targetMarginPct)
+    prepMin.value = item.prepMinutes ? String(item.prepMinutes) : ''
     // Legacy ingredient lines have no unit — default to the stock unit
     // so the unit select isn't blank. Sub-recipe lines carry none.
     recipe.value = item.recipe.map((r) => ({
@@ -169,6 +174,8 @@ async function save(): Promise<void> {
       name: name.value.trim(),
       price: Number(price.value) || 0,
       targetMarginPct: Number(target.value) || 0,
+      // Omitted when blank/0 — PUT replaces the doc, so the field clears.
+      ...(Number(prepMin.value) > 0 ? { prepMinutes: Number(prepMin.value) } : {}),
       recipe: recipe.value
         .filter((r) => (r.ingredientId || r.subItemId) && r.qty > 0)
         .map((r) => ({
@@ -305,6 +312,13 @@ async function save(): Promise<void> {
               <input v-model="target" type="number" inputmode="numeric" class="input" />
             </label>
           </div>
+          <label class="block space-y-1 text-sm">
+            <span class="text-xs text-smoke">{{ t('menu.editor.prepMinutes') }}</span>
+            <input v-model="prepMin" type="number" inputmode="numeric" min="0" class="input" />
+            <span v-if="!laborRate" class="block text-[11px] text-smoke">
+              {{ t('menu.editor.prepMinutesHint') }}
+            </span>
+          </label>
 
           <div class="space-y-2">
             <div class="text-xs text-smoke">{{ t('menu.editor.ingredientsPerPlate') }}</div>
@@ -338,7 +352,7 @@ async function save(): Promise<void> {
                 v-if="line.ingredientId && kitchen.ingredientMap.get(line.ingredientId)"
                 v-model="line.unit"
                 class="input w-24"
-                :aria-label="t('triage.detail.unit')"
+                :aria-label="t('common.label.unit')"
               >
                 <option
                   v-for="u in compatibleUnits(kitchen.ingredientMap.get(line.ingredientId)!.unit)"
@@ -361,9 +375,9 @@ async function save(): Promise<void> {
                 <input
                   v-model="newIngName"
                   class="input min-w-32 flex-1"
-                  :placeholder="t('pantry.add.name')"
+                  :placeholder="t('common.label.ingredientName')"
                 />
-                <select v-model="newIngUnit" class="input w-auto" :aria-label="t('triage.detail.unit')">
+                <select v-model="newIngUnit" class="input w-auto" :aria-label="t('common.label.unit')">
                   <option v-for="u in settings.unitChoices" :key="u" :value="u">{{ t('common.unit.' + u) }}</option>
                 </select>
                 <select v-model="newIngCategory" class="input w-auto" :aria-label="t('common.filter.allCategories')">

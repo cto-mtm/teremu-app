@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearFirestore,
+  FAKE_JPEG,
   get,
   makeOwner,
   post,
@@ -13,8 +14,6 @@ import {
 beforeEach(async () => {
   await clearFirestore();
 });
-
-const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
 
 describe("menu & menu-scan", () => {
   it("POST then PUT /menu-items persists a recipe with both ingredientId and subItemId lines", async () => {
@@ -54,6 +53,36 @@ describe("menu & menu-scan", () => {
     expect(persistedCombo.recipe).toEqual([{ subItemId: side.body.id, qty: 1 }]);
     const persistedSide = list.body.find((m) => m.id === side.body.id);
     expect(persistedSide.recipe).toEqual([{ ingredientId: rice.id, qty: 150, unit: "g" }]);
+  });
+
+  it("prepMinutes persists on menu items and the labor rate round-trips via /restaurants + /me", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+
+    const dish = await post<{ id: string; prepMinutes?: number }>("/menu-items", owner.token, {
+      name: "Paella",
+      price: 18,
+      targetMarginPct: 65,
+      prepMinutes: 12,
+      active: true,
+      recipe: [],
+    });
+    expect(dish.status).toBe(201);
+    expect(dish.body.prepMinutes).toBe(12);
+
+    // Labor rate: restaurant-level setting, owner-only, surfaces on /me.
+    const before = await get<{ laborRatePerHour: number | null }>("/me", owner.token);
+    expect(before.body.laborRatePerHour).toBeNull();
+
+    const saved = await put(`/restaurants/${owner.rid}`, owner.token, { laborRatePerHour: 16.5 });
+    expect(saved.status).toBe(200);
+
+    const after = await get<{ laborRatePerHour: number | null }>("/me", owner.token);
+    expect(after.body.laborRatePerHour).toBe(16.5);
+
+    // Clearing it (null) turns labor costing back off.
+    await put(`/restaurants/${owner.rid}`, owner.token, { laborRatePerHour: null });
+    const cleared = await get<{ laborRatePerHour: number | null }>("/me", owner.token);
+    expect(cleared.body.laborRatePerHour).toBeNull();
   });
 
   it("POST /menu/scan (mock) returns dishes without consuming the scan quota", async () => {

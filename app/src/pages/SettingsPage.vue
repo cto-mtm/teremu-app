@@ -8,6 +8,7 @@ import { apiFetch } from '../lib/api'
 import { billingUrlSchema, healthSchema, membersResponseSchema } from '../lib/schemas'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
+import { useLocationStore } from '../stores/location'
 import type { PermArea, Perms } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
@@ -19,6 +20,7 @@ import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 const { t, d } = useI18n()
 const settings = useSettingsStore()
 const auth = useAuthStore()
+const location = useLocationStore()
 const router = useRouter()
 const route = useRoute()
 const { data, error, loading, execute } = useApi('/health', undefined, healthSchema)
@@ -61,6 +63,61 @@ async function togglePlan(): Promise<void> {
   if (res.ok) await auth.reloadProfile()
 }
 
+// ── Labor rate (owner only, restaurant-level) ───────────────────
+// €/hour of kitchen labor. When set, every dish's plate cost adds
+// prepMinutes × this rate — see plateCost in lib/domain.ts.
+const laborRateInput = ref('')
+const laborBusy = ref(false)
+const laborSaved = ref(false)
+
+onMounted(() => {
+  const rate = auth.profile?.laborRatePerHour
+  laborRateInput.value = rate != null && rate > 0 ? String(rate) : ''
+})
+
+async function saveLaborRate(): Promise<void> {
+  const rid = auth.profile?.restaurantId
+  if (!rid) return
+  laborBusy.value = true
+  laborSaved.value = false
+  const rate = Number(laborRateInput.value)
+  const res = await apiFetch(`/restaurants/${rid}`, {
+    method: 'PUT',
+    body: JSON.stringify({ laborRatePerHour: Number.isFinite(rate) && rate > 0 ? rate : null }),
+  })
+  if (res.ok) {
+    await auth.reloadProfile()
+    laborSaved.value = true
+  } else {
+    alert(t('common.action.saveFailed'))
+  }
+  laborBusy.value = false
+}
+
+// ── Location name (owner only) ──────────────────────────────────
+const locationNameInput = ref('')
+const locationNameBusy = ref(false)
+const locationNameSaved = ref(false)
+
+onMounted(() => {
+  const active = auth.profile?.locations.find((l) => l.rid === auth.profile?.restaurantId)
+  locationNameInput.value = active?.name ?? ''
+})
+
+async function saveLocationName(): Promise<void> {
+  const name = locationNameInput.value.trim()
+  if (!name) return
+  locationNameBusy.value = true
+  locationNameSaved.value = false
+  const ok = await location.renameLocation(name)
+  locationNameBusy.value = false
+  if (ok) {
+    locationNameSaved.value = true
+  } else {
+    alert(t('common.action.saveFailed'))
+  }
+}
+
 // ── Team management (owner only) ────────────────────────────────
 type MembersResponse = z.infer<typeof membersResponseSchema>
 const isOwner = computed(() => auth.profile?.role === 'owner')
@@ -98,7 +155,7 @@ async function sendInvite(): Promise<void> {
     Object.assign(invitePerms, DEFAULT_PERMS)
     void loadMembers()
   } else {
-    alert(res.error.includes('member_limit') ? t('settings.members.limit') : t('settings.members.failed'))
+    alert(res.error.includes('member_limit') ? t('settings.members.limit') : t('common.action.saveFailed'))
   }
 }
 
@@ -108,7 +165,7 @@ async function saveMemberPerms(uid: string, perms: Perms): Promise<void> {
     body: JSON.stringify({ perms }),
   })
   if (!res.ok) {
-    alert(t('settings.members.failed'))
+    alert(t('common.action.saveFailed'))
     void loadMembers()
   }
 }
@@ -172,6 +229,26 @@ async function cancelInvite(emailKey: string): Promise<void> {
       </div>
     </div>
 
+    <!-- Location name (owner only) -->
+    <div v-if="isOwner" class="card space-y-3">
+      <div class="text-sm font-semibold">{{ t('settings.location.title') }}</div>
+      <p class="text-xs text-smoke">{{ t('settings.location.desc') }}</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <input
+          v-model="locationNameInput"
+          type="text"
+          maxlength="80"
+          class="input w-56"
+          :placeholder="t('settings.location.placeholder')"
+          @input="locationNameSaved = false"
+        />
+        <BaseButton variant="ghost" :disabled="locationNameBusy || !locationNameInput.trim()" @click="saveLocationName">
+          {{ locationNameBusy ? t('common.action.saving') : t('common.action.save') }}
+        </BaseButton>
+        <span v-if="locationNameSaved" class="chip-down">{{ t('settings.location.saved') }}</span>
+      </div>
+    </div>
+
     <div class="card space-y-3">
       <div class="text-sm font-semibold">{{ t('settings.language') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.languageDesc') }}</p>
@@ -191,6 +268,31 @@ async function cancelInvite(emailKey: string): Promise<void> {
         >
           {{ t('settings.' + system) }}
         </button>
+      </div>
+    </div>
+
+    <!-- Kitchen labor rate → prep-time plate costing (owner only) -->
+    <div v-if="isOwner" class="card space-y-3">
+      <div class="text-sm font-semibold">{{ t('settings.labor.title') }}</div>
+      <p class="text-xs text-smoke">{{ t('settings.labor.desc') }}</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="laborRateInput"
+            type="number"
+            inputmode="decimal"
+            min="0"
+            step="0.5"
+            class="input w-28"
+            :placeholder="t('settings.labor.placeholder')"
+            @input="laborSaved = false"
+          />
+          <span class="text-xs text-smoke">{{ t('settings.labor.unit') }}</span>
+        </label>
+        <BaseButton variant="ghost" :disabled="laborBusy" @click="saveLaborRate">
+          {{ laborBusy ? t('common.action.saving') : t('common.action.save') }}
+        </BaseButton>
+        <span v-if="laborSaved" class="chip-down">{{ t('settings.labor.saved') }}</span>
       </div>
     </div>
 

@@ -3,6 +3,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { monthKey, PLAN_LIMITS } from "../src/plan";
 import {
   clearFirestore,
+  FAKE_JPEG,
   get,
   makeOwner,
   post,
@@ -15,8 +16,6 @@ import {
 beforeEach(async () => {
   await clearFirestore();
 });
-
-const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
 
 describe("freemium paywalls", () => {
   it("caps free scans at 25/month — the 26th POST /invoices is 402 scan_limit", async () => {

@@ -61,13 +61,19 @@ async function confirmAsExpense(): Promise<void> {
 }
 
 // The image endpoint requires the auth header, which <img> can't send —
-// fetch it as a blob and render the object URL instead.
+// fetch it as a blob and render the object URL instead. Multi-page
+// scans re-fetch per page (?page=N, 1-based).
 const imageUrl = ref<string | null>(null)
+const page = ref(1)
+const pageCount = computed(() => invoice.value?.imagePaths?.length ?? 1)
+watch(invoiceId, () => (page.value = 1))
 watch(
-  invoiceId,
-  async (idVal) => {
+  [invoiceId, page],
+  async ([idVal, pageVal]) => {
     if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
-    imageUrl.value = await fetchBlobUrl(`/invoices/${idVal}/image`)
+    imageUrl.value = await fetchBlobUrl(
+      `/invoices/${idVal}/image${pageVal > 1 ? `?page=${pageVal}` : ''}`,
+    )
   },
   { immediate: true },
 )
@@ -101,6 +107,8 @@ function addLine(): void {
 }
 
 // Stuck in processing (trigger hiccup)? Offer the retry escape hatch.
+// 90s = ~3× the typical OCR pipeline latency (~25s end-to-end including
+// Storage trigger + vision model round-trip + Firestore write).
 const STALE_MS = 90_000
 const stale = computed(
   () => invoice.value?.status === 'processing' && Date.now() - invoice.value.createdAt > STALE_MS,
@@ -252,6 +260,31 @@ async function approve(): Promise<void> {
         />
         <div v-else class="flex h-40 items-center justify-center text-xs text-smoke">
           {{ t('triage.detail.noImage') }}
+        </div>
+        <!-- Page switcher for multi-page scans -->
+        <div
+          v-if="pageCount > 1"
+          class="sticky bottom-1 mt-2 flex items-center justify-center gap-3 text-xs font-semibold"
+        >
+          <button
+            class="flex h-8 w-8 items-center justify-center rounded-full bg-ink/80 text-white disabled:opacity-30"
+            :disabled="page <= 1"
+            :aria-label="t('triage.detail.pagePrev')"
+            @click="page -= 1"
+          >
+            ‹
+          </button>
+          <span class="rounded-full bg-ink/80 px-3 py-1.5 text-white">
+            {{ t('triage.detail.page', { n: page, total: pageCount }) }}
+          </span>
+          <button
+            class="flex h-8 w-8 items-center justify-center rounded-full bg-ink/80 text-white disabled:opacity-30"
+            :disabled="page >= pageCount"
+            :aria-label="t('triage.detail.pageNext')"
+            @click="page += 1"
+          >
+            ›
+          </button>
         </div>
       </div>
 

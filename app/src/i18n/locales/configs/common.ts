@@ -62,6 +62,11 @@ const es = {
     edit: 'Editar',
     delete: 'Eliminar',
     confirmDelete: '¿Eliminar este registro? Los ajustes de despensa se revierten.',
+    saveFailed: 'No se pudo guardar — inténtalo de nuevo.',
+  },
+  label: {
+    unit: 'Unidad',
+    ingredientName: 'Nombre del ingrediente',
   },
   loading: 'Cargando…',
 }
@@ -127,6 +132,11 @@ const en: typeof es = {
     edit: 'Edit',
     delete: 'Delete',
     confirmDelete: 'Delete this entry? Pantry adjustments are reverted.',
+    saveFailed: 'Could not save — try again.',
+  },
+  label: {
+    unit: 'Unit',
+    ingredientName: 'Ingredient name',
   },
   loading: 'Loading…',
 }
