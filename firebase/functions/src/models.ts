@@ -69,6 +69,15 @@ export const invoiceDocSchema = z.object({
   vendorName: z.string().nullable(),
   invoiceDate: z.string().nullable(), // YYYY-MM-DD
   imagePath: z.string(),
+  // Multi-page documents: EVERY page path in order (imagePath stays the
+  // first page for pre-multi-page docs and single shots). Absent =
+  // single page at imagePath.
+  imagePaths: z.array(z.string()).optional(),
+  // Present only on multi-page captures: true while the client is still
+  // uploading pages. The Storage trigger skips any doc CARRYING this
+  // field (true or false) — for those, PUT /invoices/:id/complete runs
+  // the pipeline once every page is in.
+  pagesPending: z.boolean().optional(),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Validation-stage warning codes: "total_mismatch", "line_math".
@@ -107,6 +116,9 @@ export const menuItemDocSchema = z.object({
   name: z.string().min(1),
   price: z.number().min(0),
   targetMarginPct: z.number().min(0).max(100),
+  // Kitchen labor per plate. Costed client-side against the restaurant's
+  // laborRatePerHour — absent (pre-existing dishes) means 0.
+  prepMinutes: z.number().min(0).max(600).optional(),
   recipe: z.array(recipeLineSchema),
   active: z.boolean(),
 });
@@ -235,14 +247,24 @@ export const restaurantDocSchema = z.object({
   plan: z.enum(["free", "pro", "max"]),
   scanPeriod: z.string().nullable(),
   scanCount: z.number(),
+  // €/hour of kitchen labor — feeds prep-time plate costing in the app.
+  // Absent/null = labor costing off (plate cost stays ingredients-only).
+  laborRatePerHour: z.number().min(0).nullable().optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
 export const DEFAULT_RESTAURANT_NAME = "My restaurant";
 
-/** POST /restaurants (create) and PUT /restaurants/:rid (rename). */
+/** POST /restaurants (create). */
 export const restaurantProfileSchema = z.object({
   name: z.string().min(1).max(80),
+});
+
+/** PUT /restaurants/:rid — partial profile update (rename and/or the
+ * labor rate that feeds prep-time plate costing). */
+export const updateRestaurantSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  laborRatePerHour: z.number().min(0).max(500).nullable().optional(),
 });
 
 /** POST /members — invite by email with explicit perms. */

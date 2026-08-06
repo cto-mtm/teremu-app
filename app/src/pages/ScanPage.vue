@@ -27,6 +27,10 @@ const uploading = ref(0)
 const uploadError = ref<string | null>(null)
 let errorTimer: ReturnType<typeof setTimeout> | null = null
 const lastThumb = ref<string | null>(null)
+// Multi-page mode: every capture becomes another PAGE of the same
+// invoice (long vendor invoices) instead of a new invoice per shot.
+// "Finish" closes the document and runs one OCR over all its pages.
+const multiPage = ref(false)
 // Quality gate: when a capture looks blurry/dark we hold it here and
 // ask, instead of silently feeding the OCR a photo it will misread.
 const qualityIssue = ref<'blur' | 'dark' | null>(null)
@@ -54,7 +58,20 @@ onMounted(async () => {
 onUnmounted(() => {
   stream?.getTracks().forEach((track) => track.stop())
   releaseThumb()
+  // Never leave a half-uploaded multi-page invoice behind — closing the
+  // scanner finishes it with whatever pages it has.
+  void store.finishMultipage()
 })
+
+function toggleMultiPage(): void {
+  multiPage.value = !multiPage.value
+  if (!multiPage.value) void store.finishMultipage()
+}
+
+async function finishInvoice(): Promise<void> {
+  if (uploading.value > 0) return // a page is still in flight
+  await store.finishMultipage()
+}
 
 function releaseThumb(): void {
   if (thumbIsObjectUrl && lastThumb.value) URL.revokeObjectURL(lastThumb.value)
@@ -134,14 +151,17 @@ function retake(): void {
 }
 
 async function send(source: Blob | HTMLCanvasElement): Promise<void> {
-  count.value += 1
+  // In multi-page mode only a NEW invoice bumps the invoice counter —
+  // additional pages count in the page badge instead.
+  const newInvoice = !multiPage.value || !store.multipageId
+  if (newInvoice) count.value += 1
   flash.value += 1 // retriggers the confirmation flash overlay
   navigator.vibrate?.(30)
   uploading.value += 1
-  const ok = await store.capture(source)
+  const ok = multiPage.value ? await store.capturePage(source) : await store.capture(source)
   uploading.value -= 1
   if (!ok) {
-    count.value -= 1
+    if (newInvoice) count.value -= 1
     navigator.vibrate?.([60, 40, 60])
     const limit = store.error?.includes('scan_limit')
     uploadError.value = limit ? t('scan.limitReached') : t('scan.uploadFailed')
@@ -175,7 +195,15 @@ function onFiles(event: Event): void {
   releaseThumb()
   lastThumb.value = URL.createObjectURL(files[files.length - 1])
   thumbIsObjectUrl = true
-  Array.from(files).forEach((f) => void send(f))
+  const picked = Array.from(files)
+  if (multiPage.value) {
+    // Pages of ONE invoice — upload sequentially so page order holds.
+    void (async () => {
+      for (const f of picked) await send(f)
+    })()
+  } else {
+    picked.forEach((f) => void send(f))
+  }
   if (fileInput.value) fileInput.value.value = ''
 }
 </script>
@@ -231,7 +259,13 @@ function onFiles(event: Event): void {
           ✕
         </button>
         <div class="flex items-center gap-2 rounded-full bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md">
-          {{ count > 0 ? t('scan.captured', { n: count }) : t('scan.title') }}
+          {{
+            multiPage && store.multipageCount > 0
+              ? t('scan.pageCount', { n: store.multipageCount })
+              : count > 0
+                ? t('scan.captured', { n: count })
+                : t('scan.title')
+          }}
           <span
             v-if="uploading > 0"
             class="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white"
@@ -239,17 +273,32 @@ function onFiles(event: Event): void {
             :aria-label="t('scan.uploading')"
           />
         </div>
-        <button
-          class="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md"
-          :aria-label="t('scan.addFromLibrary')"
-          @click="fileInput?.click()"
-        >
-          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="3" />
-            <circle cx="9" cy="9" r="1.8" />
-            <path d="M21 15l-5-5-8 8" />
-          </svg>
-        </button>
+        <div class="flex items-center gap-2">
+          <!-- Multi-page mode: each shot = another page of ONE invoice -->
+          <button
+            class="flex h-10 w-10 items-center justify-center rounded-full backdrop-blur-md"
+            :class="multiPage ? 'bg-white text-ink' : 'bg-black/40 text-white'"
+            :aria-label="t('scan.multiPage')"
+            :aria-pressed="multiPage"
+            @click="toggleMultiPage"
+          >
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 3h8a2 2 0 0 1 2 2v12" />
+              <rect x="5" y="7" width="11" height="14" rx="2" />
+            </svg>
+          </button>
+          <button
+            class="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md"
+            :aria-label="t('scan.addFromLibrary')"
+            @click="fileInput?.click()"
+          >
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="9" cy="9" r="1.8" />
+              <path d="M21 15l-5-5-8 8" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Capture confirmation flash: keyed so each snap re-runs it -->
@@ -286,11 +335,27 @@ function onFiles(event: Event): void {
         </div>
       </Transition>
 
-      <!-- Post-capture encouragement / first-time hint -->
+      <!-- Finish button (multi-page) / encouragement / first-time hint -->
       <div class="absolute inset-x-0 bottom-4 flex justify-center px-8">
         <Transition name="pop" mode="out-in">
+          <button
+            v-if="multiPage && store.multipageCount > 0"
+            key="finish"
+            class="rounded-full bg-white px-5 py-2 text-xs font-bold text-ink shadow-lg disabled:opacity-50"
+            :disabled="uploading > 0"
+            @click="finishInvoice"
+          >
+            {{ t('scan.finishInvoice', { n: store.multipageCount }) }}
+          </button>
+          <p
+            v-else-if="multiPage"
+            key="multiHint"
+            class="max-w-xs text-center text-xs leading-relaxed text-white/75"
+          >
+            {{ t('scan.multiPageHint') }}
+          </p>
           <div
-            v-if="count > 0"
+            v-else-if="count > 0"
             key="going"
             class="flex items-center gap-1.5 rounded-full bg-ember px-4 py-1.5 text-xs font-bold text-white shadow-lg"
           >

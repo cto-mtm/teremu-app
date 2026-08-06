@@ -59,5 +59,19 @@ export const useLocationStore = defineStore('location', () => {
     return true
   }
 
-  return { switchLocation, addLocation }
+  /** Rename the active location (owner only). */
+  async function renameLocation(name: string): Promise<boolean> {
+    const auth = useAuthStore()
+    const rid = auth.profile?.restaurantId
+    if (!rid) return false
+    const res = await apiFetch(`/restaurants/${rid}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) return false
+    await auth.reloadProfile()
+    return true
+  }
+
+  return { switchLocation, addLocation, renameLocation }
 })

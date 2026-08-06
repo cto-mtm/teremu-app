@@ -39,6 +39,10 @@ export const invoiceSchema = z.object({
   vendorName: z.string().nullable(),
   invoiceDate: z.string().nullable(), // YYYY-MM-DD
   imagePath: z.string(),
+  // Multi-page scans: every page path in order (absent = one page at
+  // imagePath). pagesPending = the capture is still uploading pages.
+  imagePaths: z.array(z.string()).optional(),
+  pagesPending: z.boolean().optional(),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Server validation codes ("total_mismatch", "line_math"). Optional so
@@ -87,6 +91,9 @@ export const menuItemSchema = z.object({
   name: z.string(),
   price: z.number(),
   targetMarginPct: z.number(),
+  // Kitchen labor per plate (minutes) — costed against the restaurant's
+  // labor rate. Absent on pre-existing dishes.
+  prepMinutes: z.number().optional(),
   recipe: z.array(recipeLineSchema),
   active: z.boolean(),
 })
@@ -186,6 +193,9 @@ export const meSchema = z.object({
   email: z.string(),
   plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
+  // €/hour of kitchen labor (restaurant setting) — feeds prep-time
+  // plate costing. Optional so older API responses still validate.
+  laborRatePerHour: z.number().nullable().optional(),
   locations: z.array(locationSchema),
 })
 

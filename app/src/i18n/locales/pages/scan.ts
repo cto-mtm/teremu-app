@@ -18,6 +18,10 @@ const es = {
   qualityDark: 'Se ve muy oscura — busca más luz.',
   useAnyway: 'Usar igual',
   retake: 'Repetir',
+  multiPage: 'Factura de varias páginas',
+  multiPageHint: 'Modo varias páginas: cada foto añade una página a la misma factura. Cuando las tengas todas, toca "Terminar".',
+  pageCount: 'Página {n}',
+  finishInvoice: 'Terminar factura · {n} pág.',
 }
 
 // Typed against es: a missing or extra key here is a compile error.
@@ -41,6 +45,10 @@ const en: typeof es = {
   qualityDark: 'Looks too dark — find more light.',
   useAnyway: 'Use anyway',
   retake: 'Retake',
+  multiPage: 'Multi-page invoice',
+  multiPageHint: 'Multi-page mode: every shot adds a page to the same invoice. When you have them all, tap "Finish".',
+  pageCount: 'Page {n}',
+  finishInvoice: 'Finish invoice · {n} pages',
 }
 
 export default { es, en }

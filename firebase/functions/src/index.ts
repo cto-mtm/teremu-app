@@ -1,4 +1,5 @@
 import { initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
@@ -60,8 +61,18 @@ export const onReceiptUploaded = onObjectFinalized(
   async (event) => {
     const path = event.data.name ?? "";
     // receipts/{restaurantId}/{invoiceId}.jpg — per-workspace namespace.
+    // Additional pages of a multi-page capture live one level deeper
+    // (receipts/{rid}/{invoiceId}/p2.jpg) and deliberately don't match.
     const match = path.match(/^receipts\/([^/]+)\/([^/]+)\.jpg$/);
     if (!match) return;
-    await processInvoiceImage(match[1], match[2], path);
+    // Multi-page captures carry a pagesPending field (true or false) —
+    // for those, PUT /invoices/:id/complete runs the pipeline over ALL
+    // pages once the client is done uploading. Processing here would OCR
+    // page 1 alone (or race the complete call).
+    const snap = await getFirestore()
+      .doc(`restaurants/${match[1]}/invoices/${match[2]}`)
+      .get();
+    if (snap.get("pagesPending") !== undefined) return;
+    await processInvoiceImage(match[1], match[2], [path]);
   }
 );

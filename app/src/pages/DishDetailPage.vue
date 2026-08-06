@@ -20,15 +20,17 @@ const auth = useAuthStore()
 
 const dish = computed(() => kitchen.menuItems.find((m) => m.id === String(route.params.id)))
 const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
+// Restaurant labor rate (Settings) — 0/unset keeps costs ingredients-only.
+const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 const margin = computed(() =>
   dish.value
-    ? actualMarginPct(dish.value, kitchen.ingredientMap, menuMap.value)
-    : { margin: null, cost: 0, missing: false },
+    ? actualMarginPct(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value)
+    : { margin: null, cost: 0, foodCost: 0, laborCost: 0, missing: false },
 )
 const weekly = computed(() => (dish.value ? unitsSoldWeekly(kitchen.revenue, dish.value.id) : []))
 const sold14 = computed(() => weekly.value.slice(-2).reduce((s, v) => s + v, 0))
 const breakdown = computed(() =>
-  dish.value ? costBreakdown(dish.value, kitchen.ingredientMap, menuMap.value) : [],
+  dish.value ? costBreakdown(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value) : [],
 )
 const weekStarts = computed(() => {
   // Same 8-week window the bars use — first and last for the axis.
@@ -72,6 +74,9 @@ const weekStarts = computed(() => {
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.plateCost') }}</div>
         <div class="mt-1 text-2xl font-bold">{{ n(margin.cost, 'currency') }}</div>
+        <div v-if="margin.laborCost > 0" class="text-[11px] text-smoke">
+          {{ t('menu.detail.inclLabor', { cost: n(margin.laborCost, 'currency') }) }}
+        </div>
       </div>
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.margin') }}</div>
@@ -101,15 +106,21 @@ const weekStarts = computed(() => {
     <div class="card">
       <div class="mb-2 text-sm font-semibold">{{ t('menu.detail.breakdownTitle') }}</div>
       <div class="space-y-2">
-        <RouterLink
+        <!-- Labor rows are informational (no detail page to link to) -->
+        <component
+          :is="row.labor ? 'div' : RouterLink"
           v-for="row in breakdown"
-          :key="row.ingredient?.id ?? row.sub?.id ?? 'row'"
-          :to="row.sub ? `/menu/${row.sub.id}` : `/pantry/${row.ingredient!.id}`"
+          :key="row.ingredient?.id ?? row.sub?.id ?? 'labor'"
+          :to="row.labor ? undefined : row.sub ? `/menu/${row.sub.id}` : `/pantry/${row.ingredient!.id}`"
           class="group block"
         >
           <div class="mb-0.5 flex items-center justify-between text-xs">
-            <span class="truncate font-medium group-hover:text-ember-700">
-              <template v-if="row.sub">
+            <span class="truncate font-medium" :class="row.labor ? '' : 'group-hover:text-ember-700'">
+              <template v-if="row.labor">
+                {{ t('menu.detail.laborRow') }}
+                <span class="text-smoke">· {{ t('menu.detail.laborPerPlate', { min: n(row.qty) }) }}</span>
+              </template>
+              <template v-else-if="row.sub">
                 {{ row.sub.name }}
                 <span class="text-smoke">· {{ t('menu.detail.subPortions', { qty: n(row.qty) }) }}</span>
               </template>
@@ -123,9 +134,13 @@ const weekStarts = computed(() => {
             <span class="shrink-0 text-smoke">{{ n(row.cost, 'currency') }}</span>
           </div>
           <div class="h-2 rounded-full bg-gray-100">
-            <div class="h-2 rounded-full" :class="row.sub ? 'bg-herb' : 'bg-ember'" :style="{ width: row.share * 100 + '%' }" />
+            <div
+              class="h-2 rounded-full"
+              :class="row.labor ? 'bg-ink/40' : row.sub ? 'bg-herb' : 'bg-ember'"
+              :style="{ width: row.share * 100 + '%' }"
+            />
           </div>
-        </RouterLink>
+        </component>
       </div>
     </div>
   </div>

@@ -29,6 +29,8 @@ const invoicesStore = useInvoicesStore()
 const kitchen = useKitchenStore()
 const auth = useAuthStore()
 const canEdit = computed(() => auth.can('finance', 'edit'))
+// Restaurant labor rate (Settings) — 0/unset keeps costs ingredients-only.
+const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 
 // ── Expenses vs revenue (8 weeks) — includes tagged non-food spend ──
 const series = computed(() => weeklySeries(invoicesStore.invoices, kitchen.revenue, kitchen.expenses))
@@ -107,7 +109,9 @@ const QUADRANT_COLORS: Record<string, string> = {
   dog: '#dc3448',
 }
 const ME = { w: 640, h: 300, pad: 34 }
-const engineering = computed(() => menuEngineering(kitchen.menuItems, kitchen.revenue, kitchen.ingredientMap))
+const engineering = computed(() =>
+  menuEngineering(kitchen.menuItems, kitchen.revenue, kitchen.ingredientMap, laborRate.value),
+)
 const matrix = computed(() => {
   const { points: pts, avgUnits, avgMargin } = engineering.value
   const maxU = Math.max(1, ...pts.map((p) => p.units)) * 1.15
@@ -165,7 +169,7 @@ const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
 const marginAlerts = computed(() => {
   const list: { m: MenuItem; margin: number; cost: number }[] = []
   for (const m of kitchen.activeMenuItems) {
-    const { margin, cost } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value)
+    const { margin, cost } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
     if (margin != null && margin < m.targetMarginPct) list.push({ m, margin, cost })
   }
   return list.slice(0, 3)

@@ -6,6 +6,7 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import AssistantSheet from './AssistantSheet.vue'
+import BootLoader from './BootLoader.vue'
 import LocationSwitcher from './LocationSwitcher.vue'
 import OnboardingWizard from './OnboardingWizard.vue'
 import logoColor from '../assets/logo-color.svg'
@@ -223,13 +224,14 @@ watch(
     <main :class="bare ? 'flex-1' : 'min-w-0 flex-1 px-4 pt-14 pb-6 md:px-8 md:py-6'">
       <!-- The auth guard holds navigation until the auth state is known,
            so the slot is empty during that first beat. -->
-      <div v-if="!authStore.ready" class="py-20 text-center text-sm text-smoke">
-        {{ t('common.loading') }}
-      </div>
+      <div v-if="!authStore.ready || (authStore.user && !authStore.profile)" class="hidden" />
       <div v-else :class="bare ? '' : 'mx-auto w-full max-w-4xl'">
         <slot />
       </div>
     </main>
+
+    <!-- Full-screen loader shown right after login while the profile loads -->
+    <BootLoader v-if="!authStore.ready || (authStore.user && !authStore.profile)" />
 
     <!-- Keyed on the active location: it reasons over one restaurant's
          data, so switching locations must remount it (fresh transcript)

@@ -98,14 +98,14 @@ function sanitize(
 }
 
 /**
- * OCR a receipt image. With an LLM API key set (secret in prod,
- * plain env / functions/.secret.local in the emulator — see llm.ts)
- * it calls the real vision model; without one it returns a
- * deterministic mock so the scan → triage → approve flow works fully
- * offline. This is the local-first fallback, not an error.
+ * OCR a receipt — one or more photographed pages of ONE document. With
+ * an LLM API key set (secret in prod, plain env / functions/.secret.local
+ * in the emulator — see llm.ts) it calls the real vision model; without
+ * one it returns a deterministic mock so the scan → triage → approve
+ * flow works fully offline. This is the local-first fallback, not an error.
  */
 export async function extractInvoice(
-  imageBase64: string,
+  imagesBase64: string[],
   knownIngredients: string[] = [],
 ): Promise<OcrResult> {
   if (!llmApiKey()) {
@@ -113,10 +113,13 @@ export async function extractInvoice(
     return mockExtraction();
   }
 
-  const prompt =
-    knownIngredients.length > 0
-      ? `${EXTRACTION_PROMPT}\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`
-      : EXTRACTION_PROMPT;
+  let prompt = EXTRACTION_PROMPT;
+  if (imagesBase64.length > 1) {
+    prompt += `\n\nThe ${imagesBase64.length} images are consecutive pages of ONE document, in order. Merge them into a single extraction: one combined lineItems list (no duplicates across page boundaries), one vendor/date, and the grand total — usually printed on the last page.`;
+  }
+  if (knownIngredients.length > 0) {
+    prompt += `\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`;
+  }
 
   const raw = await chatCompletion(
     [
@@ -124,12 +127,17 @@ export async function extractInvoice(
         role: "user",
         content: [
           { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+          ...imagesBase64.map((b64) => ({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${b64}` },
+          })),
         ],
       },
     ],
     {
-      maxTokens: 2048,
+      // Multi-page documents carry more lines — give the reply headroom
+      // (parseModelJson still repairs a truncated tail either way).
+      maxTokens: imagesBase64.length > 1 ? 3584 : 2048,
       temperature: 0.1,
       label: "ocr",
       json: { name: "invoice_extraction", schema: ocrResponseSchema },

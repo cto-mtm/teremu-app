@@ -37,6 +37,9 @@ export interface PlanInfo {
   plan: Plan;
   limits: PlanLimits;
   scanCount: number;
+  /** €/hour of kitchen labor (restaurant setting) — null = not set.
+   * Piggybacks on this read because every request already makes it. */
+  laborRatePerHour: number | null;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -44,7 +47,13 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
   const snap = await getFirestore().collection("restaurants").doc(rid).get();
   const plan = planOf(snap.get("plan"));
   const scanCount = snap.get("scanPeriod") === monthKey() ? ((snap.get("scanCount") as number) ?? 0) : 0;
-  return { plan, limits: PLAN_LIMITS[plan], scanCount };
+  const rate = snap.get("laborRatePerHour");
+  return {
+    plan,
+    limits: PLAN_LIMITS[plan],
+    scanCount,
+    laborRatePerHour: typeof rate === "number" ? rate : null,
+  };
 }
 
 /**
