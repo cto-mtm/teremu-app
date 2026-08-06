@@ -39,27 +39,33 @@ const BASE_URL =
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
-export async function apiFetch<T>(
+// ── Internal shared request handler ─────────────────────────────────
+// Deduplicated from apiFetch/apiUpload: auth headers, fetch, JSON parse,
+// error extraction, schema validation, and catch — all in one place.
+
+function extractError(body: unknown, status: number): string {
+  if (body && typeof body === 'object' && 'error' in body) {
+    return JSON.stringify((body as { error: unknown }).error)
+  }
+  return `HTTP ${status}`
+}
+
+async function _request<T>(
   path: string,
-  init?: RequestInit,
+  init: RequestInit,
   schema?: ZodType<T>,
 ): Promise<ApiResult<T>> {
   try {
     const res = await fetch(BASE_URL + path, {
       ...init,
       headers: {
-        'Content-Type': 'application/json',
         ...(await authHeaders()),
-        ...init?.headers,
+        ...init.headers,
       },
     })
     const body: unknown = await res.json().catch(() => null)
     if (!res.ok) {
-      const msg =
-        body && typeof body === 'object' && 'error' in body
-          ? JSON.stringify((body as { error: unknown }).error)
-          : `HTTP ${res.status}`
-      return { ok: false, error: msg }
+      return { ok: false, error: extractError(body, res.status) }
     }
     if (schema) {
       const parsed = schema.safeParse(body)
@@ -78,6 +84,20 @@ export async function apiFetch<T>(
   }
 }
 
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+  schema?: ZodType<T>,
+): Promise<ApiResult<T>> {
+  return _request(path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...init?.headers,
+    },
+  }, schema)
+}
+
 /**
  * Upload a binary body (receipt JPEGs) — raw bytes, no base64 (25%
  * smaller on the wire). Response is validated like apiFetch.
@@ -86,33 +106,16 @@ export async function apiUpload<T>(
   path: string,
   blob: Blob,
   schema?: ZodType<T>,
+  headers?: Record<string, string>,
 ): Promise<ApiResult<T>> {
-  try {
-    const res = await fetch(BASE_URL + path, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'image/jpeg',
-        ...(await authHeaders()),
-      },
-      body: blob,
-    })
-    const body: unknown = await res.json().catch(() => null)
-    if (!res.ok) {
-      const msg =
-        body && typeof body === 'object' && 'error' in body
-          ? JSON.stringify((body as { error: unknown }).error)
-          : `HTTP ${res.status}`
-      return { ok: false, error: msg }
-    }
-    if (schema) {
-      const parsed = schema.safeParse(body)
-      if (!parsed.success) return { ok: false, error: `invalid response for ${path}` }
-      return { ok: true, data: parsed.data }
-    }
-    return { ok: true, data: body as T }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'network error' }
-  }
+  return _request(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'image/jpeg',
+      ...headers,
+    },
+    body: blob,
+  }, schema)
 }
 
 /**

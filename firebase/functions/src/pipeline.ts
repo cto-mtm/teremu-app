@@ -75,11 +75,14 @@ function validateArithmetic(
 export async function processInvoiceImage(
   rid: string,
   invoiceId: string,
-  imagePath: string
+  imagePaths: string[]
 ): Promise<void> {
   const ref = restCol(rid, "invoices").doc(invoiceId);
   try {
-    const [buffer] = await getStorage().bucket().file(imagePath).download();
+    // All pages of the document, in capture order — one extraction call.
+    const buffers = await Promise.all(
+      imagePaths.map(async (p) => (await getStorage().bucket().file(p).download())[0])
+    );
     // Feed the model the user's ingredient catalog so it maps line items
     // onto existing products ("TOMATE 25#" → "Roma Tomatoes") instead of
     // spawning near-duplicates.
@@ -87,7 +90,7 @@ export async function processInvoiceImage(
     const catalog = catalogSnap.docs
       .map((d) => (d.data() as IngredientDoc).name)
       .filter(Boolean);
-    const result = await extractInvoice(buffer.toString("base64"), catalog);
+    const result = await extractInvoice(buffers.map((b) => b.toString("base64")), catalog);
 
     if (result.notDocument) {
       await ref.update({ status: "failed", error: "not_a_document" });
@@ -238,31 +241,49 @@ export async function approveInvoice(
 /**
  * Pantry usage implied by dishes sold, in each ingredient's STOCK unit.
  * Recipe lines may be authored in a different compatible unit — convert.
+ *
+ * Batch-reads all menu items and ingredients upfront (instead of N+1 doc
+ * reads per sold dish) so the cost is 2 reads regardless of how many
+ * dishes appear in the revenue entry.
  */
 async function usageFor(
   rid: string,
   itemsSold: { menuItemId: string; qty: number }[]
 ): Promise<Map<string, number>> {
-  const raw = new Map<string, { qty: number; unit: string | undefined }[]>();
+  if (itemsSold.length === 0) return new Map();
 
-  // Walk a recipe, expanding sub-recipe lines recursively. `path` guards
-  // against cycles (A uses B uses A) per branch; depth caps the tree.
-  const walk = async (
+  // Pre-fetch the full catalog (capped by Firestore's 300-doc convention
+  // used elsewhere in the codebase — enough for any realistic menu).
+  const [menuSnap, ingredientsSnap] = await Promise.all([
+    restCol(rid, "menuItems").limit(300).get(),
+    restCol(rid, "ingredients").limit(300).get(),
+  ]);
+  const menuMap = new Map<string, { recipe: { ingredientId?: string; subItemId?: string; qty: number; unit?: string }[] }>();
+  for (const doc of menuSnap.docs) {
+    const parsed = menuItemDocSchema.safeParse(doc.data());
+    if (parsed.success) menuMap.set(doc.id, parsed.data);
+  }
+  const ingredientMap = new Map<string, { unit: IngredientDoc["unit"] }>();
+  for (const doc of ingredientsSnap.docs) {
+    const parsed = ingredientDocSchema.safeParse(doc.data());
+    if (parsed.success) ingredientMap.set(doc.id, parsed.data);
+  }
+
+  // Walk recipes in-memory (same algorithm as domain.ts expandUsage).
+  const raw = new Map<string, { qty: number; unit: string | undefined }[]>();
+  const walk = (
     menuItemId: string,
     multiplier: number,
     path: Set<string>,
-    depth: number
-  ): Promise<void> => {
+    depth: number,
+  ): void => {
     if (depth > 4) return;
-    const item = await restCol(rid, "menuItems").doc(menuItemId).get();
-    if (!item.exists) return;
-    // Validated read: a malformed menu item is skipped, not propagated.
-    const parsed = menuItemDocSchema.safeParse(item.data());
-    if (!parsed.success) return;
-    for (const line of parsed.data.recipe) {
+    const item = menuMap.get(menuItemId);
+    if (!item) return;
+    for (const line of item.recipe) {
       if (line.subItemId) {
         if (!path.has(line.subItemId)) {
-          await walk(line.subItemId, multiplier * line.qty, new Set([...path, line.subItemId]), depth + 1);
+          walk(line.subItemId, multiplier * line.qty, new Set([...path, line.subItemId]), depth + 1);
         }
         continue;
       }
@@ -275,18 +296,17 @@ async function usageFor(
   };
 
   for (const sold of itemsSold) {
-    await walk(sold.menuItemId, sold.qty, new Set([sold.menuItemId]), 0);
+    walk(sold.menuItemId, sold.qty, new Set([sold.menuItemId]), 0);
   }
+
   const usage = new Map<string, number>();
   for (const [ingredientId, entries] of raw) {
-    const ingSnap = await restCol(rid, "ingredients").doc(ingredientId).get();
-    const ing = ingredientDocSchema.safeParse(ingSnap.data());
-    if (!ing.success) continue;
+    const ing = ingredientMap.get(ingredientId);
+    if (!ing) continue;
     let used = 0;
     for (const e of entries) {
-      // No unit (legacy) or failed conversion → qty is in stock units.
       used += e.unit
-        ? (convertQty(e.qty, e.unit as IngredientDoc["unit"], ing.data.unit) ?? e.qty)
+        ? (convertQty(e.qty, e.unit as IngredientDoc["unit"], ing.unit) ?? e.qty)
         : e.qty;
     }
     usage.set(ingredientId, used);

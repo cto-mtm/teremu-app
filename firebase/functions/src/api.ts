@@ -27,6 +27,7 @@ import {
   reconcileSchema,
   restaurantProfileSchema,
   revenueSchema,
+  updateRestaurantSchema,
   updateIngredientSchema,
   updateMemberSchema,
   vendorContactSchema,
@@ -37,7 +38,7 @@ import {
 } from "./models.js";
 import { askAssistant } from "./assistant.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
-import { orderEmail } from "./mail.js";
+import { orderEmail, inviteEmail, sendMail } from "./mail.js";
 import { consumeScan, getPlanInfo, planOf } from "./plan.js";
 import {
   billingConfigured,
@@ -54,7 +55,6 @@ import {
   recordRevenue,
   updateRevenue,
 } from "./pipeline.js";
-import { inviteEmail, sendMail } from "./mail.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -66,6 +66,10 @@ const NVIDIA_API_KEY = defineSecret("NVIDIA_API_KEY");
 // window + generous limit instead of unbounded scans; long-range
 // analytics belong in rollup docs — see docs/architecture.md).
 const DAY_MS = 86_400_000;
+
+// Multi-page invoice cap: pages after the first are quota-free, so this
+// is the cost guard (each page is one more image into the OCR call).
+const MAX_INVOICE_PAGES = 8;
 const windowDays = (req: Request, fallback: number): number => {
   const n = Number(req.query.days);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 3650) : fallback;
@@ -130,6 +134,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       email: member.email,
       plan: planInfo.plan,
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
+      laborRatePerHour: planInfo.laborRatePerHour,
       locations,
     });
   }
@@ -160,17 +165,19 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // Monthly scan quota (the freemium value metric) — atomic.
       const quota = await consumeScan(rid);
       if (!quota.ok) return paywall("scan_limit");
+      // Multi-page capture: the client will follow up with
+      // POST /invoices/:id/pages and PUT /invoices/:id/complete. The
+      // pagesPending field tells the Storage trigger to stand down.
+      const morePages = req.headers["x-more-pages"] === "1";
       const ref = col("invoices").doc();
       const imagePath = `receipts/${rid}/${ref.id}.jpg`;
-      await getStorage().bucket().file(imagePath).save(buffer, {
-        contentType: "image/jpeg",
-      });
       const doc: InvoiceDoc = {
         status: "processing",
         docType: "invoice",
         vendorName: null,
         invoiceDate: null,
         imagePath,
+        ...(morePages ? { imagePaths: [imagePath], pagesPending: true } : {}),
         lineItems: [],
         total: null,
         warnings: [],
@@ -179,7 +186,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
         createdAt: Date.now(),
         approvedAt: null,
       };
+      // Doc BEFORE file: the Storage trigger reads the doc to decide
+      // whether to process, so the file must never land first.
       await ref.set(doc);
+      await getStorage().bucket().file(imagePath).save(buffer, {
+        contentType: "image/jpeg",
+      });
       // Respond immediately — the Storage trigger (onReceiptUploaded)
       // picks the file up and runs OCR in the background, so the
       // scanner never blocks between shots.
@@ -197,11 +209,55 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (!can(member, "triage")) return forbidden(res);
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
-        const { imagePath } = snap.data() as InvoiceDoc;
-        if (!imagePath) return json(res, 404, { error: "no image for this invoice" });
-        const [buffer] = await getStorage().bucket().file(imagePath).download();
+        const inv = snap.data() as InvoiceDoc;
+        const paths = inv.imagePaths ?? (inv.imagePath ? [inv.imagePath] : []);
+        if (paths.length === 0) return json(res, 404, { error: "no image for this invoice" });
+        // ?page=N (1-based) — anything out of range falls back to page 1.
+        const page = Number(req.query.page);
+        const idx = Number.isInteger(page) && page >= 1 && page <= paths.length ? page - 1 : 0;
+        const [buffer] = await getStorage().bucket().file(paths[idx]).download();
         res.set("Content-Type", "image/jpeg").set("Cache-Control", "private, max-age=3600");
         return res.status(200).send(buffer);
+      }
+      if (m === "POST" && action === "pages") {
+        if (!can(member, "scan")) return forbidden(res);
+        // Another page of an open multi-page capture. Quota-free: the
+        // invoice consumed one scan at creation; pages are capped instead.
+        const contentType = String(req.headers["content-type"] ?? "");
+        if (!contentType.startsWith("image/")) {
+          return json(res, 415, { error: "send the page as a raw image body (image/jpeg)" });
+        }
+        const buffer = req.rawBody;
+        if (!buffer || buffer.length === 0) return json(res, 400, { error: "empty image body" });
+        if (buffer.length > 10 * 1024 * 1024) return json(res, 413, { error: "image too large (10 MB max)" });
+        const snap = await ref.get();
+        if (!snap.exists) return json(res, 404, { error: "invoice not found" });
+        const inv = snap.data() as InvoiceDoc;
+        if (!inv.pagesPending) return json(res, 400, { error: "invoice is not accepting pages" });
+        const paths = inv.imagePaths ?? [inv.imagePath];
+        if (paths.length >= MAX_INVOICE_PAGES) {
+          return json(res, 400, { error: `page limit reached (${MAX_INVOICE_PAGES})` });
+        }
+        // One level deeper than page 1 on purpose — the Storage trigger's
+        // path regex must not fire for additional pages.
+        const pagePath = `receipts/${rid}/${id}/p${paths.length + 1}.jpg`;
+        await getStorage().bucket().file(pagePath).save(buffer, { contentType: "image/jpeg" });
+        await ref.update({ imagePaths: [...paths, pagePath] });
+        return json(res, 201, { id, pages: paths.length + 1 });
+      }
+      if (m === "PUT" && action === "complete") {
+        if (!can(member, "scan")) return forbidden(res);
+        // Close a multi-page capture: no more pages coming — run the
+        // pipeline once over every page (the trigger stood down for this
+        // doc, see onReceiptUploaded).
+        const snap = await ref.get();
+        if (!snap.exists) return json(res, 404, { error: "invoice not found" });
+        const inv = snap.data() as InvoiceDoc;
+        if (!inv.pagesPending) return json(res, 400, { error: "invoice has no pending pages" });
+        await ref.update({ pagesPending: false });
+        await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
+        const fresh = await ref.get();
+        return json(res, 200, { id, ...fresh.data() });
       }
       if (m === "PUT" && action === "approve") {
         if (!can(member, "triage", "edit")) return forbidden(res);
@@ -280,8 +336,15 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (!can(member, "triage", "edit")) return forbidden(res);
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
-        await ref.update({ status: "processing", error: null });
-        await processInvoiceImage(rid, id, (snap.data() as InvoiceDoc).imagePath);
+        const inv = snap.data() as InvoiceDoc;
+        // A multi-page capture abandoned mid-upload retries with the
+        // pages it has — clearing pagesPending unsticks it for good.
+        await ref.update({
+          status: "processing",
+          error: null,
+          ...(inv.pagesPending ? { pagesPending: false } : {}),
+        });
+        await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
         const fresh = await ref.get();
         return json(res, 200, { id, ...fresh.data() });
       }
@@ -617,9 +680,13 @@ async function route(req: Request, res: Response): Promise<unknown> {
     // manage a different one, switch to it first (X-Restaurant-Id).
     if (m === "PUT" && id && seg.length === 2) {
       if (id !== rid || member.role !== "owner") return forbidden(res);
-      const body = restaurantProfileSchema.parse(req.body);
-      await db.collection("restaurants").doc(rid).set({ name: body.name.trim() }, { merge: true });
-      return json(res, 200, { ok: true, name: body.name.trim() });
+      const body = updateRestaurantSchema.parse(req.body);
+      const patch: Record<string, unknown> = {};
+      if (body.name !== undefined) patch.name = body.name.trim();
+      if (body.laborRatePerHour !== undefined) patch.laborRatePerHour = body.laborRatePerHour;
+      if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
+      await db.collection("restaurants").doc(rid).set(patch, { merge: true });
+      return json(res, 200, { ok: true, ...patch });
     }
 
     if (m === "DELETE" && id && seg.length === 2) {

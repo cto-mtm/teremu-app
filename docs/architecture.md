@@ -69,7 +69,6 @@ Native caveat: `signInWithPopup` doesn't work inside the Capacitor WebView — s
 
 ## Known limitations (deliberate scaffold scope)
 
-- **No unit conversion.** Pantry math and plate costing assume the invoice line unit, the ingredient's unit, and the recipe unit are the same (buy salmon in `lb`, recipe in `lb`). A `case` purchase against a `lb` recipe will miscount until a conversion layer (case size per ingredient) is added.
 - **Camera needs a secure context.** `getUserMedia` works on `localhost` and HTTPS only — testing from a phone against `http://192.168.x.x:5173` will fall back to the photo-library input. Inside the native shells, WebView camera permissions vary by OS; if that bites, swap the scanner input to the `@capacitor/camera` plugin (the capture → `store.capture(blob)` seam is one function).
 - **Web-only Google sign-in.** Popup-based; the native shells need `@capacitor-firebase/authentication` (see Auth section).
 - **List queries are time-windowed, not paginated.** GETs accept `?days=` (invoices default 180, revenue/expenses 365) with a 500-doc limit — the Firestore-recommended pattern of bounding reads by window instead of unbounded scans. History older than the window doesn't appear in charts; when multi-year analytics matter, add monthly rollup documents (a scheduled function summing each month into one doc) rather than raising limits.

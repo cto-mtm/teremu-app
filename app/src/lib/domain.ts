@@ -7,6 +7,9 @@ import { normalizeName } from '@teremu/shared'
 
 export { normalizeName }
 
+/** Milliseconds in one day — shared constant for all time math below. */
+const DAY_MS = 86_400_000
+
 /**
  * A FOOD invoice: approved, not diverted to a tagged expense, and not a
  * delivery note (the matching factura carries the money — counting both
@@ -108,18 +111,26 @@ function qtyInStockUnit(line: { qty: number; unit?: Unit }, ing: Ingredient): nu
   return convertQty(line.qty, line.unit, ing.unit) ?? line.qty
 }
 
+/** Labor cost of one plate's prep time at the restaurant's rate. */
+const prepLaborCost = (item: MenuItem, laborRatePerHour: number): number =>
+  ((item.prepMinutes ?? 0) / 60) * laborRatePerHour
+
 /**
- * Current plate cost of a dish from live (rolling) ingredient prices.
- * Sub-recipe lines ("side of rice" inside "salmon with rice") expand
- * recursively — cycle-guarded per branch, depth-capped.
+ * Current plate cost of a dish from live (rolling) ingredient prices,
+ * plus prep-time labor when the restaurant has a labor rate set
+ * (cost = foodCost + laborCost). Sub-recipe lines ("side of rice"
+ * inside "salmon with rice") expand recursively — their prep time
+ * counts too — cycle-guarded per branch, depth-capped.
  */
 export function plateCost(
   item: MenuItem,
   ingredients: Map<string, Ingredient>,
   menuItems: Map<string, MenuItem> = new Map(),
+  laborRatePerHour = 0,
   path: Set<string> = new Set([item.id]),
-): { cost: number; missing: boolean } {
-  let cost = 0
+): { cost: number; foodCost: number; laborCost: number; missing: boolean } {
+  let foodCost = 0
+  let laborCost = prepLaborCost(item, laborRatePerHour)
   let missing = false
   for (const line of item.recipe) {
     if (line.subItemId) {
@@ -128,8 +139,9 @@ export function plateCost(
         missing = true
         continue
       }
-      const rec = plateCost(sub, ingredients, menuItems, new Set([...path, sub.id]))
-      cost += rec.cost * line.qty
+      const rec = plateCost(sub, ingredients, menuItems, laborRatePerHour, new Set([...path, sub.id]))
+      foodCost += rec.foodCost * line.qty
+      laborCost += rec.laborCost * line.qty
       missing = missing || rec.missing
       continue
     }
@@ -138,19 +150,20 @@ export function plateCost(
       missing = true
       continue
     }
-    cost += ing.lastUnitPrice * qtyInStockUnit(line, ing)
+    foodCost += ing.lastUnitPrice * qtyInStockUnit(line, ing)
   }
-  return { cost, missing }
+  return { cost: foodCost + laborCost, foodCost, laborCost, missing }
 }
 
 export function actualMarginPct(
   item: MenuItem,
   ingredients: Map<string, Ingredient>,
   menuItems: Map<string, MenuItem> = new Map(),
-): { margin: number | null; cost: number; missing: boolean } {
-  const { cost, missing } = plateCost(item, ingredients, menuItems)
-  if (item.price <= 0) return { margin: null, cost, missing }
-  return { margin: ((item.price - cost) / item.price) * 100, cost, missing }
+  laborRatePerHour = 0,
+): { margin: number | null; cost: number; foodCost: number; laborCost: number; missing: boolean } {
+  const costs = plateCost(item, ingredients, menuItems, laborRatePerHour)
+  if (item.price <= 0) return { margin: null, ...costs }
+  return { margin: ((item.price - costs.cost) / item.price) * 100, ...costs }
 }
 
 /** % change between the last two known prices for an ingredient. */
@@ -165,8 +178,6 @@ export interface WeekPoint {
   expenses: number
   revenue: number
 }
-
-const DAY_MS = 86_400_000
 
 function startOfWeek(d: Date): Date {
   const x = new Date(d)
@@ -426,6 +437,7 @@ export function menuEngineering(
   menuItems: MenuItem[],
   revenue: RevenueEntry[],
   ingredients: Map<string, Ingredient>,
+  laborRatePerHour = 0,
 ): { points: MenuEngineeringPoint[]; avgUnits: number; avgMargin: number } {
   const units = new Map<string, number>()
   for (const r of revenue) {
@@ -437,7 +449,7 @@ export function menuEngineering(
     .map((m) => ({
       item: m,
       units: units.get(m.id) ?? 0,
-      margin: actualMarginPct(m, ingredients, menuMap).margin ?? 0,
+      margin: actualMarginPct(m, ingredients, menuMap, laborRatePerHour).margin ?? 0,
     }))
   if (raw.length === 0) return { points: [], avgUnits: 0, avgMargin: 0 }
   const avgUnits = raw.reduce((s, p) => s + p.units, 0) / raw.length
@@ -504,13 +516,12 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
     total: 0,
     segments: vendors.map((v) => ({ ...v, amount: 0 })),
   }))
-  const DAY = 86_400_000
   for (const inv of invoices) {
     if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
     const d = inv.invoiceDate ? new Date(inv.invoiceDate + 'T12:00:00') : new Date(inv.createdAt)
     for (const w of weeks) {
       const start = new Date(w.weekStart + 'T00:00:00').getTime()
-      if (d.getTime() >= start && d.getTime() < start + 7 * DAY) {
+      if (d.getTime() >= start && d.getTime() < start + 7 * DAY_MS) {
         const key = normalizeName(inv.vendorName)
         const seg = w.segments.find((s) => s.key === (topKeys.has(key) ? key : 'other'))
         if (seg) {
@@ -560,15 +571,15 @@ export function pantryValue(ingredients: Ingredient[]): number {
 
 // ── Detail-page charts ──────────────────────────────────────────────
 
-const DAY = 86_400_000
-const WINDOW_DAYS = 56 // the shared 8-week window
+/** The shared 8-week window used by detail-page charts and spendByTag. */
+const WINDOW_DAYS = 56
 
 function weekIndex(dateStr: string | null, weeks: WeekPoint[]): number {
   if (!dateStr) return -1
   const t = new Date(dateStr + 'T12:00:00').getTime()
   return weeks.findIndex((w) => {
     const start = new Date(w.weekStart + 'T00:00:00').getTime()
-    return t >= start && t < start + 7 * DAY
+    return t >= start && t < start + 7 * DAY_MS
   })
 }
 
@@ -613,24 +624,28 @@ export function ingredientWeeklyQty(invoices: Invoice[], ing: Ingredient): numbe
 export interface BreakdownRow {
   ingredient?: Ingredient
   sub?: MenuItem // sub-recipe component
+  labor?: boolean // the dish's own prep time (qty = minutes)
   qty: number
   unit?: Unit
   cost: number
   share: number
 }
 
-/** Each recipe component's share of the plate cost, largest first. */
+/** Each recipe component's share of the plate cost, largest first.
+ * With a labor rate set, the dish's own prep time appears as one more
+ * row (sub-recipes already include theirs in their cost). */
 export function costBreakdown(
   item: MenuItem,
   ingredients: Map<string, Ingredient>,
   menuItems: Map<string, MenuItem> = new Map(),
+  laborRatePerHour = 0,
 ): BreakdownRow[] {
   const rows = item.recipe
     .map((line): Omit<BreakdownRow, 'share'> | null => {
       if (line.subItemId) {
         const sub = menuItems.get(line.subItemId)
         if (!sub || sub.id === item.id) return null
-        const subCost = plateCost(sub, ingredients, menuItems, new Set([item.id, sub.id])).cost
+        const subCost = plateCost(sub, ingredients, menuItems, laborRatePerHour, new Set([item.id, sub.id])).cost
         return { sub, qty: line.qty, cost: subCost * line.qty }
       }
       const ing = line.ingredientId ? ingredients.get(line.ingredientId) : undefined
@@ -643,6 +658,8 @@ export function costBreakdown(
       }
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
+  const labor = prepLaborCost(item, laborRatePerHour)
+  if (labor > 0) rows.push({ labor: true, qty: item.prepMinutes ?? 0, cost: labor })
   const total = rows.reduce((s, r) => s + r.cost, 0) || 1
   return rows
     .map((r) => ({ ...r, share: r.cost / total }))
@@ -656,7 +673,7 @@ export function spendByTag(
   invoices: Invoice[],
   expenses: ExpenseEntry[],
 ): { key: string; tag: string | null; total: number }[] {
-  const cutoff = new Date(Date.now() - WINDOW_DAYS * DAY).toISOString().slice(0, 10)
+  const cutoff = new Date(Date.now() - WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10)
   let food = 0
   for (const inv of invoices) {
     if (inv.status === 'approved' && inv.total != null && (inv.invoiceDate ?? '') >= cutoff)
@@ -698,7 +715,7 @@ export function groceryList(
   coverDays = 7,
   usageWindow = 14,
 ): GroceryRow[] {
-  const cutoff = new Date(Date.now() - usageWindow * DAY).toISOString().slice(0, 10)
+  const cutoff = new Date(Date.now() - usageWindow * DAY_MS).toISOString().slice(0, 10)
   // Accumulate raw usage entries (sub-recipes expand); converted
   // per-ingredient below — recipe lines may be authored in a different
   // compatible unit than the stock.
@@ -734,27 +751,4 @@ export function groceryList(
     }
   }
   return rows.sort((a, b) => a.daysLeft - b.daysLeft)
-}
-
-/**
- * Downscale a captured receipt to a ≤1600px JPEG in a SINGLE encode
- * (encode-once best practice: no intermediate JPEG generation, so no
- * stacked compression artifacts). Accepts the scanner's canvas directly
- * or a gallery File/Blob.
- */
-export async function compressReceipt(source: Blob | HTMLCanvasElement): Promise<Blob> {
-  const image = source instanceof Blob ? await createImageBitmap(source) : source
-  const scale = Math.min(1, 1600 / Math.max(image.width, image.height))
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(image.width * scale)
-  canvas.height = Math.round(image.height * scale)
-  canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height)
-  if (source instanceof ImageBitmap) source.close?.()
-  return new Promise((resolve, reject) =>
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('encode failed'))),
-      'image/jpeg',
-      0.85,
-    ),
-  )
 }

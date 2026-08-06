@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { apiFetch, apiUpload } from '../lib/api'
-import { compressReceipt } from '../lib/domain'
+import { compressReceipt } from '../lib/compress'
+import { replaceById } from '../lib/collections'
 import { invoiceListSchema, invoiceSchema } from '../lib/schemas'
 import type { Invoice, LineItem } from '../lib/types'
 
@@ -51,6 +52,53 @@ export const useInvoicesStore = defineStore('invoices', () => {
     }
   }
 
+  // ── Multi-page capture (one invoice, several photos) ────────────
+  // The open session: the first page creates the invoice with an
+  // X-More-Pages header (server holds OCR), the rest append pages, and
+  // finishMultipage() closes it — one OCR pass over every page.
+  const multipageId = ref<string | null>(null)
+  const multipageCount = ref(0)
+
+  /** Add a page to the open multi-page invoice (opens one if needed). */
+  async function capturePage(photo: Blob | HTMLCanvasElement): Promise<boolean> {
+    try {
+      const jpeg = await compressReceipt(photo)
+      if (!multipageId.value) {
+        const res = await apiUpload<Invoice>('/invoices', jpeg, invoiceSchema, { 'X-More-Pages': '1' })
+        if (res.ok) {
+          invoices.value = [res.data, ...invoices.value]
+          multipageId.value = res.data.id
+          multipageCount.value = 1
+        } else {
+          error.value = res.error
+        }
+        return res.ok
+      }
+      const res = await apiUpload<{ id: string; pages: number }>(
+        `/invoices/${multipageId.value}/pages`,
+        jpeg,
+      )
+      if (res.ok) multipageCount.value = res.data.pages
+      else error.value = res.error
+      return res.ok
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'capture failed'
+      return false
+    }
+  }
+
+  /** Close the open multi-page invoice — the server OCRs all its pages. */
+  async function finishMultipage(): Promise<boolean> {
+    const id = multipageId.value
+    if (!id) return true
+    multipageId.value = null
+    multipageCount.value = 0
+    const res = await apiFetch<Invoice>(`/invoices/${id}/complete`, { method: 'PUT' }, invoiceSchema)
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
+    else error.value = res.error
+    return res.ok
+  }
+
   async function approve(
     id: string,
     vendorName: string | null,
@@ -63,7 +111,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
       { method: 'PUT', body: JSON.stringify({ vendorName, invoiceDate, lineItems, docType }) },
       invoiceSchema,
     )
-    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
@@ -75,7 +123,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
       { method: 'PUT', body: JSON.stringify({ tag }) },
       invoiceSchema,
     )
-    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
@@ -90,7 +138,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
       { method: 'PUT', body: JSON.stringify(patch) },
       invoiceSchema,
     )
-    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
@@ -107,14 +155,14 @@ export const useInvoicesStore = defineStore('invoices', () => {
       { method: 'PUT', body: JSON.stringify({ discarded }) },
       invoiceSchema,
     )
-    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
 
   async function reprocess(id: string): Promise<boolean> {
     const res = await apiFetch<Invoice>(`/invoices/${id}/reprocess`, { method: 'POST' }, invoiceSchema)
-    if (res.ok) invoices.value = invoices.value.map((i) => (i.id === id ? res.data : i))
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
@@ -123,6 +171,8 @@ export const useInvoicesStore = defineStore('invoices', () => {
   function reset(): void {
     invoices.value = []
     error.value = null
+    multipageId.value = null
+    multipageCount.value = 0
   }
 
   return {
@@ -137,6 +187,10 @@ export const useInvoicesStore = defineStore('invoices', () => {
     refresh,
     reset,
     capture,
+    multipageId,
+    multipageCount,
+    capturePage,
+    finishMultipage,
     approve,
     approveAsExpense,
     reconcile,

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { apiFetch } from '../lib/api'
+import { replaceById } from '../lib/collections'
 import {
   expenseListSchema,
   expenseSchema,
@@ -99,7 +100,14 @@ export const useKitchenStore = defineStore('kitchen', () => {
   }
 
   async function saveMenuItem(
-    item: { name: string; price: number; targetMarginPct: number; recipe: RecipeLine[]; active: boolean },
+    item: {
+      name: string
+      price: number
+      targetMarginPct: number
+      prepMinutes?: number
+      recipe: RecipeLine[]
+      active: boolean
+    },
     id?: string,
   ): Promise<boolean> {
     const res = id
@@ -115,7 +123,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
         )
     if (res.ok) {
       menuItems.value = id
-        ? menuItems.value.map((m) => (m.id === id ? res.data : m))
+        ? replaceById(menuItems.value, id, res.data)
         : [...menuItems.value, res.data]
     } else {
       error.value = res.error
@@ -158,7 +166,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
       revenueEntrySchema,
     )
     if (res.ok) {
-      revenue.value = revenue.value.map((r) => (r.id === id ? res.data : r))
+      revenue.value = replaceById(revenue.value, id, res.data)
       await refresh() // pantry quantities changed server-side
     } else {
       error.value = res.error
@@ -194,7 +202,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
       },
       expenseSchema,
     )
-    if (res.ok) expenses.value = expenses.value.map((e) => (e.id === id ? res.data : e))
+    if (res.ok) expenses.value = replaceById(expenses.value, id, res.data)
     else error.value = res.error
     return res.ok
   }
@@ -276,7 +284,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
       ingredientSchema,
     )
     if (res.ok) {
-      ingredients.value = ingredients.value.map((i) => (i.id === ingredientId ? res.data : i))
+      ingredients.value = replaceById(ingredients.value, ingredientId, res.data)
     } else {
       error.value = res.error
     }
@@ -291,7 +299,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
       ingredientSchema,
     )
     if (res.ok) {
-      ingredients.value = ingredients.value.map((i) => (i.id === ingredientId ? res.data : i))
+      ingredients.value = replaceById(ingredients.value, ingredientId, res.data)
     } else {
       error.value = res.error
     }
