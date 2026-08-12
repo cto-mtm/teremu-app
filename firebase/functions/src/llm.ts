@@ -20,7 +20,7 @@ import { z } from "zod";
 const PROVIDERS = {
   nvidia: {
     url: "https://integrate.api.nvidia.com/v1/chat/completions",
-    model: "meta/llama-4-maverick-17b-128e-instruct",
+    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   },
   gemini: {
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -76,6 +76,11 @@ export async function chatCompletion(
     temperature: opts.temperature ?? 0.2,
     messages,
   };
+  // Nemotron-omni reasoning models emit chain-of-thought by default which
+  // would break JSON extraction. Disable thinking for structured output.
+  if (model.includes("nemotron") && model.includes("reasoning")) {
+    body.chat_template_kwargs = { enable_thinking: false };
+  }
   const constrained = opts.json !== undefined && !noStructuredOutput.has(model);
   if (opts.json && constrained) {
     body.response_format = {

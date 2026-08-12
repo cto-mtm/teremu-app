@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
+import { useAuthStore } from '../stores/auth'
 import logoWhite from '../assets/logo-white.svg'
 
 /**
@@ -14,6 +15,10 @@ import logoWhite from '../assets/logo-white.svg'
 const { t } = useI18n()
 const router = useRouter()
 const store = useInvoicesStore()
+const auth = useAuthStore()
+// A max-tier user has no higher plan to upsell — the limit message drops
+// the upgrade CTA and just tells them they've maxed the month.
+const atMaxTier = computed(() => auth.profile?.plan === 'max')
 
 const video = ref<HTMLVideoElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -26,6 +31,10 @@ const uploading = ref(0)
 // specific message (network vs monthly scan limit).
 const uploadError = ref<string | null>(null)
 let errorTimer: ReturnType<typeof setTimeout> | null = null
+// Hitting the monthly scan cap is not a transient error — it's the moment
+// to upsell. It gets a persistent, actionable card (not the auto-dismiss
+// chip) so the operator can act on it instead of watching it vanish.
+const limitHit = ref(false)
 const lastThumb = ref<string | null>(null)
 // Multi-page mode: every capture becomes another PAGE of the same
 // invoice (long vendor invoices) instead of a new invoice per shot.
@@ -163,12 +172,21 @@ async function send(source: Blob | HTMLCanvasElement): Promise<void> {
   if (!ok) {
     if (newInvoice) count.value -= 1
     navigator.vibrate?.([60, 40, 60])
-    const limit = store.error?.includes('scan_limit')
-    uploadError.value = limit ? t('scan.limitReached') : t('scan.uploadFailed')
+    if (store.error?.includes('scan_limit')) {
+      // Persistent upgrade CTA — no auto-dismiss timer.
+      limitHit.value = true
+      return
+    }
+    uploadError.value = t('scan.uploadFailed')
     if (errorTimer) clearTimeout(errorTimer)
-    // The paywall message sticks longer — it's actionable, not transient.
-    errorTimer = setTimeout(() => (uploadError.value = null), limit ? 8000 : 4000)
+    errorTimer = setTimeout(() => (uploadError.value = null), 4000)
   }
+}
+
+/** From the scan-limit CTA — the user is out of scans anyway, so leaving
+ * the live camera to see plans loses nothing. */
+function goToPlans(): void {
+  router.push('/pricing')
 }
 
 function snap(): void {
@@ -312,6 +330,35 @@ function onFiles(event: Event): void {
           role="alert"
         >
           {{ uploadError }}
+        </div>
+      </Transition>
+
+      <!-- Scan limit reached: persistent, actionable upgrade CTA -->
+      <Transition name="pop">
+        <div
+          v-if="limitHit"
+          class="absolute top-20 right-8 left-8 mx-auto max-w-sm space-y-2 rounded-2xl bg-coral px-4 py-3 text-center text-white shadow-lg"
+          role="alert"
+        >
+          <button
+            class="absolute top-1.5 right-2 text-white/70"
+            :aria-label="t('scan.dismissNotice')"
+            @click="limitHit = false"
+          >
+            ✕
+          </button>
+          <p class="text-xs font-bold">
+            {{ atMaxTier ? t('scan.limitReachedMax') : t('scan.limitReached') }}
+          </p>
+          <template v-if="!atMaxTier">
+            <p class="text-[11px] font-medium text-white/85">{{ t('scan.limitUpgrade') }}</p>
+            <button
+              class="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-coral"
+              @click="goToPlans"
+            >
+              {{ t('scan.upgradeCta') }}
+            </button>
+          </template>
         </div>
       </Transition>
 

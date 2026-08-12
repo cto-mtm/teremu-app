@@ -101,7 +101,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
   const col = (name: string) => db.collection("restaurants").doc(rid).collection(name);
   // Freemium gates: one plan read per request, enforced server-side.
   const planInfo = await getPlanInfo(rid);
-  const paywall = (code: string) => json(res, 402, { error: code, plan: planInfo.plan });
+  // The tier a paywalled action would need — null when already on the
+  // top plan, so the client can turn "limit reached" into a real upgrade
+  // CTA instead of a dead-end message (and never nag a max user to upgrade).
+  const upgradeTo = planInfo.plan === "free" ? "pro" : planInfo.plan === "pro" ? "max" : null;
+  const paywall = (code: string) =>
+    json(res, 402, { error: code, plan: planInfo.plan, upgradeTo });
   const cappedDays = (fallback: number): number =>
     Math.min(windowDays(req, fallback), planInfo.limits.historyDays);
 
