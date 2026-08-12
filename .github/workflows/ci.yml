@@ -1,0 +1,33 @@
+# Monorepo CI — headless checks only (typecheck + build).
+#
+# The emulator-backed suite (`npm run test`) deliberately does NOT run here: it
+# boots the Firebase emulators (flaky/slow on hosted CI) and instead runs as the
+# pre-deploy gate in scripts/deploy.mjs. CI stays fast and hermetic — it proves
+# the whole monorepo type-checks and compiles.
+name: ci
+
+on:
+  pull_request:
+    paths: ['shared/**', 'app/**', 'firebase/**', '.github/workflows/ci.yml']
+  push:
+    branches: [main]
+    paths: ['shared/**', 'app/**', 'firebase/**', '.github/workflows/ci.yml']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # typecheck builds @teremu/shared first, then tsc --noEmit across shared,
+      # functions, and app. build then proves shared + app + functions compile.
+      - run: npm run typecheck
+      - run: npm run build

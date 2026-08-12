@@ -7,8 +7,11 @@ firebase-debug*.log*
 # Firebase
 .firebase/
 firebase/.firebase/
-# Built SPA copied in by scripts/deploy.sh — always regenerated, never committed
+# Built SPA copied in by scripts/deploy.mjs — always regenerated, never committed
 firebase/app/
+
+# Local deploy ledger (appended by scripts/deploy.mjs) — machine-local history
+deploys/LEDGER.md
 
 # Dependencies / build output
 node_modules/
