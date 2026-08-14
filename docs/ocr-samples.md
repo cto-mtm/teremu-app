@@ -33,4 +33,4 @@ Teremu differentiates between two document types:
 ### In Local Development / Emulators
 - Upload any of these sample images in the **Scan** tab of the web app or Triage flow.
 - Without an `NVIDIA_API_KEY`, receipt scanning runs against the built-in deterministic mock pipeline.
-- With an `NVIDIA_API_KEY` set in `firebase/functions/.secret.local`, the vision model (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`) will parse the image live and extract structured items, unit prices, totals, and document types (`docType`).
+- With an `NVIDIA_API_KEY` set in `firebase/functions/.secret.local`, the vision model (`meta/llama-3.2-11b-vision-instruct`) will parse the image live and extract structured items, unit prices, totals, and document types (`docType`).

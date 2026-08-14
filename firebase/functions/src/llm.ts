@@ -20,7 +20,13 @@ import { z } from "zod";
 const PROVIDERS = {
   nvidia: {
     url: "https://integrate.api.nvidia.com/v1/chat/completions",
-    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    // Vision-capable, honors response_format, AND actually invocable on
+    // a free build.nvidia.com key — verify all three before swapping.
+    // The catalog (`GET /v1/models`) lists models not deployed to every
+    // account; those 404 on every call, text-only ones included.
+    // The 90b sibling reads better but times out (>300s) on the free
+    // tier with a full-size OCR payload — 11b answers in ~9s.
+    model: "meta/llama-3.2-11b-vision-instruct",
   },
   gemini: {
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",

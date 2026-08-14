@@ -24,6 +24,16 @@ plus putting a Gemini API key where the key lives (`firebase functions:secrets:s
 
 **NVIDIA (build.nvidia.com)** — what we use today. The "Free Endpoint" models cost nothing but are for development: ~1,000 trial credits on signup, ~40 requests/min, and the terms require NVIDIA AI Enterprise (or a paid partner endpoint) for anything serving real users. Fine for now, not a production plan.
 
+Two NVIDIA-specific traps, both of which have already broken OCR in this repo:
+
+1. **Model ids rot fast, and the catalog lies.** `GET https://integrate.api.nvidia.com/v1/models` lists models that are not deployed to your account; calling one returns `404 … Specified function … is not found` on *every* request, text-only included. A retired id returns `410`. Neither is a 400/422, so the unconstrained-retry path in `chatCompletion` does not fire — the call throws and the invoice lands in `status: "failed", error: "processing"`. Before changing the preset default, send one real request with the candidate id.
+2. **Not every model takes images**, and the failure is loud but late: `nemotron-3-nano-30b-a3b` returns `500 "multimodal processing is not enabled"`, `nemotron-parse` rejects any text part, `nvidia/llama-3.1-nemotron-nano-vl-8b-v1` takes images but 500s on `response_format`.
+3. **Size is not the axis to optimize on the free tier — latency is.** `meta/llama-3.2-90b-vision-instruct` reads receipts better in principle but exceeded **300s** on a full-size OCR payload (`EXTRACTION_PROMPT` + one page + `max_tokens: 2048`) and never returned; on a short prompt the same model answers fine, so a quick probe will not surface this. `meta/llama-3.2-11b-vision-instruct` — the preset — returns a complete, correct extraction in **~9s**.
+
+A candidate is only qualified once it passes all four: invocable, accepts images, honors `response_format`, and returns the *real* prompt at the real `max_tokens` inside the Cloud Functions timeout.
+
+**Verified preset behavior** (`meta/llama-3.2-11b-vision-instruct`, Kroger receipt, 2026-08-13): vendor, all three line items, unit prices and grand total all correct. It also emits exactly the sloppiness `ocr.ts` is built to absorb — `"unit": "F"` (a receipt tax flag, off-vocabulary → `.catch("each")`), `"date": "null"` as a string (fails the regex → `.catch(null)`), and one line categorized `other` instead of `meat`. The lenient zod layer is load-bearing, not defensive decoration: without it this reply would fail the scan outright.
+
 **Gemini API** — the planned production provider. Pricing snapshot from [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing), checked **2026-07-24** (prices per 1M tokens, paid tier; all models below are multimodal and have a free tier):
 
 | Model | Input (text/image) | Output | Notes |

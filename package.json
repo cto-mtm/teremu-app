@@ -1,7 +1,11 @@
 {
   "name": "teremu",
   "private": true,
+  "type": "module",
   "description": "Teremu monorepo — shared schemas, Vue app, Cloud Functions API",
+  "engines": {
+    "node": ">=20"
+  },
   "workspaces": [
     "shared",
     "app",
@@ -16,6 +20,7 @@
     "clean:install": "npm run clean && npm install && npm run build:shared",
     "typecheck": "npm run build:shared && npm run typecheck --workspace @teremu/shared && npm run typecheck --workspace teremu-functions && npm run typecheck --workspace teremu-app",
     "test": "npm run build:shared && npm --prefix firebase run test",
+    "test:integration:exec": "node scripts/lib/kill-emulator-ports.mjs && npm run build:shared && npm --prefix firebase run test:exec",
     "test:nvidia": "node scripts/test-nvidia.mjs",
     "functions:watch": "npm run build:shared && npm --prefix firebase/functions run build:watch",
     "emulators": "npm run build:shared && npm --prefix firebase run emulators",
