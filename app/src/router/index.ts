@@ -64,6 +64,9 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.whenReady()
   if (!auth.user && to.name !== 'login') {
+    if (import.meta.env.DEV) {
+      console.warn('[router guard] → login (user is null), target was:', to.name)
+    }
     return {
       name: 'login',
       query: to.fullPath !== '/' ? { redirect: to.fullPath } : {},

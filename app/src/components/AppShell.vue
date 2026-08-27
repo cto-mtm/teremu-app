@@ -84,6 +84,9 @@ watch(
         contacts: authStore.can('pantry') || authStore.can('vendors'),
       })
     } else if (ready && !user && route.name !== 'login') {
+      if (import.meta.env.DEV) {
+        console.warn('[AppShell] redirecting to login — user is null, current route:', route.name)
+      }
       void router.replace({ name: 'login' })
     }
   },

@@ -28,7 +28,22 @@ export const useAuthStore = defineStore('auth', () => {
     resolveProfile = resolve
   })
 
+  let _prevUid: string | null = null
+  // Set by signOut() so the phantom-logout diagnostic below doesn't
+  // false-positive on every legitimate logout; consumed (reset) by the
+  // very next auth-state event, whatever it is.
+  let _explicitSignOut = false
   watchAuth((u) => {
+    if (import.meta.env.DEV) {
+      const transition = `${_prevUid ?? '(init)'} → ${u ? u.uid : 'null'}`
+      console.warn(`[auth] onAuthStateChanged: ${transition}`)
+      if (_prevUid && !u && !_explicitSignOut) {
+        console.error('[auth] ⚠️ UNEXPECTED SIGN-OUT — user went from signed-in to null without explicit signOut')
+        console.trace()
+      }
+      _prevUid = u?.uid ?? null
+    }
+    _explicitSignOut = false
     user.value = u
     ready.value = true
     resolveReady?.()
@@ -46,6 +61,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function loadProfile(): Promise<void> {
     const res = await apiFetch<Me>('/me', undefined, meSchema)
+    if (import.meta.env.DEV) {
+      console.warn('[auth] loadProfile result:', res.ok ? 'ok' : `FAILED: ${res.error}`)
+    }
     profile.value = res.ok ? res.data : null
     if (res.ok) {
       // Cold start (no/stale X-Restaurant-Id) resolves a default
@@ -95,6 +113,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function signOut(): Promise<void> {
+    if (import.meta.env.DEV) console.warn('[auth] explicit signOut() called')
+    // Before the await: the auth-state callback fires during it.
+    _explicitSignOut = true
     await fbSignOut()
   }
 
