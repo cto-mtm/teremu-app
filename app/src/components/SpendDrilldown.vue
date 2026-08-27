@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import { spendTree, type SpendNode } from '../lib/domain'
+import { realtimeSpend, spendTree, type SpendNode } from '../lib/domain'
 import { CHART_COLORS, CHART_REST_COLOR } from '../lib/palette'
 import PieChart, { type PieSlice } from './PieChart.vue'
 
@@ -22,9 +22,16 @@ const auth = useAuthStore()
 
 const MAX_SLICES = 9
 
-const tree = computed(() =>
-  spendTree(invoicesStore.invoices, kitchen.expenses, kitchen.ingredientMap),
+/** realtime: also count approved albaranes no factura covers yet
+ * (the dashboard's Facturado / Tiempo real toggle). */
+const props = withDefaults(defineProps<{ realtime?: boolean }>(), { realtime: false })
+
+const docs = computed(() =>
+  props.realtime
+    ? realtimeSpend(invoicesStore.invoices, kitchen.ingredientMap).docs
+    : invoicesStore.invoices,
 )
+const tree = computed(() => spendTree(docs.value, kitchen.expenses, kitchen.ingredientMap))
 
 // The drill state is a path of child keys; the trail re-walks the live
 // tree so a data refresh can never leave us pointing at a stale node.

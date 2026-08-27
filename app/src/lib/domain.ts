@@ -105,6 +105,68 @@ export function reconciliationCandidates(invoices: Invoice[], note: Invoice): In
     .slice(0, 20)
 }
 
+// ── Billed vs real-time spend (factura vs albarán consolidation) ────
+
+export interface RealtimeSpend {
+  /** Billed invoices + pending delivery notes shaped as invoices. */
+  docs: Invoice[]
+  /** Value received but not yet billed — the billed↔realtime delta. */
+  pendingTotal: number
+  pendingCount: number
+  /** Pending lines nobody could price (no line price, no pantry price). */
+  unvaluedLines: number
+}
+
+/**
+ * The REAL-TIME view of food spend. Facturas alone are the accounting
+ * truth, but a vendor on consolidated billing delivers for weeks on
+ * albaranes before the factura lands — so this view adds every approved
+ * delivery note that no factura covers yet (reconciliation says
+ * unmatched, not marked handled). Once the factura arrives and matches,
+ * its notes drop out and the factura takes over: the two views converge
+ * and nothing is ever double-counted.
+ *
+ * Pending notes are returned as invoice-shaped docs (docType flipped,
+ * lines valued) so every existing aggregate — weeklySeries,
+ * vendorWeeklySpend, spendTree — consumes them unchanged. Albarán lines
+ * are often unpriced: a line is valued at its own printed price, else
+ * at the matched ingredient's current price (unit-converted), else it
+ * counts as received-but-unvalued.
+ */
+export function realtimeSpend(
+  invoices: Invoice[],
+  ingredientsById: Map<string, Ingredient>,
+): RealtimeSpend {
+  const pendingNotes = reconcileDeliveryNotes(invoices)
+    .filter((r) => r.status === 'unmatched' && r.note.status === 'approved')
+    .map((r) => r.note)
+
+  let pendingTotal = 0
+  let unvaluedLines = 0
+  const docs = [...invoices]
+  for (const note of pendingNotes) {
+    const lineItems = note.lineItems.map((line) => {
+      if (line.total > 0) return line
+      const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
+      if (ing?.lastUnitPrice != null) {
+        const qty = line.unit === ing.unit ? line.qty : convertQty(line.qty, line.unit, ing.unit)
+        if (qty != null) return { ...line, total: +(qty * ing.lastUnitPrice).toFixed(2) }
+      }
+      unvaluedLines += 1
+      return line
+    })
+    const total = +lineItems.reduce((s, l) => s + l.total, 0).toFixed(2)
+    pendingTotal += total
+    docs.push({ ...note, docType: 'invoice', lineItems, total })
+  }
+  return {
+    docs,
+    pendingTotal: +pendingTotal.toFixed(2),
+    pendingCount: pendingNotes.length,
+    unvaluedLines,
+  }
+}
+
 /** Recipe qty expressed in the ingredient's stock unit (price basis). */
 function qtyInStockUnit(line: { qty: number; unit?: Unit }, ing: Ingredient): number {
   if (!line.unit) return line.qty // legacy: qty already in stock units
