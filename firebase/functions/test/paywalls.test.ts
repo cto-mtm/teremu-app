@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+﻿import { beforeEach, describe, expect, it } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
 import { monthKey, PLAN_LIMITS } from "../src/plan";
 import {
   clearFirestore,
-  FAKE_JPEG,
+  uniqueJpeg,
   get,
   makeOwner,
   post,
@@ -18,15 +18,15 @@ beforeEach(async () => {
 });
 
 describe("freemium paywalls", () => {
-  it("caps free scans at 25/month — the 26th POST /invoices is 402 scan_limit", async () => {
+  it("caps free scans at 25/month â€” the 26th POST /invoices is 402 scan_limit", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     expect(PLAN_LIMITS.free.scans).toBe(25); // guard against the limit silently drifting
 
     for (let i = 0; i < 25; i++) {
-      const { status } = await upload("/invoices", owner.token, FAKE_JPEG);
+      const { status } = await upload("/invoices", owner.token, uniqueJpeg());
       expect(status).toBe(201);
     }
-    const { status, body } = await upload("/invoices", owner.token, FAKE_JPEG);
+    const { status, body } = await upload("/invoices", owner.token, uniqueJpeg());
     expect(status).toBe(402);
     expect(body.error).toBe("scan_limit");
   });
@@ -35,7 +35,7 @@ describe("freemium paywalls", () => {
   // transactions with lock waits and exponential backoff (production
   // resolves the same contention in ms), and the previous test's 25
   // queued OCR triggers are still draining while this one runs. Six
-  // contenders race exactly like ten — the property under test is "the
+  // contenders race exactly like ten â€” the property under test is "the
   // counter never overruns", not a load benchmark.
   it("never overruns the scan cap under concurrent uploads (transactional counter)", { timeout: 60_000 }, async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
@@ -47,7 +47,7 @@ describe("freemium paywalls", () => {
 
     // 6 concurrent uploads against 3 remaining slots.
     const results = await Promise.all(
-      Array.from({ length: 6 }, () => upload("/invoices", owner.token, FAKE_JPEG)),
+      Array.from({ length: 6 }, () => upload("/invoices", owner.token, uniqueJpeg())),
     );
     const okCount = results.filter((r) => r.status === 201).length;
     const blockedCount = results.filter((r) => r.status === 402).length;
@@ -74,7 +74,7 @@ describe("freemium paywalls", () => {
       .collection("restaurants")
       .doc(owner.rid)
       .set({ scanPeriod: monthKey(), scanCount: 500 }, { merge: true });
-    const { status } = await upload("/invoices", owner.token, FAKE_JPEG);
+    const { status } = await upload("/invoices", owner.token, uniqueJpeg());
     expect(status).toBe(201);
   });
 
@@ -122,10 +122,11 @@ describe("freemium paywalls", () => {
     expect(vendors).not.toContain("Ancient");
 
     for (let i = 0; i < 3; i++) {
-      await upload("/invoices", owner.token, FAKE_JPEG);
+      await upload("/invoices", owner.token, uniqueJpeg());
     }
     const me = await get<{ usage: { scans: number; scanLimit: number } }>("/me", owner.token);
     expect(me.body.usage.scans).toBe(3);
     expect(me.body.usage.scanLimit).toBe(25);
   });
 });
+

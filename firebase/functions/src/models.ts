@@ -83,6 +83,11 @@ export const invoiceDocSchema = z.object({
   // field (true or false) — for those, PUT /invoices/:id/complete runs
   // the pipeline once every page is in.
   pagesPending: z.boolean().optional(),
+  // SHA-256 per uploaded page, in order — the upload idempotency key.
+  // POST /invoices rejects bytes any invoice in this restaurant already
+  // holds (double-tap / client retry), and /pages rejects re-adding a
+  // page this capture already has. Absent on pre-hash documents.
+  imageHashes: z.array(z.string()).optional(),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Validation-stage warning codes: "total_mismatch", "line_math".

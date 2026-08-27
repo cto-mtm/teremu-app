@@ -411,3 +411,8 @@ export const uniqueId = (): string => `${Date.now().toString(36)}${Math.random()
 
 /** Minimal valid JPEG header — enough for the API's content-type check. */
 export const FAKE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+
+/** Unique image bytes per call. POST /invoices dedups identical bytes
+ * per restaurant (409 duplicate_image), so any test that uploads more
+ * than once to the same rid must vary the payload. */
+export const uniqueJpeg = (): Buffer => Buffer.concat([FAKE_JPEG, Buffer.from(uniqueId())]);

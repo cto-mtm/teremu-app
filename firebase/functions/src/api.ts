@@ -1,6 +1,7 @@
 import { onRequest, type Request } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
+import { createHash } from "node:crypto";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import type { Response } from "express";
@@ -167,6 +168,17 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const buffer = req.rawBody;
       if (!buffer || buffer.length === 0) return json(res, 400, { error: "empty image body" });
       if (buffer.length > 10 * 1024 * 1024) return json(res, 413, { error: "image too large (10 MB max)" });
+      // Idempotency: the same bytes uploaded twice (double-tap, retry
+      // after a timed-out response) must not create a second invoice —
+      // or burn a second scan, so this runs BEFORE the quota. Exact
+      // hash match only: two camera shots of the same paper are
+      // different bytes and legitimately two scans.
+      const imageHash = createHash("sha256").update(buffer).digest("hex");
+      const dup = await col("invoices")
+        .where("imageHashes", "array-contains", imageHash)
+        .limit(1)
+        .get();
+      if (!dup.empty) return json(res, 409, { error: "duplicate_image", id: dup.docs[0].id });
       // Monthly scan quota (the freemium value metric) — atomic.
       const quota = await consumeScan(rid);
       if (!quota.ok) return paywall("scan_limit");
@@ -183,6 +195,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         invoiceDate: null,
         imagePath,
         ...(morePages ? { imagePaths: [imagePath], pagesPending: true } : {}),
+        imageHashes: [imageHash],
         lineItems: [],
         total: null,
         warnings: [],
@@ -243,11 +256,16 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (paths.length >= MAX_INVOICE_PAGES) {
           return json(res, 400, { error: `page limit reached (${MAX_INVOICE_PAGES})` });
         }
+        // Idempotency within the capture: the same page double-added
+        // (double-tap, retry) must not appear twice in the document.
+        const pageHash = createHash("sha256").update(buffer).digest("hex");
+        const hashes = inv.imageHashes ?? [];
+        if (hashes.includes(pageHash)) return json(res, 409, { error: "duplicate_page" });
         // One level deeper than page 1 on purpose — the Storage trigger's
         // path regex must not fire for additional pages.
         const pagePath = `receipts/${rid}/${id}/p${paths.length + 1}.jpg`;
         await getStorage().bucket().file(pagePath).save(buffer, { contentType: "image/jpeg" });
-        await ref.update({ imagePaths: [...paths, pagePath] });
+        await ref.update({ imagePaths: [...paths, pagePath], imageHashes: [...hashes, pageHash] });
         return json(res, 201, { id, pages: paths.length + 1 });
       }
       if (m === "PUT" && action === "complete") {

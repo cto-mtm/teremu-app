@@ -4,6 +4,7 @@ import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
 import {
   categorySchema,
   docTypeSchema,
+  normalizeName,
   pairSubcategory,
   SUBCATEGORIES,
   subcategorySchema,
@@ -38,6 +39,7 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
 Rules:
 - If "kind" is "other", set lineItems to [] and everything else to null — do NOT invent data.
 - "confidence" is how sure you are about the classification AND the extraction overall (0 to 1).
+- "vendor" is the SELLER who issued the document — never the buyer/customer it is billed or delivered to. Invoices usually show both parties: the buyer appears in a cliente / bill to / deliver to box. When a BUYER name is provided below, that business (or close variants of it) is the customer, NOT the vendor. If the only business name you can read is the buyer's, set "vendor" to null.
 - Normalize product names (e.g. "TOM RMA 25#" -> "Roma Tomatoes").
 - "match": when a KNOWN INGREDIENTS list is provided below and a line is the same product (any spelling/abbreviation/language), copy that list entry EXACTLY into "match". Otherwise null. Never invent names not on the list.
 - For case/box/bunch lines, extract the contents of ONE container when printed (e.g. "CASE 24x400g" -> "packQty": 9.6, "packUnit": "kg"). Use null when not printed.
@@ -92,7 +94,17 @@ const ocrResponseSchema = z.object({
 function sanitize(
   parsed: z.infer<typeof ocrResponseSchema>,
   knownIngredients: string[],
+  restaurantName: string | null,
 ): OcrResult {
+  // Deterministic backstop for the prompt's buyer/seller rule: when the
+  // model still hands back the restaurant's own name as the vendor
+  // (it's often the most prominent text on the page), drop it — an
+  // unknown vendor beats a wrong one. Exact normalized match only, so
+  // a supplier whose name merely CONTAINS the restaurant's survives.
+  const vendor =
+    parsed.vendor && restaurantName && normalizeName(parsed.vendor) === normalizeName(restaurantName)
+      ? null
+      : parsed.vendor;
   // AI catalog matching: when the model recognized an existing product,
   // adopt the canonical name so approval merges instead of duplicating
   // ("TOMATE ROMA 25#" lands on "Roma Tomatoes", not a new ingredient).
@@ -108,7 +120,7 @@ function sanitize(
       total: l.total > 0 ? l.total : +(l.qty * l.unitPrice).toFixed(2),
     }));
   return {
-    vendor: parsed.vendor,
+    vendor,
     date: parsed.date,
     docType: parsed.docType,
     lineItems: items,
@@ -127,6 +139,7 @@ function sanitize(
 export async function extractInvoice(
   imagesBase64: string[],
   knownIngredients: string[] = [],
+  restaurantName: string | null = null,
 ): Promise<OcrResult> {
   if (!llmApiKey()) {
     logger.warn("LLM API key not set — returning mock OCR extraction");
@@ -139,6 +152,9 @@ export async function extractInvoice(
   }
   if (knownIngredients.length > 0) {
     prompt += `\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`;
+  }
+  if (restaurantName) {
+    prompt += `\n\nBUYER (the restaurant receiving these goods — never the vendor): ${JSON.stringify(restaurantName)}`;
   }
 
   const raw = await chatCompletion(
@@ -171,7 +187,7 @@ export async function extractInvoice(
   // Stage 1 verdict: not a purchase document (or the model is guessing).
   if (parsed.kind === "other" || parsed.confidence < 0.3)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, notDocument: true };
-  return sanitize(parsed, knownIngredients);
+  return sanitize(parsed, knownIngredients, restaurantName);
 }
 
 function mockExtraction(): OcrResult {

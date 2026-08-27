@@ -86,12 +86,22 @@ export async function processInvoiceImage(
     );
     // Feed the model the user's ingredient catalog so it maps line items
     // onto existing products ("TOMATE 25#" → "Roma Tomatoes") instead of
-    // spawning near-duplicates.
-    const catalogSnap = await restCol(rid, "ingredients").limit(300).get();
+    // spawning near-duplicates — and the restaurant's own name, so the
+    // buyer printed in the "cliente / bill to" box is never mistaken
+    // for the vendor.
+    const [catalogSnap, restaurantSnap] = await Promise.all([
+      restCol(rid, "ingredients").limit(300).get(),
+      getFirestore().collection("restaurants").doc(rid).get(),
+    ]);
     const catalog = catalogSnap.docs
       .map((d) => (d.data() as IngredientDoc).name)
       .filter(Boolean);
-    const result = await extractInvoice(buffers.map((b) => b.toString("base64")), catalog);
+    const restaurantName = (restaurantSnap.get("name") as string | undefined) ?? null;
+    const result = await extractInvoice(
+      buffers.map((b) => b.toString("base64")),
+      catalog,
+      restaurantName,
+    );
 
     if (result.notDocument) {
       await ref.update({ status: "failed", error: "not_a_document" });

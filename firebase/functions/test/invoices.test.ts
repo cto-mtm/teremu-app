@@ -13,6 +13,7 @@ import {
   seedIngredient,
   seedInvoice,
   uniqueId,
+  uniqueJpeg,
   upload,
   waitForStatus,
 } from "./helpers";
@@ -239,11 +240,12 @@ describe("invoice lifecycle", () => {
     expect(created.body.pagesPending).toBe(true);
     expect(created.body.imagePaths).toEqual([created.body.imagePath]);
 
-    // Pages 2 and 3 append in order, quota-free.
-    const p2 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    // Pages 2 and 3 append in order, quota-free. Distinct bytes per
+    // page — identical bytes are a 409 duplicate_page by design.
+    const p2 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, uniqueJpeg());
     expect(p2.status).toBe(201);
     expect(p2.body.pages).toBe(2);
-    const p3 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    const p3 = await upload<{ id: string; pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, uniqueJpeg());
     expect(p3.body.pages).toBe(3);
 
     // Complete closes the capture and runs the pipeline inline.
@@ -255,7 +257,7 @@ describe("invoice lifecycle", () => {
     expect(done.body.lineItems.length).toBeGreaterThan(0);
 
     // No more pages after completion; a second complete is a 400 too.
-    const late = await upload(`/invoices/${created.body.id}/pages`, owner.token, FAKE_JPEG);
+    const late = await upload(`/invoices/${created.body.id}/pages`, owner.token, uniqueJpeg());
     expect(late.status).toBe(400);
     const again = await put(`/invoices/${created.body.id}/complete`, owner.token, {});
     expect(again.status).toBe(400);
@@ -264,6 +266,50 @@ describe("invoice lifecycle", () => {
     const img = await get<Buffer>(`/invoices/${created.body.id}/image?page=3`, owner.token);
     expect(img.status).toBe(200);
     expect(Buffer.isBuffer(img.body)).toBe(true);
+  });
+
+  it("uploading the same image twice is a 409 pointing at the original — no second doc, no second scan", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const bytes = uniqueJpeg();
+
+    const first = await upload<{ id: string } & InvoiceDoc>("/invoices", owner.token, bytes);
+    expect(first.status).toBe(201);
+
+    const second = await upload<{ id: string; error: string }>("/invoices", owner.token, bytes);
+    expect(second.status).toBe(409);
+    expect(second.body.error).toBe("duplicate_image");
+    expect(second.body.id).toBe(first.body.id); // points the client at the original
+
+    const snap = await col(owner.rid, "invoices").get();
+    expect(snap.size).toBe(1);
+    // The duplicate must not have consumed quota either.
+    const me = await get<{ usage: { scans: number } }>("/me", owner.token);
+    expect(me.body.usage.scans).toBe(1);
+  });
+
+  it("the same page cannot be added twice to a multi-page capture", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const page1 = uniqueJpeg();
+    const page2 = uniqueJpeg();
+
+    const created = await upload<{ id: string } & InvoiceDoc>("/invoices", owner.token, page1, undefined, {
+      "X-More-Pages": "1",
+    });
+    expect(created.status).toBe(201);
+
+    const added = await upload<{ pages: number }>(`/invoices/${created.body.id}/pages`, owner.token, page2);
+    expect(added.status).toBe(201);
+    expect(added.body.pages).toBe(2);
+
+    // Re-adding page 2 — and page 1's original bytes — both refuse.
+    const dupPage = await upload<{ error: string }>(`/invoices/${created.body.id}/pages`, owner.token, page2);
+    expect(dupPage.status).toBe(409);
+    expect(dupPage.body.error).toBe("duplicate_page");
+    const dupFirst = await upload<{ error: string }>(`/invoices/${created.body.id}/pages`, owner.token, page1);
+    expect(dupFirst.status).toBe(409);
+
+    const fresh = (await col(owner.rid, "invoices").doc(created.body.id).get()).data() as InvoiceDoc;
+    expect(fresh.imagePaths).toHaveLength(2); // nothing slipped through
   });
 
   it("reprocess recovers a failed invoice once a real image exists at its imagePath", async () => {
