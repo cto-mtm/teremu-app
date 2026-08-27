@@ -6,7 +6,13 @@ import { ref } from 'vue'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import { isFoodInvoice, normalizeName, vendorSummaries, vendorWeeklyTotals } from '../lib/domain'
+import {
+  vendorExpensesFor,
+  vendorInvoicesFor,
+  vendorSuppliedLines,
+  vendorSummaries,
+  vendorWeeklyTotals,
+} from '../lib/domain'
 import MiniBars from '../components/MiniBars.vue'
 import BaseButton from '../components/BaseButton.vue'
 
@@ -21,7 +27,7 @@ const key = computed(() => String(route.params.key))
 const summary = computed(() =>
   vendorSummaries(invoicesStore.invoices, kitchen.expenses).find((v) => v.key === key.value),
 )
-const weekly = computed(() => vendorWeeklyTotals(invoicesStore.invoices, key.value))
+const weekly = computed(() => vendorWeeklyTotals(invoices.value, key.value))
 
 // ── Ordering contact (email for orders, phone for WhatsApp) ─────
 const auth = useAuthStore()
@@ -52,40 +58,11 @@ async function saveContact(): Promise<void> {
   }
 }
 
-/** Expense entries paid to this vendor (service side). */
-const vendorExpenses = computed(() =>
-  kitchen.expenses
-    .filter((e) => e.vendorName && normalizeName(e.vendorName) === key.value)
-    .sort((a, b) => b.date.localeCompare(a.date)),
-)
-
-const invoices = computed(() =>
-  invoicesStore.invoices
-    .filter((i) => isFoodInvoice(i) && i.vendorName && normalizeName(i.vendorName) === key.value)
-    .sort((a, b) => (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? '')),
-)
-
-/** Latest price paid to THIS vendor per ingredient. */
-const supplied = computed(() => {
-  const map = new Map<string, { ingredientId: string | null; name: string; unit: string; unitPrice: number; date: string }>()
-  for (const inv of invoices.value) {
-    for (const line of inv.lineItems) {
-      const k = line.ingredientId ?? normalizeName(line.name)
-      const date = inv.invoiceDate ?? ''
-      const existing = map.get(k)
-      if (!existing || date > existing.date) {
-        map.set(k, {
-          ingredientId: line.ingredientId ?? null,
-          name: line.name,
-          unit: line.unit,
-          unitPrice: line.unitPrice,
-          date,
-        })
-      }
-    }
-  }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
-})
+// Shared domain helpers — the dashboard's Providers tab derives the
+// same views, so the two surfaces can never drift.
+const vendorExpenses = computed(() => vendorExpensesFor(kitchen.expenses, key.value))
+const invoices = computed(() => vendorInvoicesFor(invoicesStore.invoices, key.value))
+const supplied = computed(() => vendorSuppliedLines(invoices.value))
 </script>
 
 <template>
@@ -169,7 +146,7 @@ const supplied = computed(() => {
         <component
           :is="line.ingredientId && kitchen.ingredientMap.has(line.ingredientId) ? RouterLink : 'div'"
           v-for="line in supplied"
-          :key="line.name"
+          :key="line.key"
           :to="line.ingredientId ? `/pantry/${line.ingredientId}` : undefined"
           class="flex items-center justify-between px-4 py-3"
           :class="line.ingredientId && kitchen.ingredientMap.has(line.ingredientId) ? 'hover:bg-gray-50' : ''"

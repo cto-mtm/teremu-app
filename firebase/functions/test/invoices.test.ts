@@ -97,6 +97,54 @@ describe("invoice lifecycle", () => {
     expect(fresh.lastUnitPrice).toBeCloseTo(expectedPricePerKg, 4); // ~$4.41/kg, not $2/kg
   });
 
+  it("approve copies a valid category/subcategory pair onto a NEW ingredient, and drops a crossed pair", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const invoice = await seedInvoice(owner.rid);
+
+    const { status } = await put<{ id: string } & InvoiceDoc>(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Metro Foods",
+      invoiceDate: "2026-07-01",
+      lineItems: [
+        { name: "Ribeye Steak", qty: 4, unit: "kg", unitPrice: 22, total: 88, category: "meat", subcategory: "beef" },
+        // Crossed pair: "fruit" does not belong under meat — must land null.
+        { name: "Pork Loin", qty: 3, unit: "kg", unitPrice: 9, total: 27, category: "meat", subcategory: "fruit" },
+      ],
+    });
+    expect(status).toBe(200);
+
+    const snap = await col(owner.rid, "ingredients").get();
+    const byName = new Map(snap.docs.map((d) => [d.get("name"), d.data() as IngredientDoc]));
+    expect(byName.get("Ribeye Steak")?.category).toBe("meat");
+    expect(byName.get("Ribeye Steak")?.subcategory).toBe("beef");
+    expect(byName.get("Pork Loin")?.category).toBe("meat");
+    expect(byName.get("Pork Loin")?.subcategory).toBeNull();
+  });
+
+  it("approve backfills the subcategory of an EXISTING unclassified ingredient without overwriting a classified one", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const blank = await seedIngredient(owner.rid, { name: "Chuck Roast", unit: "kg", category: "meat" });
+    const classified = await seedIngredient(owner.rid, {
+      name: "Iberico Ham", unit: "kg", category: "meat", subcategory: "cured_meats",
+    });
+    const invoice = await seedInvoice(owner.rid);
+
+    const { status } = await put(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Metro Foods",
+      invoiceDate: "2026-07-01",
+      lineItems: [
+        { name: "Chuck Roast", qty: 5, unit: "kg", unitPrice: 11, total: 55, category: "meat", subcategory: "beef" },
+        // The chef said cured_meats; OCR's "pork" guess must not win.
+        { name: "Iberico Ham", qty: 1, unit: "kg", unitPrice: 60, total: 60, category: "meat", subcategory: "pork" },
+      ],
+    });
+    expect(status).toBe(200);
+
+    const filled = (await col(owner.rid, "ingredients").doc(blank.id).get()).data() as IngredientDoc;
+    expect(filled.subcategory).toBe("beef");
+    const kept = (await col(owner.rid, "ingredients").doc(classified.id).get()).data() as IngredientDoc;
+    expect(kept.subcategory).toBe("cured_meats");
+  });
+
   it("approve-as-expense archives the invoice and creates a tagged expense, excluded from food math", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     const invoice = await seedInvoice(owner.rid, { total: 123.45, vendorName: "Acme Hosting" });

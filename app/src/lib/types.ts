@@ -24,7 +24,8 @@ import type {
   unitSchema,
 } from './schemas'
 
-export { UNITS, CATEGORIES } from './schemas'
+export { UNITS, CATEGORIES, SUBCATEGORIES } from './schemas'
+export type { Subcategory } from './schemas'
 
 export type Unit = z.infer<typeof unitSchema>
 export type Category = z.infer<typeof categorySchema>

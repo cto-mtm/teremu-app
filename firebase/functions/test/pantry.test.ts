@@ -129,6 +129,24 @@ describe("pantry & revenue", () => {
     expect((await ing(owner.rid, pepper.id)).theoreticalQty).toBe(500); // fully restored
   });
 
+  it("PUT /ingredients/:id re-categorizes, clears the subcategory on omission, and 400s a crossed pair", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const item = await seedIngredient(owner.rid, { name: "Manchego", category: "other" });
+
+    const set = await put(`/ingredients/${item.id}`, owner.token, { category: "dairy", subcategory: "cheese" });
+    expect(set.status).toBe(200);
+    expect(set.body.category).toBe("dairy");
+    expect(set.body.subcategory).toBe("cheese");
+
+    // Category change without a subcategory clears the stale pairing.
+    const moved = await put(`/ingredients/${item.id}`, owner.token, { category: "dry" });
+    expect(moved.status).toBe(200);
+    expect(moved.body.subcategory).toBeNull();
+
+    const crossed = await put(`/ingredients/${item.id}`, owner.token, { category: "dry", subcategory: "cheese" });
+    expect(crossed.status).toBe(400);
+  });
+
   it("PUT /ingredients/:id/count overwrites theoreticalQty with the physical count", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     const flour = await seedIngredient(owner.rid, { name: "Flour", unit: "g", theoreticalQty: 1234 });

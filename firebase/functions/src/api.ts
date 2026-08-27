@@ -377,6 +377,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         nameKey,
         unit: body.unit,
         category: body.category,
+        subcategory: body.subcategory ?? null,
         lastUnitPrice: body.lastUnitPrice ?? null,
         prevUnitPrice: null,
         lastPriceAt: body.lastUnitPrice != null ? Date.now() : null,
@@ -391,7 +392,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "PUT" && id && seg.length === 2) {
       if (!can(member, "pantry", "edit")) return forbidden(res);
       const body = updateIngredientSchema.parse(req.body);
-      await col("ingredients").doc(id).update({ category: body.category });
+      // Omitted subcategory clears it — a category change invalidates the
+      // old pairing, so "keep whatever was there" is never correct.
+      await col("ingredients").doc(id).update({
+        category: body.category,
+        subcategory: body.subcategory ?? null,
+      });
       const snap = await col("ingredients").doc(id).get();
       return json(res, 200, { id, ...snap.data() });
     }

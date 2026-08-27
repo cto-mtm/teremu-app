@@ -21,6 +21,7 @@ import type {
   MenuItem,
   RecipeLine,
   RevenueEntry,
+  Subcategory,
   Unit,
   VendorContact,
 } from '../lib/types'
@@ -276,11 +277,16 @@ export const useKitchenStore = defineStore('kitchen', () => {
     return null
   }
 
-  /** Re-categorize an ingredient (OCR guesses; the chef corrects). */
-  async function setCategory(ingredientId: string, category: Category): Promise<boolean> {
+  /** Re-categorize an ingredient (OCR guesses; the chef corrects).
+   * Omitting subcategory clears it — a category change invalidates it. */
+  async function setCategory(
+    ingredientId: string,
+    category: Category,
+    subcategory: Subcategory | null = null,
+  ): Promise<boolean> {
     const res = await apiFetch<Ingredient>(
       `/ingredients/${ingredientId}`,
-      { method: 'PUT', body: JSON.stringify({ category }) },
+      { method: 'PUT', body: JSON.stringify({ category, subcategory }) },
       ingredientSchema,
     )
     if (res.ok) {

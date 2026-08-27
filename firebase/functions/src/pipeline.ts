@@ -7,6 +7,7 @@ import {
   ingredientDocSchema,
   menuItemDocSchema,
   normalizeName,
+  pairSubcategory,
   type IngredientDoc,
   type InvoiceDoc,
   type LineItem,
@@ -165,8 +166,15 @@ export async function approveInvoice(
   const resolved: LineItem[] = [];
 
   for (const raw of lineItems) {
-    // Strip validation flags — approved numbers are human-verified.
-    const { flagged: _flagged, ...li } = raw;
+    // Strip validation flags — approved numbers are human-verified —
+    // and normalize the pairing so data AT REST upholds the invariant
+    // (approve bodies come from client edits; lineItemSchema deliberately
+    // doesn't refine the pairing, a crossed pair degrades to null here).
+    const { flagged: _flagged, ...stripped } = raw;
+    const li: LineItem = {
+      ...stripped,
+      subcategory: pairSubcategory(stripped.category ?? "other", stripped.subcategory),
+    };
     const key = normalizeName(li.name);
     if (!key) {
       resolved.push({ ...li, ingredientId: null });
@@ -187,12 +195,22 @@ export async function approveInvoice(
       const qtyAdd = ratio != null ? terms.qty * ratio : terms.qty;
       const pricePerStockUnit =
         ratio != null && ratio !== 0 ? +(terms.unitPrice / ratio).toFixed(4) : terms.unitPrice;
+      // Opportunistic backfill: an ingredient that predates subcategories
+      // (or was never classified) adopts the line's — piggybacking on the
+      // update this batch already writes, so it costs zero extra writes.
+      // Only when the line's category agrees with the ingredient's (the
+      // line's subcategory is already normalized against li.category).
+      const subFill =
+        existing.data.subcategory == null && li.category === existing.data.category
+          ? li.subcategory
+          : null;
       batch.update(ingredients.doc(existing.id), {
         prevUnitPrice: existing.data.lastUnitPrice,
         lastUnitPrice: pricePerStockUnit,
         lastPriceAt: now,
         lastVendorName: vendorName,
         theoreticalQty: FieldValue.increment(qtyAdd),
+        ...(subFill ? { subcategory: subFill } : {}),
       });
     } else {
       if (!applyEffects) {
@@ -206,6 +224,7 @@ export async function approveInvoice(
         // Stock in content units (kg, not "case") when pack info exists.
         unit: terms.unit,
         category: li.category ?? "other",
+        subcategory: li.subcategory ?? null,
         lastUnitPrice: terms.unitPrice,
         prevUnitPrice: null,
         lastPriceAt: now,

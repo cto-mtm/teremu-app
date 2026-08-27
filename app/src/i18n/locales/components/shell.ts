@@ -1,6 +1,6 @@
 const es = {
   tab: {
-    pulse: 'Pulso',
+    pulse: 'Panel',
     scan: 'Escanear',
     triage: 'Triaje',
     menu: 'Menú',
@@ -15,7 +15,7 @@ const es = {
 // Typed against es: a missing or extra key here is a compile error.
 const en: typeof es = {
   tab: {
-    pulse: 'Pulse',
+    pulse: 'Dashboard',
     scan: 'Scan',
     triage: 'Triage',
     menu: 'Menu',

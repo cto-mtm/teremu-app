@@ -1,7 +1,23 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
 import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
-import { categorySchema, docTypeSchema, unitSchema, type LineItem } from "./models.js";
+import {
+  categorySchema,
+  docTypeSchema,
+  pairSubcategory,
+  SUBCATEGORIES,
+  subcategorySchema,
+  unitSchema,
+  type LineItem,
+} from "./models.js";
+
+// "meat: beef|pork|lamb|cured_meats; poultry: chicken|…" — the taxonomy
+// rendered for the prompt straight from the shared vocabulary, so the
+// model can never be offered a pairing the schema would reject.
+const SUBCATEGORY_GUIDE = Object.entries(SUBCATEGORIES)
+  .filter(([, subs]) => subs.length > 0)
+  .map(([cat, subs]) => `${cat}: ${subs.join("|")}`)
+  .join("; ");
 
 const EXTRACTION_PROMPT = `You are an expert at reading restaurant vendor invoices and receipts, including crumpled, handwritten, or poorly printed ones.
 
@@ -14,7 +30,7 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
   "vendor": "vendor or supplier business name, or null",
   "date": "invoice date as YYYY-MM-DD, or null",
   "lineItems": [
-    { "name": "clean product name", "match": "EXACT name from KNOWN INGREDIENTS if it is the same product, else null", "qty": 1.0, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen, case, box, bunch", "unitPrice": 0.00, "total": 0.00, "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other", "packQty": null, "packUnit": null }
+    { "name": "clean product name", "match": "EXACT name from KNOWN INGREDIENTS if it is the same product, else null", "qty": 1.0, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen, case, box, bunch", "unitPrice": 0.00, "total": 0.00, "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other", "subcategory": "the specific type within the category, or null", "packQty": null, "packUnit": null }
   ],
   "total": 0.00
 }
@@ -27,6 +43,7 @@ Rules:
 - For case/box/bunch lines, extract the contents of ONE container when printed (e.g. "CASE 24x400g" -> "packQty": 9.6, "packUnit": "kg"). Use null when not printed.
 - If a line shows only a total, estimate unitPrice = total / qty.
 - Map ambiguous units to the closest allowed unit ("ea", "pc" -> "each"; "#" -> "lb").
+- "subcategory" must come from ITS OWN category's list (or be null when unsure): ${SUBCATEGORY_GUIDE}.
 - Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
 - Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
 - Never write a " character inside a value: spell inches as "in" ("12 in", not 12") and drop quotes around brand names.
@@ -56,6 +73,7 @@ const ocrLineSchema = z.object({
   unitPrice: z.coerce.number().min(0).catch(0),
   total: z.coerce.number().min(0).catch(0),
   category: categorySchema.catch("other"),
+  subcategory: subcategorySchema.nullable().catch(null),
   packQty: z.coerce.number().positive().nullable().catch(null),
   packUnit: unitSchema.nullable().catch(null),
 });
@@ -84,6 +102,8 @@ function sanitize(
     .map(({ match, ...l }) => ({
       ...l,
       name: (match && canonical.get(match.toLowerCase().trim())) || l.name.trim(),
+      // A crossed pair (meat + "fruit") degrades to null, never an error.
+      subcategory: pairSubcategory(l.category, l.subcategory),
       // business fallback: derive a missing line total from qty × price
       total: l.total > 0 ? l.total : +(l.qty * l.unitPrice).toFixed(2),
     }));
@@ -137,7 +157,9 @@ export async function extractInvoice(
     {
       // Multi-page documents carry more lines — give the reply headroom
       // (parseModelJson still repairs a truncated tail either way).
-      maxTokens: imagesBase64.length > 1 ? 3584 : 2048,
+      // Sized for the line-item shape INCLUDING subcategory (~8 tokens
+      // per line more than the pre-taxonomy shape).
+      maxTokens: imagesBase64.length > 1 ? 4096 : 2560,
       temperature: 0.1,
       label: "ocr",
       json: { name: "invoice_extraction", schema: ocrResponseSchema },
@@ -153,24 +175,24 @@ export async function extractInvoice(
 }
 
 function mockExtraction(): OcrResult {
-  const pool: [string, LineItem["unit"], number][] = [
-    ["Roma Tomatoes", "lb", 2.15],
-    ["Chicken Breast", "lb", 3.4],
-    ["Atlantic Salmon", "lb", 9.85],
-    ["Yellow Onions", "lb", 0.95],
-    ["Heavy Cream", "qt", 4.6],
-    ["Olive Oil", "L", 11.2],
-    ["Arborio Rice", "lb", 2.7],
-    ["Parmesan", "lb", 12.4],
+  const pool: [string, LineItem["unit"], number, LineItem["category"], LineItem["subcategory"]][] = [
+    ["Roma Tomatoes", "lb", 2.15, "produce", "vegetables"],
+    ["Chicken Breast", "lb", 3.4, "poultry", "chicken"],
+    ["Atlantic Salmon", "lb", 9.85, "seafood", "fish"],
+    ["Yellow Onions", "lb", 0.95, "produce", "vegetables"],
+    ["Heavy Cream", "qt", 4.6, "dairy", "milk_cream"],
+    ["Olive Oil", "L", 11.2, "dry", "oil_vinegar"],
+    ["Arborio Rice", "lb", 2.7, "dry", "rice_grains"],
+    ["Parmesan", "lb", 12.4, "dairy", "cheese"],
   ];
   const n = 3 + Math.floor(Math.random() * 4);
   const lineItems = [...pool]
     .sort(() => Math.random() - 0.5)
     .slice(0, n)
-    .map(([name, unit, base]) => {
+    .map(([name, unit, base, category, subcategory]) => {
       const qty = Math.max(1, Math.round(Math.random() * 12));
       const unitPrice = +(base * (0.92 + Math.random() * 0.2)).toFixed(2);
-      return { name, unit, qty, unitPrice, total: +(qty * unitPrice).toFixed(2) };
+      return { name, unit, qty, unitPrice, total: +(qty * unitPrice).toFixed(2), category, subcategory };
     });
   const vendors = ["Valley Produce Co.", "Harbor Seafood", "Metro Foods", "Bella Dairy"];
   return {

@@ -287,6 +287,7 @@ export async function seedIngredient(
     nameKey: normalizeName(name),
     unit: "kg",
     category: "other",
+    subcategory: null,
     lastUnitPrice: null,
     prevUnitPrice: null,
     lastPriceAt: null,

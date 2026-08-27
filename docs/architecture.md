@@ -29,9 +29,21 @@ The entire stack runs offline in the **Firebase Emulator Suite** under the `demo
 3. **Triage**: the app lists `needs_review` invoices; approving one (`PUT /invoices/:id/approve`) rolls each ingredient's price (`prev ← last, last ← new`) and adds purchased qty to the Theoretical Pantry — one atomic batch.
 4. **Margins**: menu items store recipes (ingredient + qty per plate); plate cost is computed from the rolling `lastUnitPrice`, client-side, live.
 5. **Pantry**: theoretical qty = purchases − sales. `POST /revenue` (with optional dishes-sold counts) depletes it via recipes; `PUT /ingredients/:id/count` overwrites with a physical count (monthly true-up).
-6. **Pulse**: the home page derives the weekly expenses-vs-revenue series and alerts (≥5% vendor price moves, dishes under target margin) from the fetched collections.
+6. **Dashboard** (route name `pulse`): the home page derives the weekly expenses-vs-revenue series and alerts (≥5% vendor price moves, dishes under target margin) from the fetched collections. Three tabs: Overview (charts + alerts), Categories (hierarchical spend drill-down), Providers (the vendor directory inline).
 
 Navigation animations run through the View Transitions wrapper in the router with automatic degradation (see `docs/animations.md`); all user-facing strings flow through vue-i18n (see `docs/i18n.md`).
+
+## Spend analytics: taxonomy + aggregate-on-read
+
+The category taxonomy is **two-level** and lives in the shared vocabulary (`shared/src/vocab.ts`): `CATEGORIES` (meat, produce…) plus `SUBCATEGORIES` per category (meat → beef/pork/lamb/cured_meats…). Subcategory values are globally unique; `isSubcategoryOf` is the one pairing rule. OCR assigns `category` + `subcategory` per line item in the same extraction call (best-effort, nullable — `pairSubcategory` is the one coercion policy: a crossed pair degrades to null, never an error); approval normalizes the pairing on the stored line items, copies it onto newly created ingredients, and **backfills** the subcategory of existing unclassified ingredients by piggybacking on the update the approval batch already writes. The chef corrects classifications on the ingredient (`PUT /ingredients/:id`), and a category change clears the now-invalid subcategory.
+
+The Dashboard's Categories drill-down (`spendTree` in `app/src/lib/domain.ts`) is **aggregated at read time** from the collections the app already fetched — deliberately no rollup documents, no counters, no triggers. Why this is the efficient shape here, not a shortcut:
+
+- **Writes**: an approved invoice stays exactly one document write (line items are an embedded array). Aggregate-on-write would mean compensating updates on every mutation that moves money (expense divert, expense edit/delete, reprocess) — drift risk with zero read benefit at this scale.
+- **Reads**: the dashboard needs the raw invoices anyway (price watch, vendor bars, reconciliation), so the tree costs no extra reads.
+- **Correctness**: classification joins each line to its pantry ingredient at read time — the chef's *current* category wins over OCR's frozen guess, so one correction re-buckets all past spend retroactively without touching a single invoice document. (A null ingredient subcategory means "unclassified", not "cleared" — the line's own OCR guess still fills in, matching the approval backfill's semantics.)
+
+The leaf level (individual ingredients under a subcategory) requires line items regardless, which is the other reason pre-aggregated summaries can't serve this feature alone. When multi-year analytics matter, the plan remains monthly rollup docs (see Known limitations) — backfillable from retained invoices, so nothing is lost by not writing them today.
 
 ## Shared types & validation (zod)
 

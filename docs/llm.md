@@ -50,11 +50,11 @@ If any single task underperforms on the lite tier, bump `LLM_MODEL` (or, if task
 
 ## Usage & cost model (per call, Gemini 3.1 Flash-Lite prices)
 
-Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2048 OCR / 3072 menu / 4096 drafts / 600 assistant), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and the assistant snapshot is capped by its Firestore query limits (300 ingredients, 200 dishes, 40 documents, 90+90 finance rows — `assistant.ts`).
+Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2560 OCR — sized for the line-item shape including subcategory / 3072 menu / 4096 drafts / 600 assistant), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and the assistant snapshot is capped by its Firestore query limits (300 ingredients, 200 dishes, 40 documents, 90+90 finance rows — `assistant.ts`).
 
 | Call | Input tokens (low/avg/worst) | Output (low/avg/cap) | Cost low/avg/worst |
 | --- | --- | --- | --- |
-| Invoice scan | 1K / 2.7K / 8.5K (prompt 700 + catalog 0–1.8K + image 0.3–6K) | 300 / 800 / 2048 | $0.001 / $0.0025 / $0.01 |
+| Invoice scan | 1K / 2.8K / 8.6K (prompt 800 + catalog 0–1.8K + image 0.3–6K) | 350 / 900 / 2560 | $0.001 / $0.003 / $0.012 |
 | Assistant question | 1.7K / 8K / 30K (system + ≤10 history turns + data snapshot) | ≤600 | $0.0007 / $0.003 / $0.009 |
 | Menu wizard (extract + drafts, one-time) | ~2K / 5K / 12K across both calls | ≤3072 + ≤4096 | $0.002 / $0.005 / $0.02 per full run |
 

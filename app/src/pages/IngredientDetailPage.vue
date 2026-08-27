@@ -13,7 +13,7 @@ import {
   priceHistory,
   receiptsForIngredient,
 } from '../lib/domain'
-import { CATEGORIES, type Category } from '../lib/types'
+import { CATEGORIES, SUBCATEGORIES, type Category, type Subcategory } from '../lib/types'
 import Sparkline from '../components/Sparkline.vue'
 import MiniBars from '../components/MiniBars.vue'
 
@@ -81,7 +81,8 @@ const suppliers = computed(() => {
       >
         {{ ingredient.name }}
       </h1>
-      <!-- Category: OCR's guess, correctable here -->
+      <!-- Category + subcategory: OCR's guess, correctable here. A new
+           category clears the subcategory (the old pairing is invalid). -->
       <select
         class="input w-auto text-xs"
         :value="ingredient.category"
@@ -90,6 +91,25 @@ const suppliers = computed(() => {
         @change="kitchen.setCategory(ingredient.id, ($event.target as HTMLSelectElement).value as Category)"
       >
         <option v-for="c in CATEGORIES" :key="c" :value="c">{{ t('common.category.' + c) }}</option>
+      </select>
+      <select
+        v-if="SUBCATEGORIES[ingredient.category].length"
+        class="input w-auto text-xs"
+        :value="ingredient.subcategory ?? ''"
+        :disabled="!auth.can('pantry', 'edit')"
+        :aria-label="t('common.filter.allSubcategories')"
+        @change="
+          kitchen.setCategory(
+            ingredient.id,
+            ingredient.category,
+            (($event.target as HTMLSelectElement).value || null) as Subcategory | null,
+          )
+        "
+      >
+        <option value="">{{ t('common.subcategory.none') }}</option>
+        <option v-for="s in SUBCATEGORIES[ingredient.category]" :key="s" :value="s">
+          {{ t('common.subcategory.' + s) }}
+        </option>
       </select>
     </div>
 

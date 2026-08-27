@@ -1,5 +1,12 @@
 import { z } from 'zod'
-import { categorySchema, docTypeSchema, invoiceStatusSchema, permsSchema, unitSchema } from '@teremu/shared'
+import {
+  categorySchema,
+  docTypeSchema,
+  invoiceStatusSchema,
+  permsSchema,
+  subcategorySchema,
+  unitSchema,
+} from '@teremu/shared'
 
 /**
  * Zod schemas — the single source of truth for every domain type in the
@@ -26,6 +33,9 @@ export const lineItemSchema = z.object({
   flagged: z.boolean().optional(),
   // OCR-assigned category, copied onto new ingredients at approval.
   category: categorySchema.optional(),
+  // Second taxonomy level (meat → beef) — .catch(null) so an off-vocab
+  // value from an older/newer API degrades instead of failing the list.
+  subcategory: subcategorySchema.nullable().optional().catch(null),
   // Contents of ONE container for case/box/bunch lines (OCR-extracted).
   packQty: z.number().positive().nullable().optional(),
   packUnit: unitSchema.nullable().optional(),
@@ -66,6 +76,8 @@ export const ingredientSchema = z.object({
   unit: unitSchema,
   // .catch so pre-category documents still validate (they read as "other")
   category: categorySchema.catch('other'),
+  // .catch so pre-subcategory documents still validate (null = unknown)
+  subcategory: subcategorySchema.nullable().catch(null),
   lastUnitPrice: z.number().nullable(),
   prevUnitPrice: z.number().nullable(),
   lastPriceAt: z.number().nullable(),

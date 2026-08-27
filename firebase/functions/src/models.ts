@@ -3,7 +3,9 @@ import {
   categorySchema,
   docTypeSchema,
   invoiceStatusSchema,
+  isSubcategoryOf,
   permsSchema,
+  subcategorySchema,
   unitSchema,
   type Perms,
 } from "@teremu/shared";
@@ -36,6 +38,9 @@ export const lineItemSchema = z.object({
   flagged: z.boolean().optional(),
   // Assigned by OCR; copied onto newly created ingredients at approval.
   category: categorySchema.optional(),
+  // Second taxonomy level (meat → beef, produce → fruit…). Best-effort
+  // from OCR; approval drops a value that doesn't pair with `category`.
+  subcategory: subcategorySchema.nullable().optional(),
   // For case/box/bunch lines: contents of ONE container, extracted by
   // OCR ("24 × 400 g" → packQty 9.6, packUnit kg). Lets container
   // purchases convert into stock math at approval.
@@ -102,6 +107,8 @@ export const ingredientDocSchema = z.object({
   unit: unitSchema,
   // .catch so pre-category documents still parse (they become "other").
   category: categorySchema.catch("other"),
+  // .catch so pre-subcategory documents still parse (null = unknown).
+  subcategory: subcategorySchema.nullable().catch(null),
   lastUnitPrice: z.number().nullable(),
   prevUnitPrice: z.number().nullable(),
   lastPriceAt: z.number().nullable(),
@@ -154,21 +161,33 @@ export const countSchema = z.object({
   qty: z.number().min(0),
 });
 
-/** PUT /ingredients/:id — editable ingredient fields (category for now). */
-export const updateIngredientSchema = z.object({
-  category: categorySchema,
-});
+/** PUT /ingredients/:id — editable ingredient fields (categorization).
+ * Omitted/null subcategory = unknown; a mismatched pair is a 400,
+ * not a silent fix — these bodies are human edits, not model output. */
+export const updateIngredientSchema = z
+  .object({
+    category: categorySchema,
+    subcategory: subcategorySchema.nullable().optional(),
+  })
+  .refine((b) => b.subcategory == null || isSubcategoryOf(b.category, b.subcategory), {
+    message: "subcategory does not belong to category",
+  });
 
 /** POST /ingredients — manual creation (cold-start / menu building).
  * Price and stock are optional: the AI's catalog matching links scanned
  * invoice lines onto these by name, filling both automatically. */
-export const createIngredientSchema = z.object({
-  name: z.string().min(1).max(80),
-  unit: unitSchema,
-  category: categorySchema,
-  lastUnitPrice: z.number().positive().optional(),
-  theoreticalQty: z.number().min(0).optional(),
-});
+export const createIngredientSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    unit: unitSchema,
+    category: categorySchema,
+    subcategory: subcategorySchema.nullable().optional(),
+    lastUnitPrice: z.number().positive().optional(),
+    theoreticalQty: z.number().min(0).optional(),
+  })
+  .refine((b) => b.subcategory == null || isSubcategoryOf(b.category, b.subcategory), {
+    message: "subcategory does not belong to category",
+  });
 
 /**
  * POST /expenses — non-food spend (marketing, staff, rent…). Tags are

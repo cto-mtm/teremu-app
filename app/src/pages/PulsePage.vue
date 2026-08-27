@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
@@ -14,16 +14,19 @@ import {
   pantryValue,
   priceChangePct,
   priceHistory,
-  spendByTag,
   vendorWeeklySpend,
   weeklySeries,
 } from '../lib/domain'
 import type { ExpenseEntry, Ingredient, MenuItem, RevenueEntry } from '../lib/types'
+import { CHART_COLORS, CHART_REST_COLOR } from '../lib/palette'
 import BaseButton from '../components/BaseButton.vue'
 import PageLoader from '../components/PageLoader.vue'
+import ProvidersPanel from '../components/ProvidersPanel.vue'
+import SpendDrilldown from '../components/SpendDrilldown.vue'
 import Sparkline from '../components/Sparkline.vue'
 
 const { t, n, d } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const invoicesStore = useInvoicesStore()
 const kitchen = useKitchenStore()
@@ -31,6 +34,32 @@ const auth = useAuthStore()
 const canEdit = computed(() => auth.can('finance', 'edit'))
 // Restaurant labor rate (Settings) — 0/unset keeps costs ingredients-only.
 const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
+
+// ── Dashboard tabs. Local state, NOT a router navigation: a panel
+// switch is within-page UI (docs/animations.md draws that line), so it
+// must not pay the auth guard, the scroll reset, or a full-page
+// startViewTransition snapshot. The URL still mirrors the tab for deep
+// links — read once on load, written back via history.replaceState.
+type Tab = 'overview' | 'categories' | 'providers'
+const tabs = computed<Tab[]>(() =>
+  auth.can('vendors') ? ['overview', 'categories', 'providers'] : ['overview', 'categories'],
+)
+const initialTab = route.query.tab as Tab
+const tab = ref<Tab>(tabs.value.includes(initialTab) ? initialTab : 'overview')
+// Panels lazy-mount on first visit and stay alive (v-show) afterwards,
+// so the drill position and computed caches survive tab switches.
+const seen = ref<Record<Tab, boolean>>({ overview: true, categories: false, providers: false })
+watch(
+  tab,
+  (v) => {
+    seen.value[v] = true
+    const url = new URL(window.location.href)
+    if (v === 'overview') url.searchParams.delete('tab')
+    else url.searchParams.set('tab', v)
+    history.replaceState(history.state, '', url)
+  },
+  { immediate: true },
+)
 
 // ── Expenses vs revenue (8 weeks) — includes tagged non-food spend ──
 const series = computed(() => weeklySeries(invoicesStore.invoices, kitchen.revenue, kitchen.expenses))
@@ -69,7 +98,7 @@ const fcPoints = computed(() =>
 const weekTicks = computed(() => series.value.filter((_, i) => i % 2 === 0))
 
 // ── Vendor spend, stacked weekly (click a segment → vendor page) ─
-const VENDOR_COLORS = ['#ff751f', '#2e9e5b', '#1c1410', '#7a6f66', '#d1d5db']
+const VENDOR_COLORS = [...CHART_COLORS.slice(0, 4), CHART_REST_COLOR]
 const vendorSpend = computed(() => vendorWeeklySpend(invoicesStore.invoices))
 const vendorLegend = computed(() =>
   vendorSpend.value.vendors.map((v, i) => ({ ...v, color: VENDOR_COLORS[i % VENDOR_COLORS.length] })),
@@ -146,10 +175,6 @@ const priceWatch = computed(() =>
 // ── Pareto: top ingredients by spend ────────────────────────────
 const topSpend = computed(() => ingredientSpend(invoicesStore.invoices, 8))
 const topSpendMax = computed(() => topSpend.value[0]?.total ?? 1)
-
-// ── Spend by category: food (invoices) + dynamic expense tags ───
-const byTag = computed(() => spendByTag(invoicesStore.invoices, kitchen.expenses))
-const byTagMax = computed(() => byTag.value[0]?.total ?? 1)
 
 // ── Stat cards ──────────────────────────────────────────────────
 const stockValue = computed(() => pantryValue(kitchen.ingredients))
@@ -379,11 +404,34 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
+    <!-- Tab strip: Overview / Categories / Providers -->
+    <div class="flex gap-1 rounded-xl bg-gray-100 p-1" role="tablist" :aria-label="t('pulse.title')">
+      <button
+        v-for="tb in tabs"
+        :key="tb"
+        role="tab"
+        :aria-selected="tab === tb"
+        class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium sm:flex-none"
+        :class="tab === tb ? 'bg-white text-ink shadow-sm' : 'text-smoke hover:text-ink'"
+        @click="tab = tb"
+      >
+        {{ t('pulse.tabs.' + tb) }}
+      </button>
+    </div>
+
     <!-- Loading skeleton -->
     <PageLoader v-if="kitchen.loading && !kitchen.revenue.length" />
 
-    <!-- Loaded content -->
     <template v-else>
+
+    <!-- Categories: hierarchical spend pie with breadcrumb drill-down -->
+    <SpendDrilldown v-if="seen.categories" v-show="tab === 'categories'" />
+
+    <!-- Providers: the whole vendor directory inline -->
+    <ProvidersPanel v-if="seen.providers" v-show="tab === 'providers'" />
+
+    <!-- Overview -->
+    <div v-show="tab === 'overview'" class="space-y-4">
 
     <!-- Stat cards -->
     <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -574,25 +622,8 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
-    <!-- Spend by category: food + dynamic expense tags -->
-    <div v-if="byTag.length" class="card">
-      <div class="mb-2 text-sm font-semibold">{{ t('pulse.categoryTitle') }}</div>
-      <div class="space-y-2">
-        <div v-for="row in byTag" :key="row.key">
-          <div class="mb-0.5 flex items-center justify-between text-xs">
-            <span class="font-medium">{{ row.tag ?? t('pulse.categoryFood') }}</span>
-            <span class="text-smoke">{{ n(row.total, 'currency') }}</span>
-          </div>
-          <div class="h-2 rounded-full bg-gray-100">
-            <div
-              class="h-2 rounded-full"
-              :class="row.key === 'food' ? 'bg-ember' : 'bg-smoke/60'"
-              :style="{ width: (row.total / byTagMax) * 100 + '%' }"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Spend by category moved to the Categories tab (richer: a
+         drillable pie with subcategories and breadcrumbs) -->
 
     <!-- Recent entries: revenue + expenses, editable -->
     <div v-if="entries.length" class="card p-0">
@@ -682,6 +713,7 @@ watch(showExpense, (open) => {
           </div>
         </div>
       </div>
+    </div>
     </div>
     </template>
 

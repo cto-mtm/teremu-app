@@ -1,5 +1,23 @@
 const es = {
-  title: 'Pulso financiero',
+  title: 'Panel de control',
+  tabs: {
+    overview: 'Resumen',
+    categories: 'Categorías',
+    providers: 'Proveedores',
+  },
+  drill: {
+    title: 'Gasto por categoría · 8 semanas',
+    hint: 'Toca una porción para profundizar',
+    all: 'Todo',
+    food: 'Materia prima',
+    uncategorized: 'Sin clasificar',
+    rest: 'Otros ({n})',
+    empty: 'Aprueba facturas y registra gastos para ver el desglose.',
+  },
+  providers: {
+    noContact: 'Sin contacto guardado — añádelo en la página del proveedor.',
+    openPage: 'Ver página completa',
+  },
   expensesThisWeek: 'Gastos esta semana',
   revenueThisWeek: 'Ingresos esta semana',
   chartTitle: 'Gastos vs ingresos · 8 semanas',
@@ -40,8 +58,6 @@ const es = {
     done: 'Importadas {ok} · omitidas {skipped} (fecha ya registrada) · inválidas {bad}',
     failed: 'No se pudo leer el archivo.',
   },
-  categoryTitle: 'Gasto por categoría · 8 semanas',
-  categoryFood: 'Comida (facturas)',
   expenseSheet: {
     title: 'Registrar gasto',
     tag: 'Categoría',
@@ -62,7 +78,25 @@ const es = {
 
 // Typed against es: a missing or extra key here is a compile error.
 const en: typeof es = {
-  title: 'Financial Pulse',
+  title: 'Dashboard',
+  tabs: {
+    overview: 'Overview',
+    categories: 'Categories',
+    providers: 'Providers',
+  },
+  drill: {
+    title: 'Spend by category · 8 weeks',
+    hint: 'Tap a slice to drill in',
+    all: 'Everything',
+    food: 'Raw materials',
+    uncategorized: 'Unclassified',
+    rest: 'Others ({n})',
+    empty: 'Approve invoices and log expenses to see the breakdown.',
+  },
+  providers: {
+    noContact: 'No contact saved — add it on the vendor page.',
+    openPage: 'Open full page',
+  },
   expensesThisWeek: 'This week — expenses',
   revenueThisWeek: 'This week — revenue',
   chartTitle: 'Expenses vs revenue · 8 weeks',
@@ -103,8 +137,6 @@ const en: typeof es = {
     done: 'Imported {ok} · skipped {skipped} (date already logged) · invalid {bad}',
     failed: 'Could not read the file.',
   },
-  categoryTitle: 'Spend by category · 8 weeks',
-  categoryFood: 'Food (invoices)',
   expenseSheet: {
     title: 'Log expense',
     tag: 'Category',
