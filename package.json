@@ -9,6 +9,7 @@
   "workspaces": [
     "shared",
     "app",
+    "firebase",
     "firebase/functions"
   ],
   "scripts": {

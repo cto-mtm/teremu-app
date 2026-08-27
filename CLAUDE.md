@@ -4,7 +4,7 @@ AI-powered invoice scanning, dish-margin tracking, and intelligent inventory for
 
 ## Project Structure
 
-npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebase/functions"]`).
+npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebase", "firebase/functions"]`).
 
 - `shared/` — `@teremu/shared`: schema **vocabulary** (units, categories, doc type, permissions) imported by both the app and the API. Build with `npm run build --workspace @teremu/shared` (must run before typechecking the others).
 - `app/` — Vue 3 + Vite web app, wrapped by Capacitor for iOS/Android
