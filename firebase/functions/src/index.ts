@@ -20,6 +20,36 @@ import { processInvoiceImage } from "./pipeline.js";
 const NVIDIA_API_KEY = defineSecret("NVIDIA_API_KEY");
 
 /**
+ * The receipts bucket, stated explicitly on the Storage trigger below.
+ *
+ * Without an explicit bucket, `onObjectFinalized` resolves it from
+ * FIREBASE_CONFIG at MODULE LOAD time — which `firebase deploy`'s
+ * source-analysis step does not reliably populate, so the module throws
+ * "Missing bucket name" and analysis times out ("User code failed to
+ * load. Cannot determine backend specification.").
+ *
+ * We resolve it ourselves from plain env vars (never the throwing
+ * firebase-functions resolver), so the value is always concrete at load
+ * time and matches whichever environment we're in:
+ *   - Emulator / tests: GCLOUD_PROJECT is set (demo-app) → the emulator
+ *     uploads to `{project}.appspot.com`, so the trigger must listen
+ *     there or it never fires.
+ *   - Deployed: no env override / FIREBASE_CONFIG at analysis time →
+ *     fall back to the production bucket (us-east1, matching REGION).
+ * RECEIPT_BUCKET overrides everything for a differently-named bucket.
+ */
+const PROD_BUCKET = "teremu-app.firebasestorage.app";
+function receiptBucket(): string {
+  if (process.env.RECEIPT_BUCKET) return process.env.RECEIPT_BUCKET;
+  // Emulator sets GCLOUD_PROJECT; its default bucket is {project}.appspot.com.
+  const emulatorProject =
+    process.env.FUNCTIONS_EMULATOR === "true" ? process.env.GCLOUD_PROJECT : undefined;
+  if (emulatorProject) return `${emulatorProject}.appspot.com`;
+  return PROD_BUCKET;
+}
+const RECEIPT_BUCKET = receiptBucket();
+
+/**
  * Stripe webhook — the ONLY thing that flips a restaurant's plan in
  * production. Separate function so it gets the raw request body (needed
  * for signature verification) and no CORS/auth gate. Point your Stripe
@@ -57,7 +87,7 @@ export const stripeWebhook = onRequest(
  * hard deploy failure), and the default bucket is us-east1.
  */
 export const onReceiptUploaded = onObjectFinalized(
-  { region: REGION, secrets: [NVIDIA_API_KEY], memory: "512MiB", timeoutSeconds: 120 },
+  { bucket: RECEIPT_BUCKET, region: REGION, secrets: [NVIDIA_API_KEY], memory: "512MiB", timeoutSeconds: 120 },
   async (event) => {
     const path = event.data.name ?? "";
     // receipts/{restaurantId}/{invoiceId}.jpg — per-workspace namespace.
