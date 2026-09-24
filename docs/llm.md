@@ -76,6 +76,10 @@ Two fallbacks behind that, because "the provider honors it" is not guaranteed:
 
 `llm_usage` carries a `structured` field, so a rise in unconstrained calls or repairs is queryable in Cloud Logging rather than something you find in a stack trace. Covered by `test/llm-json.test.ts`.
 
+## Record / replay (cassettes)
+
+`LLM_CASSETTE_MODE` + `LLM_CASSETTE_DIR` make image calls reproducible: `record` stores every raw reply keyed by label + image bytes (reusing what is already recorded, so interrupted evals resume), `replay` serves them back with no key and no network (a miss throws — never a silent mock). Requests the provider refuses for their content (400/422) are recorded and replay as the same error; auth, retired-model, rate-limit and network failures never are. Ignored in a deployed function. Callers pick their offline mock with `llmEnabled()`, which is true under replay. Used by the real-corpus eval, suite and seed — see `docs/real-samples.md`.
+
 ## Caveats
 
 - Gemini's OpenAI compatibility layer is officially **beta**: unknown params are *silently ignored*, and Gemini-specific features (thinking budgets etc.) need `extra_body`. Our payloads only use core params, so exposure is minimal.

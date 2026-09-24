@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
+import { chatCompletion, llmEnabled, parseModelJson } from "./llm.js";
 import {
   categorySchema,
   docTypeSchema,
@@ -136,12 +136,15 @@ function sanitize(
  * one it returns a deterministic mock so the scan → triage → approve
  * flow works fully offline. This is the local-first fallback, not an error.
  */
+/** How a page travels to the model (and so what its cassette key hashes). */
+export const imageDataUrl = (b64: string): string => `data:image/jpeg;base64,${b64}`;
+
 export async function extractInvoice(
   imagesBase64: string[],
   knownIngredients: string[] = [],
   restaurantName: string | null = null,
 ): Promise<OcrResult> {
-  if (!llmApiKey()) {
+  if (!llmEnabled()) {
     logger.warn("LLM API key not set — returning mock OCR extraction");
     return mockExtraction();
   }
@@ -165,7 +168,7 @@ export async function extractInvoice(
           { type: "text", text: prompt },
           ...imagesBase64.map((b64) => ({
             type: "image_url",
-            image_url: { url: `data:image/jpeg;base64,${b64}` },
+            image_url: { url: imageDataUrl(b64) },
           })),
         ],
       },

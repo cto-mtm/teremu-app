@@ -15,7 +15,8 @@
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "npm run build && firebase deploy --only functions",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:real": "vitest run --config vitest.real.config.ts"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",

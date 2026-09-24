@@ -63,9 +63,16 @@ Verify before flagging (grep, don't guess):
 
 ## 5. Do the tests need to change?
 
-Tests live in `firebase/functions/test/` (vitest, emulator-backed — the suite boots the
-Firestore/Auth/Storage/Functions emulators and drives the `api` function over HTTP, with
-`TEREMU_TEST_MOCKS=1` making OCR deterministic). Map each change to its guard:
+Two tiers, both emulator-backed and both in the pre-deploy gate:
+
+- **Integration** — `firebase/functions/test/` (vitest): boots the
+  Firestore/Auth/Storage/Functions emulators and drives the `api` function over HTTP, with
+  `TEREMU_TEST_MOCKS=1` making OCR deterministic.
+- **E2E** — `e2e/` (Playwright): drives the real UI in Chromium + a Pixel 7 viewport
+  against the dev server + emulators. See `e2e/README.md` for its invariants (per-project
+  naming, one sample receipt per project, structural-only OCR assertions).
+
+Map each change to its guard:
 
 | The diff touches… | Then the review requires… |
 |---|---|
@@ -75,12 +82,11 @@ Firestore/Auth/Storage/Functions emulators and drives the `api` function over HT
 | Request/response shapes (`models.ts` or `app/src/lib/schemas.ts`) | Existing integration tests and seed factories still compile and pass — factories validate through the schemas, so a shape change breaks them loudly. Confirm the diff updated them. |
 | The LLM path (`firebase/functions/src/llm.ts`) | Its deterministic-mock coverage (the `llm-json` / OCR suites, `TEREMU_TEST_MOCKS=1`). |
 | A compound Firestore query | An entry in `firestore.indexes.json` (the emulator does not enforce indexes — tests pass, prod throws `FAILED_PRECONDITION`). |
+| A user-visible flow (scan/triage, pantry, margins, revenue, auth/onboarding) | The matching `e2e/tests/` spec. A locator that moved is a spec update, not a reason to delete the spec. |
+| Anything in `app/src/components/AppShell.vue` that gates a first-run overlay | `e2e/fixtures.ts` — it suppresses the onboarding tour and the mobile launcher by their exact storage keys. |
 
 Also check the inverse: a test **deleted or weakened** to make the suite pass is a
 finding; a test edited to match genuinely-new behavior is fine.
-
-> No e2e (Playwright) suite exists yet — see the e2e boilerplate doc. When one lands, add
-> a row here for user-visible flows (scan/triage, pantry, margins, billing).
 
 ## 6. Guardrails (quick pass, always)
 

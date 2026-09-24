@@ -1,7 +1,7 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
-import { extractInvoice } from "./ocr.js";
+import { extractInvoice, type OcrResult } from "./ocr.js";
 import { convertQty } from "./units.js";
 import {
   ingredientDocSchema,
@@ -41,7 +41,7 @@ function contentTerms(li: LineItem): { qty: number; unit: LineItem["unit"]; unit
  * a wrong digit almost always breaks the math somewhere.
  * Returns warning codes and flags suspect lines (Triage highlights them).
  */
-function validateArithmetic(
+export function validateArithmetic(
   lineItems: LineItem[],
   statedTotal: number
 ): { lineItems: LineItem[]; warnings: string[] } {
@@ -63,6 +63,34 @@ function validateArithmetic(
     warnings.push("total_mismatch");
   }
   return { lineItems: checked, warnings };
+}
+
+type OcrPatch =
+  | { status: "failed"; error: "not_a_document" | "unreadable" }
+  | (Pick<InvoiceDoc, "docType" | "vendorName" | "invoiceDate" | "lineItems" | "total" | "warnings"> & {
+      status: "needs_review";
+      error: null;
+    });
+
+/**
+ * Stages 1–3 as a pure decision: the OCR result → the invoice fields it
+ * sets. Shared by the pipeline and the real-corpus prod seed, so seeded
+ * documents are exactly what a scan would have stored.
+ */
+export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
+  if (result.notDocument) return { status: "failed", error: "not_a_document" };
+  if (result.unreadable || result.lineItems.length === 0) return { status: "failed", error: "unreadable" };
+  const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
+  return {
+    status: "needs_review",
+    docType: result.docType,
+    vendorName: result.vendor,
+    invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
+    lineItems,
+    total: result.total,
+    warnings,
+    error: null,
+  };
 }
 
 /**
@@ -103,31 +131,14 @@ export async function processInvoiceImage(
       restaurantName,
     );
 
-    if (result.notDocument) {
-      await ref.update({ status: "failed", error: "not_a_document" });
-      return;
+    const patch = invoicePatchFromOcr(result);
+    await ref.update(patch);
+    if (patch.status === "needs_review") {
+      logger.info(
+        `Invoice ${invoiceId} digitized for ${rid}: ${patch.lineItems.length} items` +
+          (patch.warnings.length ? ` (warnings: ${patch.warnings.join(", ")})` : "")
+      );
     }
-    if (result.unreadable || result.lineItems.length === 0) {
-      await ref.update({ status: "failed", error: "unreadable" });
-      return;
-    }
-
-    const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
-
-    await ref.update({
-      status: "needs_review",
-      docType: result.docType,
-      vendorName: result.vendor,
-      invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
-      lineItems,
-      total: result.total,
-      warnings,
-      error: null,
-    });
-    logger.info(
-      `Invoice ${invoiceId} digitized for ${rid}: ${lineItems.length} items` +
-        (warnings.length ? ` (warnings: ${warnings.join(", ")})` : "")
-    );
   } catch (err) {
     logger.error(`OCR failed for invoice ${invoiceId}`, err);
     try {
