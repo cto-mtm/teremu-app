@@ -202,12 +202,31 @@ async function callProvider(apiKey: string, messages: ChatMessage[], opts: ChatO
     };
   }
 
-  const send = () =>
+  const post = () =>
     fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  // Transient provider trouble — rate limits (free tiers throttle bursts:
+  // a stack of scans uploaded at once), overloaded workers, dropped
+  // connections — is retried twice with backoff, honoring Retry-After
+  // (capped so a scan stays well inside the function timeout). Anything
+  // else fails at once: a 400/401/404/410 will not fix itself.
+  const send = async (): Promise<Response> => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const res = await post();
+        if (!RETRYABLE.has(res.status) || attempt >= RETRY_DELAYS_MS.length) return res;
+        const after = Number(res.headers.get("retry-after"));
+        await sleep(Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 5000) : RETRY_DELAYS_MS[attempt]);
+      } catch (err) {
+        if (attempt >= RETRY_DELAYS_MS.length) throw err;
+        await sleep(RETRY_DELAYS_MS[attempt]);
+      }
+      logger.warn("llm_retry", { model, label: opts.label ?? "unlabeled", attempt: attempt + 1 });
+    }
+  };
 
   let res = await send();
   // A model that does not implement response_format rejects the whole
@@ -252,6 +271,11 @@ async function callProvider(apiKey: string, messages: ChatMessage[], opts: ChatO
 // drafts): the provider constrains decoding to the schema, so invalid
 // JSON and off-vocabulary units/categories are unrepresentable rather
 // than merely discouraged by the prompt.
+
+/** Provider statuses worth retrying (rate limit / overloaded / gateway). */
+const RETRYABLE = new Set([429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1000, 3000];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Models proven not to support response_format — skipped for the rest of this process. */
 const noStructuredOutput = new Set<string>();

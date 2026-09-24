@@ -16,13 +16,28 @@ const image = (b64: string): ChatMessage[] => [
 ];
 const OPTS = { maxTokens: 10, label: "ocr" };
 
+const reply = (status: number, body: string) => ({
+  ok: status < 400,
+  status,
+  headers: new Headers(),
+  text: async () => body,
+  json: async () => ({ choices: [{ message: { content: body } }] }),
+});
 function provider(status: number, body: string) {
-  return vi.fn(async () => ({
-    ok: status < 400,
-    status,
-    text: async () => body,
-    json: async () => ({ choices: [{ message: { content: body } }] }),
-  }));
+  return vi.fn(async () => reply(status, body));
+}
+
+/** Run a call whose provider retries with backoff, without waiting for real. */
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers();
+  try {
+    const pending = run();
+    pending.catch(() => {}); // observed below — avoid an unhandled rejection meanwhile
+    await vi.runAllTimersAsync();
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe("llm cassettes", () => {
@@ -89,7 +104,7 @@ describe("llm cassettes", () => {
   it.each([429, 410, 503])("never records a %i — it says nothing about the document", async (status) => {
     process.env.LLM_CASSETTE_MODE = "record";
     vi.stubGlobal("fetch", provider(status, "unavailable"));
-    await expect(chatCompletion(image(`E${status}`), OPTS)).rejects.toThrow(`LLM API ${status}`);
+    await expect(withFakeTimers(() => chatCompletion(image(`E${status}`), OPTS))).rejects.toThrow(`LLM API ${status}`);
     expect(readdirSync(dir)).toHaveLength(0);
   });
 
@@ -106,5 +121,44 @@ describe("llm cassettes", () => {
     vi.stubGlobal("fetch", provider(200, "hello"));
     await chatCompletion([{ role: "user", content: "just text" }], OPTS);
     expect(readdirSync(dir)).toHaveLength(0);
+  });
+});
+
+describe("llm provider retries", () => {
+  const saved = { key: process.env.LLM_API_KEY, mocks: process.env.TEREMU_TEST_MOCKS };
+  beforeEach(() => {
+    process.env.LLM_API_KEY = "test-key";
+    delete process.env.TEREMU_TEST_MOCKS;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (saved.key === undefined) delete process.env.LLM_API_KEY;
+    else process.env.LLM_API_KEY = saved.key;
+    if (saved.mocks !== undefined) process.env.TEREMU_TEST_MOCKS = saved.mocks;
+  });
+
+  it("rides out a rate limit (free tiers throttle a burst of scans)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(429, "Too Many Requests"))
+      .mockResolvedValueOnce(reply(503, "ResourceExhausted"))
+      .mockResolvedValueOnce(reply(200, "{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await withFakeTimers(() => chatCompletion(image("R1"), OPTS))).toBe("{}");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after two retries", async () => {
+    const fetchMock = provider(429, "Too Many Requests");
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(withFakeTimers(() => chatCompletion(image("R2"), OPTS))).rejects.toThrow("LLM API 429");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("never retries a request the provider rejects on its merits", async () => {
+    const fetchMock = provider(401, "bad key");
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(chatCompletion(image("R3"), OPTS)).rejects.toThrow("LLM API 401");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
