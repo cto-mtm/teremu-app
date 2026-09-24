@@ -43,8 +43,11 @@
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.9",
+    "esbuild": "^0.28.1",
     "exceljs": "^4.4.0",
     "pdfjs-dist": "^6.3.289",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
   }
 }

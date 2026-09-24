@@ -23,10 +23,5 @@
     "firebase-functions": "^7.3.2",
     "stripe": "^17.5.0",
     "zod": "^4.1.13"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.1",
-    "typescript": "^5.7.0",
-    "vitest": "^4.1.10"
   }
 }
