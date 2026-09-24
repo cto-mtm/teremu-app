@@ -13,7 +13,7 @@ Read this before touching any bank/aggregator code. Companion docs: `pos.md` (th
 3. **Raw transactions are immutable facts; matching state is a rebuildable layer on top.** A bank transaction doc is upserted only by provider identity (pending→posted is a version of the same fact). Match status, flags, and counterparty rules are *derived or human-authored* metadata that never mutate the underlying transaction — so the matcher can re-run forever without corrupting anything, the same commitment `pos.md` makes for orders.
 4. **Money is integer minor units (cents) + currency code inside the bank layer**, converted to float euros only where a value crosses into existing app shapes (an expense created from a flagged transaction). Amounts are **signed**: negative = outflow. v1 consumes **outflows only**; inflows are stored but not processed (§Spain money notes).
 5. **Deterministic first, AI last.** Exact amount+date+counterparty logic resolves the bulk; the learned counterparty table resolves the recurring; only the residue goes to one batched LLM call, and the LLM only ever *suggests* — it cannot auto-link (same rule as the POS matcher).
-6. **Everything works offline.** No connection → deterministic mock provider (same pattern as OCR without an LLM key). Webhooks get an emulator-only injection route.
+6. **Everything works offline.** No connection → deterministic mock provider (the offline-mock pattern OCR uses without an LLM key — but deterministic, unlike OCR's randomized mock, so tests can assert on it). Webhooks get an emulator-only injection route.
 
 ## Provider abstraction
 

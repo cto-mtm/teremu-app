@@ -154,7 +154,7 @@ belong there and nowhere else; do not add a second browser-test tool.
 Work in phases and **do not proceed past a gate until it's green.** These are the only test-specific landmines; the monorepo rules (workspaces, `@teremu/shared`, esbuild build) are in `CLAUDE.md`.
 
 **Phase 1 — Scaffold + harness.**
-- Add `vitest` to `firebase/functions` **devDependencies** (`npm install -D vitest --workspace teremu-functions`).
+- `vitest` (with `esbuild`/`typescript`) lives in the **repo-root** devDependencies, not `firebase/functions`: the functions `package.json` is what Cloud Build installs on deploy, so it carries runtime deps only (a vitest release once crashed that install for every deploy). Scripts resolve the tools from the root.
 - Create `vitest.config.ts`, `test/global-setup.ts`, `test/setup.ts`, `test/helpers.ts` per the sections above.
 - Watch these specifics:
   - **Test imports are extensionless** (`import { invoiceDocSchema } from '../src/models'`) — Vitest transpiles TS itself, so the repo's NodeNext `.js` import specifiers will *not* resolve in a spec. Import `@teremu/shared` by package name as usual.

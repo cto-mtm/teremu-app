@@ -6,7 +6,7 @@ Every AI call in the API (invoice OCR, menu scan, recipe drafts, assistant) goes
 
 | Variable | Where | Meaning |
 | --- | --- | --- |
-| `NVIDIA_API_KEY` | Secret (prod) / `.secret.local` or shell (emulator) | The bearer token, whatever the provider. Historical name kept to avoid a secret rename + rebind. Unset ⇒ deterministic offline mocks (designed behavior). |
+| `NVIDIA_API_KEY` | Secret (prod) / `.secret.local` or shell (emulator) | The bearer token, whatever the provider. Historical name kept to avoid a secret rename + rebind. Unset ⇒ offline mocks (designed behavior; the OCR mock is randomized — deterministic tests use record/replay below). |
 | `LLM_API_KEY` | env | Alternative key name; wins over `NVIDIA_API_KEY` when both are set. |
 | `LLM_PROVIDER` | `functions/.env` | `nvidia` (default) or `gemini`. Presets endpoint URL + default model. |
 | `LLM_MODEL` | `functions/.env` | Override the preset's default model. (`NVIDIA_MODEL` still works too.) |
@@ -33,6 +33,10 @@ Two NVIDIA-specific traps, both of which have already broken OCR in this repo:
 A candidate is only qualified once it passes all four: invocable, accepts images, honors `response_format`, and returns the *real* prompt at the real `max_tokens` inside the Cloud Functions timeout.
 
 **Verified preset behavior** (`meta/llama-3.2-11b-vision-instruct`, Kroger receipt, 2026-08-13): vendor, all three line items, unit prices and grand total all correct. It also emits exactly the sloppiness `ocr.ts` is built to absorb — `"unit": "F"` (a receipt tax flag, off-vocabulary → `.catch("each")`), `"date": "null"` as a string (fails the regex → `.catch(null)`), and one line categorized `other` instead of `meat`. The lenient zod layer is load-bearing, not defensive decoration: without it this reply would fail the scan outright.
+
+**Production OCR model: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`**, set with `LLM_MODEL` in `firebase/functions/.env` (the preset above stays the code default). Measured on a real client month scored against the accountant's export (`docs/real-samples.md`, 2026-09-23): totals right to the cent on **208/248** documents vs **21/248** for the 11b preset — the 11b answers most real invoices in prose, and rejects every multi-page scan (`400 At most 1 image(s)`). Weak spots: albarán vs factura only 68% right, ~15% unreadable. Menu scan, recipe drafts and the assistant were smoke-tested on it too. To compare another model on the same documents: `LLM_MODEL=… npm run real:eval`.
+
+**Rate limits are retried.** The free tier throttles bursts (a stack of scans uploaded together): `chatCompletion` retries 429/502/503/504 and network errors twice with backoff, honoring `Retry-After` (capped at 5 s). Nothing else is retried — a 400/401/404/410 will not fix itself.
 
 **Gemini API** — the planned production provider. Pricing snapshot from [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing), checked **2026-07-24** (prices per 1M tokens, paid tier; all models below are multimodal and have a free tier):
 

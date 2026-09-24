@@ -43,7 +43,7 @@ A four-stage pipeline, each stage catching what the previous can't:
 | **Validate** | Deterministic math cross-checks: qty × price vs line total, line sum vs printed total | Nothing fails — suspect lines are flagged for the reviewer |
 | **Review** | A human approves in Triage; warnings guide the eye | — |
 
-Stuck processing (a trigger hiccup) self-surfaces after 90 seconds with a retry. In local dev without an AI key, a deterministic mock runs the whole flow offline.
+Stuck processing (a trigger hiccup) self-surfaces after 90 seconds with a retry. In local dev without an AI key, a (randomized) offline mock runs the whole flow.
 
 ### 3 · Triage
 

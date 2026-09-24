@@ -41,7 +41,7 @@ Set each with `firebase functions:secrets:set <NAME>`:
 
 | Secret | Used by | Notes |
 |--------|---------|-------|
-| `NVIDIA_API_KEY` | Receipt OCR (NVIDIA NIM) | absent → deterministic mock (offline dev works) |
+| `NVIDIA_API_KEY` | Receipt OCR (NVIDIA NIM) | absent → randomized offline mock (offline dev works) |
 | `STRIPE_WEBHOOK_SECRET` | `POST /billing/stripe/webhook` | absent → webhook 400s |
 | `STRIPE_SECRET_KEY` | Checkout session creation | absent → checkout 500s |
 

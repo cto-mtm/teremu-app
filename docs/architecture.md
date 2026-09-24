@@ -20,7 +20,7 @@ onReceiptUploaded (Storage trigger) → VLM OCR (llm.ts, NVIDIA by default — d
 
 ## Local development
 
-The entire stack runs offline in the **Firebase Emulator Suite** under the `demo-app` project id — the `demo-` prefix makes the emulators never touch real Firebase resources and require no `firebase login`. The app targets the emulated function via `VITE_API_URL`. Without an LLM API key (see `docs/llm.md`), the OCR module returns a deterministic mock extraction, so scan → triage → approve → margins works end-to-end on a fresh clone.
+The entire stack runs offline in the **Firebase Emulator Suite** under the `demo-app` project id — the `demo-` prefix makes the emulators never touch real Firebase resources and require no `firebase login`. The app targets the emulated function via `VITE_API_URL`. Without an LLM API key (see `docs/llm.md`), the OCR module returns a randomized mock extraction, so scan → triage → approve → margins works end-to-end on a fresh clone.
 
 ## Teremu domain flow
 

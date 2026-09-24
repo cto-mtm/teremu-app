@@ -10,7 +10,7 @@ Read this before touching any POS/integration code. Companion docs: `architectur
 2. **Ids, never names.** Every cross-system reference is `provider` + `externalId`. Names are display data that drifts.
 3. **Raw orders are the source of truth; everything downstream is a rebuildable projection.** Normalized orders are stored immutably (upserted only by provider version); revenue entries, dish attribution, and pantry depletion are *derived* and can be regenerated for any (restaurant, business day) at any time. This one commitment is what makes late mappings, refunds, mapping corrections, and attribution bug-fixes all the same cheap operation: mark the day dirty, rebuild it.
 4. **Money is integer minor units (cents) + currency code inside the POS layer.** Convert to the app's float euros only at the projection boundary (existing `revenueEntry` shape). Revenue for margin math is **net: gross − discounts − IVA, tips excluded entirely**.
-5. **Everything works offline.** No connection → deterministic mock provider (same pattern as OCR without `NVIDIA_API_KEY`). Webhooks get an emulator-only injection route.
+5. **Everything works offline.** No connection → deterministic mock provider (the offline-mock pattern OCR uses without `NVIDIA_API_KEY` — but deterministic, unlike OCR's randomized mock, so tests can assert on it). Webhooks get an emulator-only injection route.
 
 ## Provider abstraction
 
