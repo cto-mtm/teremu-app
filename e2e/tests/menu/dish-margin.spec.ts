@@ -35,10 +35,10 @@ test.describe('Dish margins', () => {
     })
 
     const card = dishCard(page, dish)
-    // The margin is a raw toFixed(1) (dot decimal); currency goes through
-    // vue-i18n's `es` formatter (comma decimal). Both, verbatim.
-    await expect(card).toContainText('78.5%')
-    await expect(card).toContainText('objetivo 70%')
+    // Margin and currency both go through vue-i18n's `es` formatter: comma
+    // decimal, and a (no-break) space before the percent sign.
+    await expect(card).toContainText(/78,5\s%/)
+    await expect(card).toContainText(/objetivo 70\s%/)
     await expect(card).toContainText('4,30')
 
     // Detail page: same numbers, plus the per-ingredient breakdown.
@@ -64,7 +64,7 @@ test.describe('Dish margins', () => {
     })
 
     const card = dishCard(page, dish)
-    await expect(card).toContainText('25.0%')
+    await expect(card).toContainText(/25,0\s%/)
     await expect(card).toContainText('●')
   })
 })

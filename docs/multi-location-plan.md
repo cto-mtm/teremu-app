@@ -48,7 +48,7 @@ Consequences to keep in mind:
 Before → after:
 
 - `users/{uid}` = `{ restaurantId }`  →  `users/{uid}` (kept for existence/default) **plus** `users/{uid}/memberships/{rid}` = `{ addedAt, role }` (one per restaurant). The membership index is the switcher's source of truth and avoids a collection-group query.
-- `restaurants/{rid}` gains `name` (required going forward; later `address`, `currency`, `timezone`).
+- `restaurants/{rid}` gains `name` (required going forward; `currency` landed as a display setting — see docs/i18n.md §5; later `address`, `timezone`).
 - `invites/{emailKey}`  →  `invites/{emailKey}_{rid}` (or subcollection), still carrying `{ restaurantId, email, perms, createdAt }`.
 - No change to any `restaurants/{rid}/…` data collection, Storage layout, or security rules.
 

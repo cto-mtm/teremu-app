@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { apiFetch, apiUpload } from '../lib/api'
+import { apiFetch, apiUpload, writeEpoch } from '../lib/api'
 import { compressReceipt } from '../lib/compress'
 import { replaceById } from '../lib/collections'
 import { invoiceListSchema, invoiceSchema } from '../lib/schemas'
@@ -19,16 +19,53 @@ export const useInvoicesStore = defineStore('invoices', () => {
   const discarded = computed(() => invoices.value.filter((i) => i.status === 'discarded'))
   const byId = computed(() => new Map(invoices.value.map((i) => [i.id, i])))
 
-  async function refresh(): Promise<void> {
-    loading.value = true
-    const res = await apiFetch<Invoice[]>('/invoices', undefined, invoiceListSchema)
-    if (res.ok) {
-      invoices.value = res.data
-      error.value = null
-    } else {
-      error.value = res.error
+  // The list is the heaviest payload in the app (every invoice with its
+  // lines — ~220 KB for a real month). Callers that fire together (the
+  // shell's boot load + a page's mount) share ONE request, and a page can
+  // skip a refetch when the data is still fresh.
+  let inFlight: Promise<void> | null = null
+  let loadedAt = 0
+  // Bumped by reset() (location switch): a load that started for the
+  // previous location must neither populate the store nor be shared with
+  // the new location's refresh.
+  let generation = 0
+
+  function refresh(opts: { maxAgeMs?: number } = {}): Promise<void> {
+    if (inFlight) return inFlight
+    if (opts.maxAgeMs !== undefined && loadedAt && Date.now() - loadedAt < opts.maxAgeMs) {
+      return Promise.resolve()
     }
-    loading.value = false
+    const gen = generation
+    inFlight = (async () => {
+      loading.value = true
+      // Same lost-update guard as kitchen.refresh: an approve/capture that
+      // overlapped this load would be undone by its older snapshot, so load
+      // again (bounded) until no write moved underneath it.
+      let res: Awaited<ReturnType<typeof apiFetch<Invoice[]>>>
+      for (let attempt = 0; ; attempt += 1) {
+        const epoch = writeEpoch()
+        res = await apiFetch<Invoice[]>('/invoices', undefined, invoiceListSchema)
+        if (writeEpoch() === epoch || attempt >= 2) break
+      }
+      if (gen !== generation) return // location switched mid-load: drop it
+      if (res.ok) {
+        invoices.value = res.data
+        loadedAt = Date.now()
+        error.value = null
+      } else {
+        error.value = res.error
+      }
+      loading.value = false
+    })().finally(() => {
+      if (gen === generation) inFlight = null
+    })
+    return inFlight
+  }
+
+  /** Re-read ONE invoice (e.g. a scan still processing) instead of the list. */
+  async function refreshOne(id: string): Promise<void> {
+    const res = await apiFetch<Invoice>(`/invoices/${id}`, undefined, invoiceSchema)
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
   }
 
   /**
@@ -169,7 +206,11 @@ export const useInvoicesStore = defineStore('invoices', () => {
 
   /** Clear location-scoped data — called on switchLocation, see kitchen.ts. */
   function reset(): void {
+    generation += 1
+    inFlight = null
+    loading.value = false
     invoices.value = []
+    loadedAt = 0
     error.value = null
     multipageId.value = null
     multipageCount.value = 0
@@ -185,6 +226,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     discarded,
     byId,
     refresh,
+    refreshOne,
     reset,
     capture,
     multipageId,

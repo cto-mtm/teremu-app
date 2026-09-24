@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
   categorySchema,
+  currencySchema,
+  DEFAULT_CURRENCY,
   docTypeSchema,
   invoiceStatusSchema,
   permsSchema,
@@ -205,9 +207,11 @@ export const meSchema = z.object({
   email: z.string(),
   plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
-  // €/hour of kitchen labor (restaurant setting) — feeds prep-time
-  // plate costing. Optional so older API responses still validate.
+  // Kitchen labor per hour (restaurant setting, in its currency) — feeds
+  // prep-time plate costing. Optional so older API responses still validate.
   laborRatePerHour: z.number().nullable().optional(),
+  // Display currency of every amount; a pre-currency API reads as default.
+  currency: currencySchema.catch(DEFAULT_CURRENCY),
   locations: z.array(locationSchema),
 })
 

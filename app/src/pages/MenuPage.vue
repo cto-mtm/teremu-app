@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { armHero, heroStyle } from '../composables/useHero'
+import { currencySymbol } from '../i18n'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
@@ -245,13 +247,14 @@ async function save(): Promise<void> {
         :key="m.id"
         :to="`/menu/${m.id}`"
         class="card block w-full text-left hover:border-ember/40"
+        @click="armHero('dish', m.id)"
       >
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
             <!-- HERO SOURCE: morphs into the dish detail title -->
             <div
               class="flex items-center gap-2 font-semibold"
-              :style="{ viewTransitionName: 'dish-' + m.id }"
+              :style="heroStyle('dish', m.id)"
             >
               {{ m.name }}
               <span v-if="margin != null && margin < m.targetMarginPct" class="shrink-0 text-coral">●</span>
@@ -263,9 +266,9 @@ async function save(): Promise<void> {
           </div>
           <div class="shrink-0 text-right">
             <div class="font-bold" :class="margin != null && margin < m.targetMarginPct ? 'text-coral-600' : 'text-herb-700'">
-              {{ margin != null ? margin.toFixed(1) + '%' : '—' }}
+              {{ margin != null ? n(margin / 100, 'percent') : '—' }}
             </div>
-            <div class="text-[11px] text-smoke">{{ t('menu.target', { pct: m.targetMarginPct }) }}</div>
+            <div class="text-[11px] text-smoke">{{ t('menu.target', { pct: n(m.targetMarginPct / 100, 'percentWhole') }) }}</div>
           </div>
         </div>
 
@@ -279,7 +282,7 @@ async function save(): Promise<void> {
           <div
             class="absolute inset-y-0 w-0.5 bg-ink/60"
             :style="{ left: m.targetMarginPct + '%' }"
-            :title="t('menu.targetMarker', { pct: m.targetMarginPct })"
+            :title="t('menu.targetMarker', { pct: n(m.targetMarginPct / 100, 'percentWhole') })"
           />
         </div>
       </RouterLink>
@@ -304,7 +307,7 @@ async function save(): Promise<void> {
           <input v-model="name" class="input" :placeholder="t('menu.editor.dishName')" />
           <div class="grid grid-cols-2 gap-3">
             <label class="space-y-1 text-sm">
-              <span class="text-xs text-smoke">{{ t('menu.editor.menuPrice') }}</span>
+              <span class="text-xs text-smoke">{{ t('menu.editor.menuPrice', { symbol: currencySymbol }) }}</span>
               <input v-model="price" type="number" inputmode="decimal" class="input" />
             </label>
             <label class="space-y-1 text-sm">

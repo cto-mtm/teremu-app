@@ -18,8 +18,18 @@ const showInfo = ref(false)
 // Albarán ↔ factura pairing: automatic from scans, manually resolvable.
 const reconciliation = computed(() => reconcileDeliveryNotes(store.invoices))
 
+// Link options for every unmatched row, computed once per data change —
+// not per render (each call filters + sorts every invoice).
+const candidatesByNote = computed(
+  () =>
+    new Map(
+      reconciliation.value
+        .filter((row) => row.status !== 'matched')
+        .map((row) => [row.note.id, reconciliationCandidates(store.invoices, row.note)]),
+    ),
+)
 function candidatesFor(note: Invoice): Invoice[] {
-  return reconciliationCandidates(store.invoices, note)
+  return candidatesByNote.value.get(note.id) ?? []
 }
 
 /** Drop a scan that will never be an invoice out of the inbox. */
@@ -38,13 +48,15 @@ async function linkNote(note: Invoice, event: Event): Promise<void> {
   if (invoiceId) await store.reconcile(note.id, { invoiceId })
 }
 
-// Poll while invoices are processing so OCR results appear without a
-// manual reload (no realtime channel — the client has no Firebase SDK).
+// The shell loads invoices at sign-in; only refetch here when that data
+// is stale. While scans are processing, poll THOSE invoices so OCR
+// results appear without a reload (no realtime channel — the client has
+// no Firebase SDK) — never the whole list every 4 s.
 let timer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
-  void store.refresh()
+  void store.refresh({ maxAgeMs: 30_000 })
   timer = setInterval(() => {
-    if (store.invoices.some((i) => i.status === 'processing')) void store.refresh()
+    for (const inv of store.invoices) if (inv.status === 'processing') void store.refreshOne(inv.id)
   }, 4000)
 })
 onUnmounted(() => {
@@ -126,10 +138,12 @@ onUnmounted(() => {
       <div class="divide-y divide-gray-100">
         <div v-for="row in reconciliation" :key="row.note.id" class="space-y-1 px-4 py-3">
           <div class="flex items-center justify-between gap-3">
-            <div class="min-w-0">
-              <RouterLink :to="`/triage/${row.note.id}`" class="truncate text-sm font-medium hover:text-ember-700">
+            <div class="min-w-0 flex-1">
+              <!-- Long legal names ("DISTRIBUCIONES GASTRONÓMICAS DEL LEVANTE, S.L.") wrap instead of
+                   widening the page; date · total stay together as one unit. -->
+              <RouterLink :to="`/triage/${row.note.id}`" class="block text-sm font-medium [overflow-wrap:anywhere] hover:text-ember-700">
                 {{ row.note.vendorName ?? '—' }}
-                <span class="text-xs text-smoke">
+                <span class="whitespace-nowrap text-xs text-smoke">
                   · {{ row.note.invoiceDate ? d(new Date(row.note.invoiceDate + 'T12:00:00'), 'short') : '' }}
                   · {{ n(row.note.total ?? 0, 'currency') }}
                 </span>

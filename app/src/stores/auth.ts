@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { User } from 'firebase/auth'
 import { signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
 import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
-import { meSchema } from '../lib/schemas'
+import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
+import { setCurrency } from '../i18n'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 }
@@ -14,6 +15,10 @@ export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false) // true once the initial auth state is known
   /** Membership + granular perms from GET /me (bootstraps server-side). */
   const profile = ref<Me | null>(null)
+  // The i18n currency is DERIVED from the active location's profile, never
+  // set by hand: every path that changes the profile (sign-in, reload after
+  // a Settings save, location switch, sign-out) re-renders every amount.
+  watch(() => profile.value?.currency ?? DEFAULT_CURRENCY, setCurrency, { immediate: true })
   const error = ref<string | null>(null)
   const busy = ref(false)
 

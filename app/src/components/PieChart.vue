@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 /** Inline SVG donut — sibling of Sparkline/MiniBars, same house rules.
  * Purely presentational: the parent aggregates, caps, colors and labels
@@ -11,6 +12,8 @@ export interface PieSlice {
   color: string
   clickable?: boolean
 }
+
+const { n } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -71,7 +74,7 @@ const arcs = computed(() => {
       :class="a.slice.clickable ? 'cursor-pointer hover:opacity-75' : ''"
       @click="a.slice.clickable && emit('select', a.slice.key)"
     >
-      <title>{{ a.slice.label }} · {{ a.pct.toFixed(1) }}%</title>
+      <title>{{ a.slice.label }} · {{ n(a.pct / 100, 'percent') }}</title>
     </path>
     <text v-if="centerValue" :x="C" :y="C - 2" text-anchor="middle" font-size="17" font-weight="700" fill="#1C1410">
       {{ centerValue }}

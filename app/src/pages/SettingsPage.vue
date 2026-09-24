@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
+import { currencySymbol } from '../i18n'
+import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { apiFetch } from '../lib/api'
@@ -17,7 +19,7 @@ import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 // to end (against the emulator in local dev). Custom per-page transition
 // example: the root carries view-transition-name: settings-page (see
 // docs/animations.md §2).
-const { t, d } = useI18n()
+const { t, d, locale } = useI18n()
 const settings = useSettingsStore()
 const auth = useAuthStore()
 const location = useLocationStore()
@@ -63,8 +65,34 @@ async function togglePlan(): Promise<void> {
   if (res.ok) await auth.reloadProfile()
 }
 
+// ── Currency (owner only, restaurant-level) ─────────────────────
+// Display only: amounts are stored as plain numbers, so switching
+// relabels them, it never converts. Saves on change, like the unit toggle.
+const currencyBusy = ref(false)
+const currencySaved = ref(false)
+const currencyName = (code: Currency) =>
+  new Intl.DisplayNames([locale.value], { type: 'currency' }).of(code) ?? code
+
+async function saveCurrency(event: Event): Promise<void> {
+  const rid = auth.profile?.restaurantId
+  const code = (event.target as HTMLSelectElement).value as Currency
+  if (!rid) return
+  currencyBusy.value = true
+  currencySaved.value = false
+  const res = await apiFetch(`/restaurants/${rid}`, { method: 'PUT', body: JSON.stringify({ currency: code }) })
+  if (res.ok) {
+    await auth.reloadProfile() // → setCurrency(): every amount re-renders
+    currencySaved.value = true
+  } else {
+    // The select already shows the new choice — put it back to what's saved.
+    ;(event.target as HTMLSelectElement).value = auth.profile?.currency ?? DEFAULT_CURRENCY
+    alert(t('common.action.saveFailed'))
+  }
+  currencyBusy.value = false
+}
+
 // ── Labor rate (owner only, restaurant-level) ───────────────────
-// €/hour of kitchen labor. When set, every dish's plate cost adds
+// Kitchen labor per hour, in the restaurant's currency. When set, every dish's plate cost adds
 // prepMinutes × this rate — see plateCost in lib/domain.ts.
 const laborRateInput = ref('')
 const laborBusy = ref(false)
@@ -271,6 +299,24 @@ async function cancelInvite(emailKey: string): Promise<void> {
       </div>
     </div>
 
+    <!-- Display currency for every amount (owner only) -->
+    <div v-if="isOwner" class="card space-y-3">
+      <div class="text-sm font-semibold">{{ t('settings.currency.title') }}</div>
+      <p class="text-xs text-smoke">{{ t('settings.currency.desc') }}</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <select
+          class="input w-auto"
+          :aria-label="t('settings.currency.title')"
+          :value="auth.profile?.currency ?? DEFAULT_CURRENCY"
+          :disabled="currencyBusy"
+          @change="saveCurrency"
+        >
+          <option v-for="code in CURRENCIES" :key="code" :value="code">{{ currencyName(code) }} ({{ code }})</option>
+        </select>
+        <span v-if="currencySaved" class="chip-down">{{ t('common.action.saved') }}</span>
+      </div>
+    </div>
+
     <!-- Kitchen labor rate → prep-time plate costing (owner only) -->
     <div v-if="isOwner" class="card space-y-3">
       <div class="text-sm font-semibold">{{ t('settings.labor.title') }}</div>
@@ -287,7 +333,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
             :placeholder="t('settings.labor.placeholder')"
             @input="laborSaved = false"
           />
-          <span class="text-xs text-smoke">{{ t('settings.labor.unit') }}</span>
+          <span class="text-xs text-smoke">{{ t('settings.labor.unit', { symbol: currencySymbol }) }}</span>
         </label>
         <BaseButton variant="ghost" :disabled="laborBusy" @click="saveLaborRate">
           {{ laborBusy ? t('common.action.saving') : t('common.action.save') }}

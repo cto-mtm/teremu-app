@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   categorySchema,
+  currencySchema,
   docTypeSchema,
   invoiceStatusSchema,
   isSubcategoryOf,
@@ -271,9 +272,11 @@ export const restaurantDocSchema = z.object({
   plan: z.enum(["free", "pro", "max"]),
   scanPeriod: z.string().nullable(),
   scanCount: z.number(),
-  // €/hour of kitchen labor — feeds prep-time plate costing in the app.
-  // Absent/null = labor costing off (plate cost stays ingredients-only).
+  // Kitchen labor per hour, in the restaurant's currency — feeds prep-time
+  // plate costing in the app. Absent/null = labor costing off.
   laborRatePerHour: z.number().min(0).nullable().optional(),
+  // Display currency for every amount (see shared vocab). Absent = default.
+  currency: currencySchema.optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
@@ -284,11 +287,12 @@ export const restaurantProfileSchema = z.object({
   name: z.string().min(1).max(80),
 });
 
-/** PUT /restaurants/:rid — partial profile update (rename and/or the
- * labor rate that feeds prep-time plate costing). */
+/** PUT /restaurants/:rid — partial profile update (rename, the labor
+ * rate that feeds prep-time plate costing, and/or the display currency). */
 export const updateRestaurantSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   laborRatePerHour: z.number().min(0).max(500).nullable().optional(),
+  currency: currencySchema.optional(),
 });
 
 /** POST /members — invite by email with explicit perms. */

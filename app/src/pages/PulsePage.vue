@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { currencySymbol } from '../i18n'
+import { amountField, decimalMarkFor, detectDelimiter, parseAmount, parseDate, splitCsvLine } from '../lib/csv'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
@@ -26,7 +28,7 @@ import ProvidersPanel from '../components/ProvidersPanel.vue'
 import SpendDrilldown from '../components/SpendDrilldown.vue'
 import Sparkline from '../components/Sparkline.vue'
 
-const { t, n, d } = useI18n()
+const { t, n, d, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const invoicesStore = useInvoicesStore()
@@ -336,20 +338,28 @@ async function importCsv(event: Event): Promise<void> {
   csvBusy.value = true
   try {
     const text = await file.text()
+    const delimiter = detectDelimiter(text)
+    const decimal = decimalMarkFor(locale.value)
     const existing = new Set(kitchen.revenue.map((r) => r.date))
     let ok = 0
     let skipped = 0
     let bad = 0
+    let firstRow = true
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim()
       if (!line) continue
-      const [dateStr, amountStr] = line.split(/[,;\t]/).map((s) => s?.trim())
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr ?? '')) {
-        // header rows and malformed lines land here
-        if (dateStr && !/^(fecha|date)$/i.test(dateStr)) bad += 1
+      const fields = splitCsvLine(line, delimiter)
+      // Dates in the UI language's order (01/05/2026 = 1 May in es).
+      const dateStr = parseDate(fields[0] ?? '', locale.value)
+      const header = firstRow
+      firstRow = false
+      if (!dateStr) {
+        // A first line that isn't data is the header, whatever it says
+        // ("fecha;importe", "Día;Ventas"…); anything later is malformed.
+        if (!header) bad += 1
         continue
       }
-      const amount = Number((amountStr ?? '').replace(',', '.'))
+      const amount = parseAmount(amountField(fields, delimiter), decimal)
       if (!Number.isFinite(amount) || amount <= 0) {
         bad += 1
         continue
@@ -488,7 +498,7 @@ watch(showExpense, (open) => {
           class="mt-1 text-2xl font-bold"
           :class="fcThisWeek == null ? '' : fcThisWeek > 35 ? 'text-coral-600' : 'text-herb-700'"
         >
-          {{ fcThisWeek == null ? '—' : fcThisWeek.toFixed(1) + '%' }}
+          {{ fcThisWeek == null ? '—' : n(fcThisWeek / 100, 'percent') }}
         </div>
       </div>
       <RouterLink to="/pantry" class="card block hover:border-ember/40">
@@ -548,10 +558,10 @@ watch(showExpense, (open) => {
           <rect :x="FC.pad" :y="fcY(35)" :width="FC.w - 2 * FC.pad" :height="Math.max(0, fcY(28) - fcY(35))" fill="#ECF8F0" />
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="fcY(35)" :y2="fcY(35)" stroke="#2E9E5B" stroke-dasharray="3 3" stroke-width="1" />
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="fcY(28)" :y2="fcY(28)" stroke="#2E9E5B" stroke-dasharray="3 3" stroke-width="1" />
-          <text :x="FC.w - FC.pad - 2" :y="fcY(35) - 4" text-anchor="end" font-size="9" fill="#1E6B3D">35%</text>
-          <text :x="FC.w - FC.pad - 2" :y="fcY(28) + 11" text-anchor="end" font-size="9" fill="#1E6B3D">28%</text>
+          <text :x="FC.w - FC.pad - 2" :y="fcY(35) - 4" text-anchor="end" font-size="9" fill="#1E6B3D">{{ n(0.35, 'percentWhole') }}</text>
+          <text :x="FC.w - FC.pad - 2" :y="fcY(28) + 11" text-anchor="end" font-size="9" fill="#1E6B3D">{{ n(0.28, 'percentWhole') }}</text>
           <text v-if="fcThisWeek != null" :x="FC.pad + 2" :y="FC.pad + 9" font-size="9" fill="#7A6F66">
-            {{ fcMax.toFixed(0) }}%
+            {{ n(fcMax / 100, 'percentWhole') }}
           </text>
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="FC.h - FC.pad" :y2="FC.h - FC.pad" stroke="#E5E7EB" />
           <polyline :points="fcPoints" fill="none" stroke="#FF751F" stroke-width="2.5" stroke-linejoin="round" />
@@ -626,7 +636,7 @@ watch(showExpense, (open) => {
         >
           <circle :cx="dot.cx" :cy="dot.cy" r="9" :fill="dot.color" fill-opacity="0.9" />
           <text :x="dot.cx + 13" :y="dot.cy + 4" font-size="12" fill="#1C1410">{{ dot.name }}</text>
-          <title>{{ dot.name }} · {{ t('pulse.soldUnits', { n: dot.units }) }} · {{ dot.margin.toFixed(1) }}%</title>
+          <title>{{ dot.name }} · {{ t('pulse.soldUnits', { n: dot.units }) }} · {{ n(dot.margin / 100, 'percent') }}</title>
         </g>
         </svg>
       </div>
@@ -652,7 +662,7 @@ watch(showExpense, (open) => {
             </div>
             <Sparkline :values="hist.map((h) => h.unitPrice)" :width="90" :height="26" />
             <span v-if="change != null" :class="change > 0 ? 'chip-up' : 'chip-down'">
-              {{ change > 0 ? '↑' : '↓' }}{{ Math.abs(change).toFixed(1) }}%
+              {{ change > 0 ? '↑' : '↓' }}{{ n(Math.abs(change) / 100, 'percent') }}
             </span>
           </RouterLink>
         </div>
@@ -738,7 +748,7 @@ watch(showExpense, (open) => {
                 </RouterLink>
               </template>
               <template #pct>
-                <span :class="change > 0 ? 'chip-up' : 'chip-down'">{{ Math.abs(change).toFixed(1) }}%</span>
+                <span :class="change > 0 ? 'chip-up' : 'chip-down'">{{ n(Math.abs(change) / 100, 'percent') }}</span>
               </template>
             </i18n-t>
             <span class="text-smoke">
@@ -765,7 +775,7 @@ watch(showExpense, (open) => {
                   {{ m.name }}
                 </RouterLink>
               </template>
-              <template #pct><span class="chip-up">{{ margin.toFixed(1) }}%</span></template>
+              <template #pct><span class="chip-up">{{ n(margin / 100, 'percent') }}</span></template>
             </i18n-t>
             <span class="text-smoke">
               {{ t('pulse.marginDetail', { target: m.targetMarginPct, cost: n(cost, 'currency') }) }}
@@ -795,7 +805,7 @@ watch(showExpense, (open) => {
               <input v-model="expDate" type="date" class="input" />
             </label>
             <label class="space-y-1 text-sm">
-              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount') }}</span>
+              <span class="text-xs text-smoke">{{ t('pulse.expenseSheet.amount', { symbol: currencySymbol }) }}</span>
               <input v-model="expAmount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
             </label>
           </div>
@@ -840,7 +850,7 @@ watch(showExpense, (open) => {
               <input v-model="date" type="date" class="input" />
             </label>
             <label class="space-y-1 text-sm">
-              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount') }}</span>
+              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount', { symbol: currencySymbol }) }}</span>
               <input v-model="amount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
             </label>
           </div>

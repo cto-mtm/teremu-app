@@ -96,12 +96,18 @@ async function route(req: Request, res: Response): Promise<unknown> {
   }
 
   // ── auth gate: resolve membership (bootstraps on first sign-in) ─
+  // Every call after /me names its location (X-Restaurant-Id), so the
+  // plan read starts alongside auth instead of after it. The result is
+  // used ONLY if the verified member really belongs to that location.
+  const headerRid = typeof req.headers["x-restaurant-id"] === "string" ? req.headers["x-restaurant-id"] : "";
+  const speculativePlan =
+    headerRid && req.headers.authorization ? getPlanInfo(headerRid).catch(() => null) : null;
   const member = await requireMember(req);
   if (!member) return json(res, 401, { error: "unauthenticated" });
   const rid = member.rid;
   const col = (name: string) => db.collection("restaurants").doc(rid).collection(name);
   // Freemium gates: one plan read per request, enforced server-side.
-  const planInfo = await getPlanInfo(rid);
+  const planInfo = (rid === headerRid && (await speculativePlan)) || (await getPlanInfo(rid));
   // The tier a paywalled action would need — null when already on the
   // top plan, so the client can turn "limit reached" into a real upgrade
   // CTA instead of a dead-end message (and never nag a max user to upgrade).
@@ -141,6 +147,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       plan: planInfo.plan,
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
       laborRatePerHour: planInfo.laborRatePerHour,
+      currency: planInfo.currency,
       locations,
     });
   }
@@ -713,6 +720,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) patch.name = body.name.trim();
       if (body.laborRatePerHour !== undefined) patch.laborRatePerHour = body.laborRatePerHour;
+      if (body.currency !== undefined) patch.currency = body.currency;
       if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
       await db.collection("restaurants").doc(rid).set(patch, { merge: true });
       return json(res, 200, { ok: true, ...patch });
@@ -790,7 +798,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       return json(res, 429, { error: "one question every 10 seconds" });
     }
     await memberRef.update({ lastAskAt: Date.now() });
-    const answer = await askAssistant(rid, member, question, history ?? []);
+    const answer = await askAssistant(rid, member, question, history ?? [], planInfo.currency);
     return json(res, 200, { answer });
   }
 

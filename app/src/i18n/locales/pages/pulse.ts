@@ -43,7 +43,7 @@ const es = {
   foodCostThisWeek: 'Costo de comida (semana)',
   pantryValue: 'Valor en despensa',
   foodCostTitle: 'Costo de comida % · 8 semanas',
-  foodCostBand: 'banda objetivo 28–35%',
+  foodCostBand: 'banda objetivo 28–35 %',
   vendorSpendTitle: 'Gasto por proveedor · 8 semanas',
   otherVendors: 'otros',
   matrixTitle: 'Ingeniería de menú',
@@ -62,12 +62,13 @@ const es = {
   entriesTitle: 'Movimientos recientes',
   csv: {
     cta: 'Importar CSV',
-    hint: 'CSV con columnas fecha,importe (YYYY-MM-DD, una fila por día).',
+    hint: 'CSV con columnas fecha e importe (p. ej. 01/05/2026;1.234,56), una fila por día.',
     done: 'Importadas {ok} · omitidas {skipped} (fecha ya registrada) · inválidas {bad}',
     failed: 'No se pudo leer el archivo.',
   },
   expenseSheet: {
     title: 'Registrar gasto',
+    amount: 'Importe ({symbol})',
     tag: 'Categoría',
     tagPlaceholder: 'marketing, personal, alquiler…',
     vendor: 'Proveedor (opcional)',
@@ -78,7 +79,7 @@ const es = {
   sheet: {
     title: 'Registrar ingresos',
     date: 'Fecha',
-    amount: 'Ventas totales ($)',
+    amount: 'Ventas totales ({symbol})',
     dishesHint: 'Platos vendidos (opcional — mantiene la despensa teórica al día)',
     saveFailed: 'No se pudieron guardar los ingresos.',
   },
@@ -149,12 +150,13 @@ const en: typeof es = {
   entriesTitle: 'Recent entries',
   csv: {
     cta: 'Import CSV',
-    hint: 'CSV with date,amount columns (YYYY-MM-DD, one row per day).',
+    hint: 'CSV with date and amount columns (e.g. 5/1/2026,1234.56), one row per day.',
     done: 'Imported {ok} · skipped {skipped} (date already logged) · invalid {bad}',
     failed: 'Could not read the file.',
   },
   expenseSheet: {
     title: 'Log expense',
+    amount: 'Amount ({symbol})',
     tag: 'Category',
     tagPlaceholder: 'marketing, staff, rent…',
     vendor: 'Vendor (optional)',
@@ -165,7 +167,7 @@ const en: typeof es = {
   sheet: {
     title: 'Log revenue',
     date: 'Date',
-    amount: 'Total sales ($)',
+    amount: 'Total sales ({symbol})',
     dishesHint: 'Dishes sold (optional — keeps the Theoretical Pantry accurate)',
     saveFailed: 'Could not save revenue.',
   },

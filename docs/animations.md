@@ -6,13 +6,19 @@ Two primitives, nothing else: the **View Transitions API** for between-page anim
 
 The Flutter-`Hero` equivalent. Reference implementation: Triage invoice card → Triage detail image.
 
-1. On the **source** element (in the list/card): `:style="{ viewTransitionName: 'invoice-' + invoice.id }"`
-2. On the **target** element (in the detail page): the **same name**, `:style="{ viewTransitionName: 'invoice-' + invoice.id }"`
+1. On the **source** element (a row in a list): `:style="heroStyle('invoice', invoice.id)"`, and arm it on the element that navigates: `@click="armHero('invoice', invoice.id)"` (both from `src/composables/useHero.ts`).
+2. On the **target** element (the detail page, one per page): the matching static name, `:style="{ viewTransitionName: 'invoice-' + invoice.id }"`.
 3. Done. The browser matches the two names across the navigation and morphs position/size automatically. Timing is tuned globally by Recipe 2.
 
-Give paired text the same treatment with a second name (`'invoice-title-' + invoice.id`) and the title morphs too.
+Give paired text a second name — `heroStyle('invoice', invoice.id, '-title')` on the row, `'invoice-title-' + invoice.id` on the detail — and the title morphs too.
 
-**Critical rule:** a `view-transition-name` must be unique per page at any moment. Never put a static name inside a `v-for` — always derive it from the item id.
+**Why list rows are named on demand:** a view transition snapshots EVERY named element on both pages. Naming every row of a 250-invoice list meant ~500 snapshots per navigation in or out of it — clicks sat for ~2 s before the page changed. `heroStyle()` names only the armed row (the one being opened; it stays armed so the Back navigation morphs into it too).
+
+**Critical rule:** a `view-transition-name` must be unique per page at any moment. Never put a static name inside a `v-for` — use `heroStyle()`.
+
+## 1b. Pages load after the click, never before
+
+Routes use `page(() => import(...))` (`src/router/index.ts`): an async component, so the navigation commits on click and the page shows a skeleton while its code loads. Every page's code is prefetched once the app is idle. Never go back to a bare `component: () => import(...)` — vue-router downloads that BEFORE committing, and the click just hangs.
 
 ## 2. Add a custom per-page transition
 

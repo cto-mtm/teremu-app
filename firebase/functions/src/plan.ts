@@ -1,4 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { currencySchema, DEFAULT_CURRENCY, type Currency } from "./models.js";
 
 /**
  * Freemium plan limits (see docs/business-model.md §3). The plan lives
@@ -37,9 +38,11 @@ export interface PlanInfo {
   plan: Plan;
   limits: PlanLimits;
   scanCount: number;
-  /** €/hour of kitchen labor (restaurant setting) — null = not set.
+  /** Kitchen labor per hour (restaurant setting) — null = not set.
    * Piggybacks on this read because every request already makes it. */
   laborRatePerHour: number | null;
+  /** Display currency (restaurant setting), default when unset — same read. */
+  currency: Currency;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -53,6 +56,7 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     limits: PLAN_LIMITS[plan],
     scanCount,
     laborRatePerHour: typeof rate === "number" ? rate : null,
+    currency: currencySchema.catch(DEFAULT_CURRENCY).parse(snap.get("currency")),
   };
 }
 

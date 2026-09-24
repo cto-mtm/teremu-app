@@ -105,6 +105,7 @@ const es = {
   action: {
     save: 'Guardar',
     saving: 'Guardando…',
+    saved: 'Guardado',
     cancel: 'Cancelar',
     retry: 'Reintentar',
     back: 'Volver',
@@ -118,6 +119,7 @@ const es = {
     ingredientName: 'Nombre del ingrediente',
   },
   loading: 'Cargando…',
+  pageLoadFailed: 'No se pudo cargar esta pantalla — puede que haya una versión nueva de Teremu.',
 }
 
 // Typed against es: a missing or extra key here is a compile error.
@@ -219,6 +221,7 @@ const en: typeof es = {
   action: {
     save: 'Save',
     saving: 'Saving…',
+    saved: 'Saved',
     cancel: 'Cancel',
     retry: 'Retry',
     back: 'Back',
@@ -232,6 +235,7 @@ const en: typeof es = {
     ingredientName: 'Ingredient name',
   },
   loading: 'Loading…',
+  pageLoadFailed: 'This screen could not load — there may be a new version of Teremu.',
 }
 
 export default { es, en }

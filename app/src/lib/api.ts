@@ -50,11 +50,22 @@ function extractError(body: unknown, status: number): string {
   return `HTTP ${status}`
 }
 
+// ── Write epoch: guards list loads against lost updates ─────────────
+// Bumped when any write (non-GET) STARTS and when it COMPLETES. A list
+// load that saw the epoch move while in flight holds a snapshot that may
+// predate that write — e.g. the boot GET /ingredients answering after the
+// user already created one — and must not overwrite the store with it.
+let writes = 0
+/** Current write epoch — compare before/after a list load (see stores). */
+export const writeEpoch = (): number => writes
+
 async function _request<T>(
   path: string,
   init: RequestInit,
   schema?: ZodType<T>,
 ): Promise<ApiResult<T>> {
+  const isWrite = (init.method ?? 'GET').toUpperCase() !== 'GET'
+  if (isWrite) writes += 1
   try {
     const res = await fetch(BASE_URL + path, {
       ...init,
@@ -81,6 +92,8 @@ async function _request<T>(
     return { ok: true, data: body as T }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'network error' }
+  } finally {
+    if (isWrite) writes += 1
   }
 }
 

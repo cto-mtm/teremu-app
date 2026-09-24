@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { armHero, heroStyle } from '../composables/useHero'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import {
@@ -97,7 +98,7 @@ const waLink = (phone: string): string => 'https://wa.me/' + phone.replace(/[^0-
         >
           <div class="min-w-0">
             <!-- HERO SOURCE: morphs into the vendor page title -->
-            <div class="truncate font-semibold" :style="{ viewTransitionName: 'vendor-' + v.key }">
+            <div class="truncate font-semibold" :style="heroStyle('vendor', v.key)">
               {{ v.name }}
             </div>
             <div class="mt-0.5 text-xs text-smoke">
@@ -220,6 +221,7 @@ const waLink = (phone: string): string => 'https://wa.me/' + phone.replace(/[^0-
             <RouterLink
               :to="`/vendors/${v.key}`"
               class="inline-block text-xs font-medium text-ember-700 underline decoration-gray-300 hover:text-ember"
+              @click="armHero('vendor', v.key)"
             >
               {{ t('pulse.providers.openPage') }} →
             </RouterLink>

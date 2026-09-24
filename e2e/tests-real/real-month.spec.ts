@@ -18,7 +18,8 @@ test.skip(!REAL_CORPUS_PRESENT, 'real corpus not on this machine (docs/real-samp
 
 /** Same formatter the app uses (i18n numberFormats.currency). Whitespace is
  *  normalized on both sides — Node and Chromium disagree on NBSP vs NNBSP. */
-const money = (x: number) => new Intl.NumberFormat('es', { style: 'currency', currency: 'USD' }).format(x)
+const money = (x: number) =>
+  new Intl.NumberFormat('es', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol' }).format(x)
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim()
 
 const FAILED_TEXT: Record<string, string> = {
@@ -58,6 +59,22 @@ test.describe('A real month in the UI', () => {
       const n = failed.filter((d) => d.error === error).length
       await expect(cards.filter({ hasText: text }), `failed cards for ${error}`).toHaveCount(n)
     }
+  })
+
+  test('Triage never gets wider than a phone screen', async ({ page }) => {
+    // Real legal names ("DISTRIBUCIONES GASTRONÓMICAS DEL LEVANTE, S.L.") once pushed the
+    // reconciliation card past the viewport; a phone then widens its layout
+    // viewport and the whole app looks zoomed in after the list loads.
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/triage')
+    await expect(page.locator('a[href^="/triage/"]').first()).toBeVisible({ timeout: 30_000 })
+    const width = await page.evaluate(() => {
+      // No DOM lib in this tsconfig — the page context has it at runtime.
+      const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement
+      return { page: root.scrollWidth, viewport: root.clientWidth }
+    })
+    expect(width.page, 'horizontal overflow at phone width').toBeLessThanOrEqual(width.viewport)
   })
 
   test('a reviewable document opens with the extracted vendor and total', async ({ page }) => {

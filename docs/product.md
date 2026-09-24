@@ -58,7 +58,7 @@ The home screen answers "how is the restaurant doing?" at a glance:
 - **Stat cards** — weekly expenses (food + tagged), revenue, **food-cost %** (colored against the 28–35% target band), and current **pantry value** (money sitting in the walk-in).
 - **Charts** (all hand-rolled SVG, mobile-tuned): expenses vs revenue (8 weeks) · food-cost % with target band · spend stacked by vendor · **menu engineering matrix** (popularity × margin quadrants: stars, plowhorses, puzzles, dogs) · price-watch sparklines for the most volatile ingredients · top-ingredients-by-spend Pareto · spend by category (food vs expense tags).
 - **Alerts** — vendor raised X by 8.2%, dish slipped under target. Every name is a link to its page.
-- **Entries** — revenue and expenses logged in seconds (expense tags are free-form and fully dynamic: marketing, staff, rent, whatever you type — with autocomplete from your own history). Recent entries are editable and deletable, with pantry effects reverted correctly. **CSV import** brings in daily sales totals from any POS export (`date,amount`), deduplicating against already-logged dates.
+- **Entries** — revenue and expenses logged in seconds (expense tags are free-form and fully dynamic: marketing, staff, rent, whatever you type — with autocomplete from your own history). Recent entries are editable and deletable, with pantry effects reverted correctly. **CSV import** brings in daily sales totals from any POS export (date and amount per row, read in the user's language — `01/05/2026;1.234,56` in Spanish, `5/1/2026,1234.56` in English, ISO dates always), deduplicating against already-logged dates.
 
 Everything clicks through: matrix dots open the dish, Pareto bars open the ingredient, vendor bars open the vendor.
 

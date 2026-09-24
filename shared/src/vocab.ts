@@ -22,6 +22,15 @@ export const UNITS = [
 export const unitSchema = z.enum(UNITS);
 export type Unit = z.infer<typeof unitSchema>;
 
+// The restaurant's currency (ISO 4217) — a DISPLAY attribute: amounts are
+// stored as plain numbers in it, never converted. How a number looks
+// (1,234.56 vs 1.234,56, symbol before/after) follows the UI language;
+// which symbol it carries follows this. Absent on a restaurant = default.
+export const CURRENCIES = ["USD", "EUR", "GBP", "MXN", "CAD"] as const;
+export const currencySchema = z.enum(CURRENCIES);
+export type Currency = z.infer<typeof currencySchema>;
+export const DEFAULT_CURRENCY: Currency = "USD";
+
 // "discarded" is the operator dismissing a scan from Triage (a photo of
 // a hand, a duplicate). The document and its image are kept — it just
 // leaves the inbox — so a mistaken dismissal is recoverable.

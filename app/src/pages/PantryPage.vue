@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { armHero, heroStyle } from '../composables/useHero'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
@@ -331,10 +332,10 @@ async function commit(id: string): Promise<void> {
       <div v-for="ing in filtered" :key="ing.id" class="flex items-center gap-3 px-4 py-3">
         <!-- Name links to the ingredient detail (dishes, receipts, vendors);
              the quantity button stays a tap-to-true-up affordance. -->
-        <RouterLink :to="`/pantry/${ing.id}`" class="group min-w-0 flex-1">
+        <RouterLink :to="`/pantry/${ing.id}`" class="group min-w-0 flex-1" @click="armHero('ingredient', ing.id)">
           <div
             class="truncate font-medium group-hover:text-ember-700"
-            :style="{ viewTransitionName: 'ingredient-' + ing.id }"
+            :style="heroStyle('ingredient', ing.id)"
           >
             {{ ing.name }}
           </div>

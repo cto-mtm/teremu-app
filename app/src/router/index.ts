@@ -1,25 +1,50 @@
+import { defineAsyncComponent, h, nextTick, type Component } from 'vue'
 import { createRouter, createWebHistory, START_LOCATION } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import PageLoader from '../components/PageLoader.vue'
+import PageLoadError from '../components/PageLoadError.vue'
+
+// ── Pages: navigate first, load after ───────────────────────────
+// A plain lazy route (`component: () => import(...)`) makes vue-router
+// download the page's code BEFORE committing the navigation — the click
+// just hangs until it arrives. As an async component the route commits
+// on click and the page shows a skeleton while its code loads (only if
+// that takes >150 ms). Every page's code is also prefetched once the app
+// is idle (below), so in practice the skeleton rarely appears.
+// If the code can't load — after a deploy, the hashed files an open tab
+// was built against are gone — one retry, then PageLoadError reloads the
+// app onto the new files (once) instead of leaving a blank page.
+const loaders: (() => Promise<unknown>)[] = []
+function page(loader: () => Promise<{ default: Component }>): Component {
+  loaders.push(loader)
+  return defineAsyncComponent({
+    loader,
+    loadingComponent: () => h(PageLoader, { cards: 0, lines: 4 }),
+    delay: 150,
+    errorComponent: PageLoadError,
+    onError: (_err, retry, fail, attempts) => (attempts <= 1 ? retry() : fail()),
+  })
+}
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'pulse', component: () => import('../pages/PulsePage.vue') },
-    { path: '/login', name: 'login', component: () => import('../pages/LoginPage.vue') },
-    { path: '/scan', name: 'scan', component: () => import('../pages/ScanPage.vue') },
-    { path: '/triage', name: 'triage', component: () => import('../pages/TriagePage.vue') },
-    { path: '/triage/:id', name: 'triage-detail', component: () => import('../pages/TriageDetailPage.vue') },
-    { path: '/menu', name: 'menu', component: () => import('../pages/MenuPage.vue') },
-    { path: '/menu/:id', name: 'dish-detail', component: () => import('../pages/DishDetailPage.vue') },
-    { path: '/pantry', name: 'pantry', component: () => import('../pages/PantryPage.vue') },
-    { path: '/pantry/:id', name: 'ingredient-detail', component: () => import('../pages/IngredientDetailPage.vue') },
-    { path: '/vendors', name: 'vendors', component: () => import('../pages/VendorsPage.vue') },
-    { path: '/vendors/:key', name: 'vendor-detail', component: () => import('../pages/VendorDetailPage.vue') },
-    { path: '/settings', name: 'settings', component: () => import('../pages/SettingsPage.vue') },
-    { path: '/pricing', name: 'pricing', component: () => import('../pages/PricingPage.vue') },
+    { path: '/', name: 'pulse', component: page(() => import('../pages/PulsePage.vue')) },
+    { path: '/login', name: 'login', component: page(() => import('../pages/LoginPage.vue')) },
+    { path: '/scan', name: 'scan', component: page(() => import('../pages/ScanPage.vue')) },
+    { path: '/triage', name: 'triage', component: page(() => import('../pages/TriagePage.vue')) },
+    { path: '/triage/:id', name: 'triage-detail', component: page(() => import('../pages/TriageDetailPage.vue')) },
+    { path: '/menu', name: 'menu', component: page(() => import('../pages/MenuPage.vue')) },
+    { path: '/menu/:id', name: 'dish-detail', component: page(() => import('../pages/DishDetailPage.vue')) },
+    { path: '/pantry', name: 'pantry', component: page(() => import('../pages/PantryPage.vue')) },
+    { path: '/pantry/:id', name: 'ingredient-detail', component: page(() => import('../pages/IngredientDetailPage.vue')) },
+    { path: '/vendors', name: 'vendors', component: page(() => import('../pages/VendorsPage.vue')) },
+    { path: '/vendors/:key', name: 'vendor-detail', component: page(() => import('../pages/VendorDetailPage.vue')) },
+    { path: '/settings', name: 'settings', component: page(() => import('../pages/SettingsPage.vue')) },
+    { path: '/pricing', name: 'pricing', component: page(() => import('../pages/PricingPage.vue')) },
     // Catch-all 404. Required because Firebase Hosting rewrites every URL
     // to index.html — without this, typos render an empty RouterView.
-    { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../pages/NotFoundPage.vue') },
+    { path: '/:pathMatch(.*)*', name: 'not-found', component: page(() => import('../pages/NotFoundPage.vue')) },
   ],
   scrollBehavior: () => ({ top: 0 }),
 })
@@ -97,14 +122,30 @@ router.beforeResolve(async (_to, from) => {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
   return new Promise<void>((resolve) => {
-    document.startViewTransition(() => {
-      // Resolving lets vue-router swap the page inside the snapshot;
-      // the returned promise keeps the transition open until the new
-      // page has rendered.
+    document.startViewTransition(async () => {
+      // Resolving lets vue-router commit the route inside the snapshot;
+      // the transition then stays open until the new page is in the DOM
+      // (route committed + one render flush) — never on a fixed promise,
+      // or the "new" snapshot can still be the old page. Capped, so a
+      // stuck navigation can never freeze the screen.
+      const committed = new Promise<void>((done) => {
+        const off = router.afterEach(() => {
+          off()
+          done()
+        })
+      })
       resolve()
-      return router.isReady()
+      await Promise.race([committed.then(() => nextTick()), new Promise((r) => setTimeout(r, 1000))])
     })
   })
+})
+
+// Warm every page's code in the background once the first screen is up,
+// so later clicks never wait on the network.
+router.isReady().then(() => {
+  const warm = () => loaders.forEach((load) => void load().catch(() => {}))
+  if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 4000 })
+  else setTimeout(warm, 2000)
 })
 
 export default router

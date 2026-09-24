@@ -126,7 +126,7 @@ const suppliers = computed(() => {
         <div class="mt-1 flex items-baseline gap-2">
           <span class="text-2xl font-bold">{{ n(ingredient.lastUnitPrice ?? 0, 'currency') }}</span>
           <span v-if="change != null && Math.abs(change) >= 1" :class="change > 0 ? 'chip-up' : 'chip-down'">
-            {{ change > 0 ? '↑' : '↓' }} {{ Math.abs(change).toFixed(1) }}%
+            {{ change > 0 ? '↑' : '↓' }} {{ n(Math.abs(change) / 100, 'percent') }}
           </span>
         </div>
       </div>

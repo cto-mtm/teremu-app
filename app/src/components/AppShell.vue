@@ -92,25 +92,39 @@ const tabs = computed(() =>
 const isActive = (to: string): boolean =>
   to === '/' ? route.path === '/' : route.path.startsWith(to)
 
-// Load the member's data once their profile (and perms) is known; only
-// hit endpoints they can read. Bounce to /login on sign-out (the route
-// guard only runs on navigation, not on auth-state changes).
+// Load the member's data when WHO/WHERE they are changes — the location,
+// role or perms — and only hit endpoints they can read. Keyed on that
+// scope rather than the profile object: /me returns a fresh object on
+// every reloadProfile() (currency/plan/rename saves), and refetching
+// every dataset — invoices alone ~220 KB — for a label change is waste.
+const dataScope = computed(() => {
+  const p = authStore.profile
+  return authStore.ready && authStore.user && p ? `${p.restaurantId}|${p.role}|${JSON.stringify(p.perms)}` : null
+})
 watch(
-  () => [authStore.ready, authStore.user, authStore.profile] as const,
-  ([ready, user, profile]) => {
-    if (!ready) return
-    if (user && profile) {
-      if (authStore.can('triage') || authStore.can('finance') || authStore.can('vendors')) {
-        void invoicesStore.refresh()
-      }
-      void kitchenStore.refresh({
-        ingredients: authStore.can('pantry') || authStore.can('menu'),
-        menu: authStore.can('menu') || authStore.can('finance') || authStore.can('pantry'),
-        revenue: authStore.can('finance'),
-        expenses: authStore.can('finance') || authStore.can('vendors'),
-        contacts: authStore.can('pantry') || authStore.can('vendors'),
-      })
-    } else if (ready && !user && route.name !== 'login') {
+  dataScope,
+  (scope) => {
+    if (!scope) return
+    if (authStore.can('triage') || authStore.can('finance') || authStore.can('vendors')) {
+      void invoicesStore.refresh()
+    }
+    void kitchenStore.refresh({
+      ingredients: authStore.can('pantry') || authStore.can('menu'),
+      menu: authStore.can('menu') || authStore.can('finance') || authStore.can('pantry'),
+      revenue: authStore.can('finance'),
+      expenses: authStore.can('finance') || authStore.can('vendors'),
+      contacts: authStore.can('pantry') || authStore.can('vendors'),
+    })
+  },
+  { immediate: true },
+)
+
+// Bounce to /login on sign-out (the route guard only runs on
+// navigation, not on auth-state changes).
+watch(
+  () => [authStore.ready, authStore.user] as const,
+  ([ready, user]) => {
+    if (ready && !user && route.name !== 'login') {
       if (import.meta.env.DEV) {
         console.warn('[AppShell] redirecting to login — user is null, current route:', route.name)
       }
