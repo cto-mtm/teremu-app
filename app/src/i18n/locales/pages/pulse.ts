@@ -1,5 +1,31 @@
 const es = {
-  title: 'Pulso financiero',
+  title: 'Panel de control',
+  tabs: {
+    overview: 'Resumen',
+    categories: 'Categorías',
+    providers: 'Proveedores',
+  },
+  drill: {
+    title: 'Gasto por categoría · 8 semanas',
+    hint: 'Toca una porción para profundizar',
+    all: 'Todo',
+    food: 'Materia prima',
+    uncategorized: 'Sin clasificar',
+    rest: 'Otros ({n})',
+    empty: 'Aprueba facturas y registra gastos para ver el desglose.',
+  },
+  providers: {
+    noContact: 'Sin contacto guardado — añádelo en la página del proveedor.',
+    openPage: 'Ver página completa',
+  },
+  view: {
+    label: 'Vista de gasto',
+    billed: 'Facturado',
+    realtime: 'Tiempo real',
+  },
+  pendingNotes: 'Recibido sin facturar',
+  pendingNotesDetail: '{n} albaranes pendientes de factura',
+  pendingUnvalued: '{n} líneas sin precio',
   expensesThisWeek: 'Gastos esta semana',
   revenueThisWeek: 'Ingresos esta semana',
   chartTitle: 'Gastos vs ingresos · 8 semanas',
@@ -17,7 +43,7 @@ const es = {
   foodCostThisWeek: 'Costo de comida (semana)',
   pantryValue: 'Valor en despensa',
   foodCostTitle: 'Costo de comida % · 8 semanas',
-  foodCostBand: 'banda objetivo 28–35%',
+  foodCostBand: 'banda objetivo 28–35 %',
   vendorSpendTitle: 'Gasto por proveedor · 8 semanas',
   otherVendors: 'otros',
   matrixTitle: 'Ingeniería de menú',
@@ -36,14 +62,13 @@ const es = {
   entriesTitle: 'Movimientos recientes',
   csv: {
     cta: 'Importar CSV',
-    hint: 'CSV con columnas fecha,importe (YYYY-MM-DD, una fila por día).',
+    hint: 'CSV con columnas fecha e importe (p. ej. 01/05/2026;1.234,56), una fila por día.',
     done: 'Importadas {ok} · omitidas {skipped} (fecha ya registrada) · inválidas {bad}',
     failed: 'No se pudo leer el archivo.',
   },
-  categoryTitle: 'Gasto por categoría · 8 semanas',
-  categoryFood: 'Comida (facturas)',
   expenseSheet: {
     title: 'Registrar gasto',
+    amount: 'Importe ({symbol})',
     tag: 'Categoría',
     tagPlaceholder: 'marketing, personal, alquiler…',
     vendor: 'Proveedor (opcional)',
@@ -54,7 +79,7 @@ const es = {
   sheet: {
     title: 'Registrar ingresos',
     date: 'Fecha',
-    amount: 'Ventas totales ($)',
+    amount: 'Ventas totales ({symbol})',
     dishesHint: 'Platos vendidos (opcional — mantiene la despensa teórica al día)',
     saveFailed: 'No se pudieron guardar los ingresos.',
   },
@@ -62,7 +87,33 @@ const es = {
 
 // Typed against es: a missing or extra key here is a compile error.
 const en: typeof es = {
-  title: 'Financial Pulse',
+  title: 'Dashboard',
+  tabs: {
+    overview: 'Overview',
+    categories: 'Categories',
+    providers: 'Providers',
+  },
+  drill: {
+    title: 'Spend by category · 8 weeks',
+    hint: 'Tap a slice to drill in',
+    all: 'Everything',
+    food: 'Raw materials',
+    uncategorized: 'Unclassified',
+    rest: 'Others ({n})',
+    empty: 'Approve invoices and log expenses to see the breakdown.',
+  },
+  providers: {
+    noContact: 'No contact saved — add it on the vendor page.',
+    openPage: 'Open full page',
+  },
+  view: {
+    label: 'Spend view',
+    billed: 'Billed',
+    realtime: 'Real time',
+  },
+  pendingNotes: 'Received, not yet billed',
+  pendingNotesDetail: '{n} delivery notes awaiting their invoice',
+  pendingUnvalued: '{n} unpriced lines',
   expensesThisWeek: 'This week — expenses',
   revenueThisWeek: 'This week — revenue',
   chartTitle: 'Expenses vs revenue · 8 weeks',
@@ -99,14 +150,13 @@ const en: typeof es = {
   entriesTitle: 'Recent entries',
   csv: {
     cta: 'Import CSV',
-    hint: 'CSV with date,amount columns (YYYY-MM-DD, one row per day).',
+    hint: 'CSV with date and amount columns (e.g. 5/1/2026,1234.56), one row per day.',
     done: 'Imported {ok} · skipped {skipped} (date already logged) · invalid {bad}',
     failed: 'Could not read the file.',
   },
-  categoryTitle: 'Spend by category · 8 weeks',
-  categoryFood: 'Food (invoices)',
   expenseSheet: {
     title: 'Log expense',
+    amount: 'Amount ({symbol})',
     tag: 'Category',
     tagPlaceholder: 'marketing, staff, rent…',
     vendor: 'Vendor (optional)',
@@ -117,7 +167,7 @@ const en: typeof es = {
   sheet: {
     title: 'Log revenue',
     date: 'Date',
-    amount: 'Total sales ($)',
+    amount: 'Total sales ({symbol})',
     dishesHint: 'Dishes sold (optional — keeps the Theoretical Pantry accurate)',
     saveFailed: 'Could not save revenue.',
   },

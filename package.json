@@ -9,7 +9,9 @@
   "workspaces": [
     "shared",
     "app",
-    "firebase/functions"
+    "firebase",
+    "firebase/functions",
+    "e2e"
   ],
   "scripts": {
     "build": "npm run build:shared && npm run build --workspace teremu-app && npm run build --workspace teremu-functions",
@@ -20,7 +22,11 @@
     "clean:install": "npm run clean && npm install && npm run build:shared",
     "typecheck": "npm run build:shared && npm run typecheck --workspace @teremu/shared && npm run typecheck --workspace teremu-functions && npm run typecheck --workspace teremu-app",
     "test": "npm run build:shared && npm --prefix firebase run test",
-    "test:integration:exec": "node scripts/lib/kill-emulator-ports.mjs && npm run build:shared && npm --prefix firebase run test:exec",
+    "test:integration:exec": "node scripts/lib/kill-emulator-ports.mjs && npm run build:shared && npm --prefix firebase run test",
+    "test:e2e": "node e2e/run.mjs",
+    "test:e2e:headed": "node e2e/run.mjs --headed",
+    "test:e2e:ui": "node e2e/run.mjs --ui",
+    "test:e2e:real": "node e2e/run.mjs --config playwright.real.config.ts",
     "test:nvidia": "node scripts/test-nvidia.mjs",
     "functions:watch": "npm run build:shared && npm --prefix firebase/functions run build:watch",
     "emulators": "npm run build:shared && npm --prefix firebase run emulators",
@@ -28,6 +34,17 @@
     "emulators:all": "npm run build:shared && npm --prefix firebase run emulators:all",
     "deploy": "node scripts/deploy.mjs",
     "deploy:hosting": "node scripts/deploy.mjs --only hosting",
-    "deploy:functions": "node scripts/deploy.mjs --only functions"
+    "deploy:functions": "node scripts/deploy.mjs --only functions",
+    "real:prepare": "node scripts/real-samples/prepare.mjs",
+    "real:golden": "node scripts/real-samples/import-golden.mjs",
+    "real:eval": "npm run build:shared && tsx scripts/real-samples/eval-ocr.ts",
+    "real:seed": "npm run build:shared && tsx scripts/real-samples/seed-account.ts",
+    "test:real": "npm run build:shared && node scripts/real-samples/test-real.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "exceljs": "^4.4.0",
+    "pdfjs-dist": "^6.3.289",
+    "tsx": "^4.23.15"
   }
 }

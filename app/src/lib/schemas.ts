@@ -1,5 +1,14 @@
 import { z } from 'zod'
-import { categorySchema, docTypeSchema, invoiceStatusSchema, permsSchema, unitSchema } from '@teremu/shared'
+import {
+  categorySchema,
+  currencySchema,
+  DEFAULT_CURRENCY,
+  docTypeSchema,
+  invoiceStatusSchema,
+  permsSchema,
+  subcategorySchema,
+  unitSchema,
+} from '@teremu/shared'
 
 /**
  * Zod schemas — the single source of truth for every domain type in the
@@ -26,6 +35,9 @@ export const lineItemSchema = z.object({
   flagged: z.boolean().optional(),
   // OCR-assigned category, copied onto new ingredients at approval.
   category: categorySchema.optional(),
+  // Second taxonomy level (meat → beef) — .catch(null) so an off-vocab
+  // value from an older/newer API degrades instead of failing the list.
+  subcategory: subcategorySchema.nullable().optional().catch(null),
   // Contents of ONE container for case/box/bunch lines (OCR-extracted).
   packQty: z.number().positive().nullable().optional(),
   packUnit: unitSchema.nullable().optional(),
@@ -66,6 +78,8 @@ export const ingredientSchema = z.object({
   unit: unitSchema,
   // .catch so pre-category documents still validate (they read as "other")
   category: categorySchema.catch('other'),
+  // .catch so pre-subcategory documents still validate (null = unknown)
+  subcategory: subcategorySchema.nullable().catch(null),
   lastUnitPrice: z.number().nullable(),
   prevUnitPrice: z.number().nullable(),
   lastPriceAt: z.number().nullable(),
@@ -193,9 +207,11 @@ export const meSchema = z.object({
   email: z.string(),
   plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
-  // €/hour of kitchen labor (restaurant setting) — feeds prep-time
-  // plate costing. Optional so older API responses still validate.
+  // Kitchen labor per hour (restaurant setting, in its currency) — feeds
+  // prep-time plate costing. Optional so older API responses still validate.
   laborRatePerHour: z.number().nullable().optional(),
+  // Display currency of every amount; a pre-currency API reads as default.
+  currency: currencySchema.catch(DEFAULT_CURRENCY),
   locations: z.array(locationSchema),
 })
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { armHero, heroStyle } from '../composables/useHero'
 import { RouterLink } from 'vue-router'
 import type { Invoice } from '../lib/types'
 
@@ -34,13 +35,14 @@ const clickable = computed(
       :is="clickable ? RouterLink : 'div'"
       :to="clickable ? `/triage/${invoice.id}` : undefined"
       class="flex min-w-0 flex-1 items-center gap-3"
+      @click="clickable && armHero('invoice', invoice.id)"
     >
     <!-- HERO SOURCE: this thumbnail morphs into the detail page's receipt
-         image. The name MUST be derived from the id — a static name inside
-         a v-for would collide (unique-per-page rule, see docs/animations.md). -->
+         image. Named only while armed (the card being opened) — see
+         composables/useHero.ts and docs/animations.md §1. -->
     <div
       class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-ember-50 text-ember-700"
-      :style="{ viewTransitionName: 'invoice-' + invoice.id }"
+      :style="heroStyle('invoice', invoice.id)"
     >
       <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21zM9 8h6M9 12h6" />
@@ -51,7 +53,7 @@ const clickable = computed(
       <!-- Paired hero: the title text morphs too (same-name recipe). -->
       <div
         class="truncate font-semibold"
-        :style="{ viewTransitionName: 'invoice-title-' + invoice.id }"
+        :style="heroStyle('invoice', invoice.id, '-title')"
       >
         {{ invoice.vendorName ?? t('triage.reading') }}
       </div>

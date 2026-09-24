@@ -6,10 +6,14 @@ const es = {
   unitsDesc: 'Sistema ofrecido al capturar cantidades y en las recetas. No convierte datos ya guardados.',
   metric: 'Métrico',
   imperial: 'Imperial',
+  currency: {
+    title: 'Moneda',
+    desc: 'La moneda en que se muestran todos los importes de este local. Cambiarla solo cambia el símbolo: los importes no se convierten.',
+  },
   labor: {
     title: 'Mano de obra',
     desc: 'Tarifa por hora de cocina. Cada plato con tiempo de preparación suma ese tiempo × la tarifa a su costo. Vacío = costear solo ingredientes.',
-    unit: '$/hora',
+    unit: '{symbol}/hora',
     placeholder: '15',
     saved: 'Guardado',
   },
@@ -69,10 +73,14 @@ const en: typeof es = {
   unitsDesc: 'System offered when capturing quantities and in recipes. Existing data is never converted.',
   metric: 'Metric',
   imperial: 'Imperial',
+  currency: {
+    title: 'Currency',
+    desc: 'The currency every amount in this location is shown in. Changing it only changes the symbol — amounts are not converted.',
+  },
   labor: {
     title: 'Labor',
     desc: 'Hourly kitchen rate. Every dish with prep time adds that time × the rate to its plate cost. Empty = ingredients-only costing.',
-    unit: '$/hour',
+    unit: '{symbol}/hour',
     placeholder: '15',
     saved: 'Saved',
   },

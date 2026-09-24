@@ -58,10 +58,11 @@ async function loadMember(
 /** Attach every pending invite for this email: one members doc + one
  * memberships index entry per invite, then delete the invite. Idempotent
  * — an invite is consumed exactly once, so re-running finds nothing. */
-async function attachPendingInvites(uid: string, email: string): Promise<void> {
+/** Returns how many invites were attached (0 on the hot path). */
+async function attachPendingInvites(uid: string, email: string): Promise<number> {
   const db = getFirestore();
   const invitesSnap = await db.collection("invites").where("emailKey", "==", emailKey(email)).get();
-  if (invitesSnap.empty) return;
+  if (invitesSnap.empty) return 0;
 
   const batch = db.batch();
   for (const inviteDoc of invitesSnap.docs) {
@@ -78,6 +79,7 @@ async function attachPendingInvites(uid: string, email: string): Promise<void> {
     batch.delete(inviteDoc.ref);
   }
   await batch.commit();
+  return invitesSnap.size;
 }
 
 /** Bootstrap a fresh solo restaurant with this user as owner (free plan). */
@@ -107,9 +109,13 @@ async function bootstrapRestaurant(uid: string, email: string): Promise<void> {
  * (zero memberships AND zero invites attached just now). */
 async function ensureMemberships(uid: string, email: string): Promise<void> {
   const db = getFirestore();
-  await attachPendingInvites(uid, email);
-  const memberships = await db.collection(`users/${uid}/memberships`).limit(1).get();
-  if (memberships.empty) {
+  // Both reads in one round trip — this runs on EVERY request. Bootstrap
+  // only a caller with no membership who wasn't just invited somewhere.
+  const [attached, memberships] = await Promise.all([
+    attachPendingInvites(uid, email),
+    db.collection(`users/${uid}/memberships`).limit(1).get(),
+  ]);
+  if (memberships.empty && attached === 0) {
     await bootstrapRestaurant(uid, email);
   }
 }
@@ -148,11 +154,19 @@ export async function resolveMember(
   email: string,
   requestedRid?: string,
 ): Promise<Member> {
-  await ensureMemberships(uid, email);
-
+  // The requested location's member doc loads alongside the sign-in
+  // bookkeeping: for an existing member (every request after the first)
+  // that is one round trip instead of three.
+  const [, member] = await Promise.all([
+    ensureMemberships(uid, email),
+    requestedRid ? loadMember(uid, email, requestedRid) : Promise.resolve(null),
+  ]);
+  if (member) return member;
   if (requestedRid) {
-    const member = await loadMember(uid, email, requestedRid);
-    if (member) return member;
+    // The parallel read can predate an invite this very request attached;
+    // re-read once (miss path only) before falling back.
+    const retried = await loadMember(uid, email, requestedRid);
+    if (retried) return retried;
     // Missing header membership (stale localStorage rid, removed from
     // that location, typo'd id…) — fall through to the default.
   }

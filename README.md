@@ -68,6 +68,23 @@ See [`docs/i18n.md`](docs/i18n.md). Strings live in per-feature TS modules under
 
 Testable immediately against the emulator — no deploy needed.
 
+## Tests
+
+Two emulator-backed tiers, both local (no GitHub CI) and both in the pre-deploy gate:
+
+```bash
+npm run test        # integration — the api function over HTTP (vitest)
+npm run test:e2e    # end-to-end — the real UI in a browser (Playwright)
+```
+
+Either command boots the emulators it needs if they aren't already running, and reuses
+them if they are. `npm run deploy` runs both before it builds anything (`--skip-tests`
+bypasses the gate for an emergency redeploy).
+
+The e2e suite drives Chromium and a Pixel 7 viewport through sign-in, scan → triage →
+approve, the pantry, dish margins and revenue. First run needs `npx playwright install
+chromium`. Details, debugging and the invariants new specs must keep: [`e2e/README.md`](e2e/README.md).
+
 ## Going native
 
 ```bash

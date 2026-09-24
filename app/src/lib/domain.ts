@@ -3,7 +3,7 @@
 
 import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RevenueEntry, Unit } from './types'
 import { convertQty } from './units'
-import { normalizeName } from '@teremu/shared'
+import { normalizeName, pairSubcategory, SUBCATEGORIES } from '@teremu/shared'
 
 export { normalizeName }
 
@@ -103,6 +103,68 @@ export function reconciliationCandidates(invoices: Invoice[], note: Invoice): In
       return (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? '')
     })
     .slice(0, 20)
+}
+
+// ── Billed vs real-time spend (factura vs albarán consolidation) ────
+
+export interface RealtimeSpend {
+  /** Billed invoices + pending delivery notes shaped as invoices. */
+  docs: Invoice[]
+  /** Value received but not yet billed — the billed↔realtime delta. */
+  pendingTotal: number
+  pendingCount: number
+  /** Pending lines nobody could price (no line price, no pantry price). */
+  unvaluedLines: number
+}
+
+/**
+ * The REAL-TIME view of food spend. Facturas alone are the accounting
+ * truth, but a vendor on consolidated billing delivers for weeks on
+ * albaranes before the factura lands — so this view adds every approved
+ * delivery note that no factura covers yet (reconciliation says
+ * unmatched, not marked handled). Once the factura arrives and matches,
+ * its notes drop out and the factura takes over: the two views converge
+ * and nothing is ever double-counted.
+ *
+ * Pending notes are returned as invoice-shaped docs (docType flipped,
+ * lines valued) so every existing aggregate — weeklySeries,
+ * vendorWeeklySpend, spendTree — consumes them unchanged. Albarán lines
+ * are often unpriced: a line is valued at its own printed price, else
+ * at the matched ingredient's current price (unit-converted), else it
+ * counts as received-but-unvalued.
+ */
+export function realtimeSpend(
+  invoices: Invoice[],
+  ingredientsById: Map<string, Ingredient>,
+): RealtimeSpend {
+  const pendingNotes = reconcileDeliveryNotes(invoices)
+    .filter((r) => r.status === 'unmatched' && r.note.status === 'approved')
+    .map((r) => r.note)
+
+  let pendingTotal = 0
+  let unvaluedLines = 0
+  const docs = [...invoices]
+  for (const note of pendingNotes) {
+    const lineItems = note.lineItems.map((line) => {
+      if (line.total > 0) return line
+      const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
+      if (ing?.lastUnitPrice != null) {
+        const qty = line.unit === ing.unit ? line.qty : convertQty(line.qty, line.unit, ing.unit)
+        if (qty != null) return { ...line, total: +(qty * ing.lastUnitPrice).toFixed(2) }
+      }
+      unvaluedLines += 1
+      return line
+    })
+    const total = +lineItems.reduce((s, l) => s + l.total, 0).toFixed(2)
+    pendingTotal += total
+    docs.push({ ...note, docType: 'invoice', lineItems, total })
+  }
+  return {
+    docs,
+    pendingTotal: +pendingTotal.toFixed(2),
+    pendingCount: pendingNotes.length,
+    unvaluedLines,
+  }
 }
 
 /** Recipe qty expressed in the ingredient's stock unit (price basis). */
@@ -232,7 +294,6 @@ export interface VendorSummary {
   invoiceCount: number // food invoices + tagged expense entries
   totalSpend: number
   lastDate: string | null
-  ingredientNames: string[]
   /** Derived: ingredient categories this vendor supplies (food side). */
   categories: Category[]
   /** Derived: expense tags paid to this vendor (service side). */
@@ -248,8 +309,7 @@ export function vendorSummaries(
   invoices: Invoice[],
   expenses: ExpenseEntry[] = [],
 ): VendorSummary[] {
-  type Acc = Omit<VendorSummary, 'ingredientNames' | 'categories' | 'tags'> & {
-    names: Set<string>
+  type Acc = Omit<VendorSummary, 'categories' | 'tags'> & {
     cats: Set<Category>
     tagSet: Set<string>
   }
@@ -257,7 +317,7 @@ export function vendorSummaries(
   const acc = (key: string, name: string): Acc => {
     let v = map.get(key)
     if (!v) {
-      v = { key, name, invoiceCount: 0, totalSpend: 0, lastDate: null, names: new Set(), cats: new Set(), tagSet: new Set() }
+      v = { key, name, invoiceCount: 0, totalSpend: 0, lastDate: null, cats: new Set(), tagSet: new Set() }
       map.set(key, v)
     }
     return v
@@ -272,7 +332,6 @@ export function vendorSummaries(
     v.totalSpend += inv.total ?? 0
     if (inv.invoiceDate && (!v.lastDate || inv.invoiceDate > v.lastDate)) v.lastDate = inv.invoiceDate
     for (const line of inv.lineItems) {
-      v.names.add(line.name)
       if (line.category && line.category !== 'other') v.cats.add(line.category)
     }
   }
@@ -289,13 +348,60 @@ export function vendorSummaries(
   }
 
   return [...map.values()]
-    .map(({ names, cats, tagSet, ...v }) => ({
+    .map(({ cats, tagSet, ...v }) => ({
       ...v,
-      ingredientNames: [...names],
       categories: [...cats],
       tags: [...tagSet],
     }))
     .sort((a, b) => b.totalSpend - a.totalSpend)
+}
+
+/** One vendor's food invoices, newest first. */
+export function vendorInvoicesFor(invoices: Invoice[], vendorKey: string): Invoice[] {
+  return invoices
+    .filter((i) => isFoodInvoice(i) && i.vendorName && normalizeName(i.vendorName) === vendorKey)
+    .sort((a, b) => (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? ''))
+}
+
+/** Expense entries paid to one vendor (service side), newest first. */
+export function vendorExpensesFor(expenses: ExpenseEntry[], vendorKey: string): ExpenseEntry[] {
+  return expenses
+    .filter((e) => e.vendorName && normalizeName(e.vendorName) === vendorKey)
+    .sort((a, b) => b.date.localeCompare(a.date))
+}
+
+export interface SuppliedLine {
+  /** Dedup key: resolved ingredient id, else the normalized line name. */
+  key: string
+  ingredientId: string | null
+  name: string
+  unit: Unit
+  unitPrice: number
+  date: string
+}
+
+/** Latest price paid to ONE vendor per ingredient, name-sorted.
+ * Pass the vendor's invoices (see vendorInvoicesFor). */
+export function vendorSuppliedLines(vendorInvoices: Invoice[]): SuppliedLine[] {
+  const map = new Map<string, SuppliedLine>()
+  for (const inv of vendorInvoices) {
+    for (const line of inv.lineItems) {
+      const key = line.ingredientId ?? normalizeName(line.name)
+      const date = inv.invoiceDate ?? ''
+      const existing = map.get(key)
+      if (!existing || date > existing.date) {
+        map.set(key, {
+          key,
+          ingredientId: line.ingredientId ?? null,
+          name: line.name,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+          date,
+        })
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export interface ReceiptLine {
@@ -571,7 +677,7 @@ export function pantryValue(ingredients: Ingredient[]): number {
 
 // ── Detail-page charts ──────────────────────────────────────────────
 
-/** The shared 8-week window used by detail-page charts and spendByTag. */
+/** The shared 8-week window used by detail-page charts and spendTree. */
 const WINDOW_DAYS = 56
 
 function weekIndex(dateStr: string | null, weeks: WeekPoint[]): number {
@@ -666,31 +772,171 @@ export function costBreakdown(
     .sort((a, b) => b.cost - a.cost)
 }
 
-// ── Tagged expenses ─────────────────────────────────────────────────
+// ── Spend drill-down (Dashboard → Categories tab) ───────────────────
 
-/** Spend per category over the 8-week window: food (invoices) + tags. */
-export function spendByTag(
+export type SpendNodeKind =
+  | 'root'
+  | 'food' // all approved food invoices ("raw materials")
+  | 'tag' // one expense tag (staff, rent, marketing…)
+  | 'category' // food category (meat, produce…)
+  | 'subcategory' // second taxonomy level (beef, fruit…)
+  | 'uncategorized' // lines/entries with no finer classification
+  | 'ingredient' // leaf: one purchased product
+  | 'vendor' // leaf: one payee under an expense tag
+
+export interface SpendNode {
+  /** Stable key within its parent (category id, tagKey, nameKey…). */
+  key: string
+  kind: SpendNodeKind
+  /** User-data label (tag/vendor/ingredient). Null → localize from kind+key. */
+  label: string | null
+  total: number
+  children: SpendNode[]
+  /** Ingredient leaves resolved to a pantry item — enables deep links. */
+  ingredientId?: string | null
+}
+
+const node = (
+  key: string,
+  kind: SpendNodeKind,
+  label: string | null,
+  total: number,
+  children: SpendNode[] = [],
+): SpendNode => ({ key, kind, label, total, children })
+
+const byTotalDesc = (nodes: SpendNode[]): SpendNode[] =>
+  nodes.filter((n) => n.total > 0).sort((a, b) => b.total - a.total)
+
+/**
+ * The full spend hierarchy over the 8-week window, aggregated at read
+ * time from collections the dashboard already holds — zero extra reads
+ * or writes, and never stale:
+ *
+ *   root ─ food ─ category ─ subcategory ─ ingredient
+ *        └ tag ─ vendor
+ *
+ * Classification joins each line to its pantry ingredient when resolved:
+ * the chef's CURRENT category wins over OCR's frozen guess, so a
+ * correction re-buckets past spend retroactively. A null ingredient
+ * subcategory means "unclassified" (not "cleared"), so the line's own
+ * OCR guess still fills in — same semantics as the approval backfill.
+ */
+export function spendTree(
   invoices: Invoice[],
   expenses: ExpenseEntry[],
-): { key: string; tag: string | null; total: number }[] {
+  ingredientsById: Map<string, Ingredient>,
+): SpendNode {
   const cutoff = new Date(Date.now() - WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10)
-  let food = 0
+
+  interface IngAcc { label: string; total: number; ingredientId: string | null }
+  // Subcategory buckets keyed by sub ('' = unclassified within the category).
+  const cats = new Map<Category, Map<string, Map<string, IngAcc>>>()
+  let foodTotal = 0
+  let linesTotal = 0
+
   for (const inv of invoices) {
-    if (inv.status === 'approved' && inv.total != null && (inv.invoiceDate ?? '') >= cutoff)
-      food += inv.total
+    if (!isFoodInvoice(inv)) continue
+    const date = inv.invoiceDate ?? new Date(inv.createdAt).toISOString().slice(0, 10)
+    if (date < cutoff) continue
+    foodTotal += inv.total ?? 0
+    for (const line of inv.lineItems) {
+      if (line.total <= 0) continue
+      const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
+      const cat = ing?.category ?? line.category ?? 'other'
+      const sub = pairSubcategory(cat, ing?.subcategory ?? line.subcategory) ?? ''
+      const ingKey = line.ingredientId ?? normalizeName(line.name)
+
+      let subs = cats.get(cat)
+      if (!subs) cats.set(cat, (subs = new Map()))
+      let ings = subs.get(sub)
+      if (!ings) subs.set(sub, (ings = new Map()))
+      const acc = ings.get(ingKey) ?? {
+        label: ing?.name ?? line.name,
+        total: 0,
+        ingredientId: line.ingredientId ?? null,
+      }
+      acc.total += line.total
+      ings.set(ingKey, acc)
+      linesTotal += line.total
+    }
   }
-  const map = new Map<string, { key: string; tag: string; total: number }>()
+
+  const ingredientNodes = (ings: Map<string, IngAcc>): SpendNode[] =>
+    byTotalDesc(
+      [...ings.entries()].map(([key, i]) => ({
+        ...node(key, 'ingredient', i.label, i.total),
+        ingredientId: i.ingredientId,
+      })),
+    )
+
+  const categoryNodes = [...cats.entries()].map(([cat, subs]) => {
+    // Categories without a sub-vocabulary ("other") drill straight to
+    // ingredients (every line lands in the '' bucket there); the rest
+    // group by subcategory, with an explicit bucket for lines nobody
+    // has classified yet.
+    const children =
+      SUBCATEGORIES[cat].length === 0
+        ? ingredientNodes(subs.get('') ?? new Map())
+        : byTotalDesc(
+            [...subs.entries()].map(([sub, ings]) => {
+              const kids = ingredientNodes(ings)
+              const total = kids.reduce((s, k) => s + k.total, 0)
+              return sub === ''
+                ? node('__uncat', 'uncategorized', null, total, kids)
+                : node(sub, 'subcategory', null, total, kids)
+            }),
+          )
+    const total = children.reduce((s, c) => s + c.total, 0)
+    return node(cat, 'category', null, total, children)
+  })
+
+  // Approval recomputes invoice totals from the lines, so the two sums
+  // normally agree; any legacy remainder surfaces honestly as one slice,
+  // ranked with the rest. The food total is Σ children BY CONSTRUCTION
+  // so slice shares always sum to 100%.
+  if (foodTotal - linesTotal > 0.5) {
+    categoryNodes.push(node('__uncat', 'uncategorized', null, foodTotal - linesTotal))
+  }
+  const foodChildren = byTotalDesc(categoryNodes)
+  // '__food' (not a normalizable string) so no user expense tag — e.g.
+  // one literally named "Food" — can collide with it among root children.
+  const food = node(
+    '__food',
+    'food',
+    null,
+    foodChildren.reduce((s, c) => s + c.total, 0),
+    foodChildren,
+  )
+
+  const tags = new Map<string, { label: string; total: number; vendors: Map<string, { label: string | null; total: number }> }>()
   for (const e of expenses) {
     if (e.date < cutoff) continue
-    const row = map.get(e.tagKey) ?? { key: e.tagKey, tag: e.tag, total: 0 }
-    row.total += e.amount
-    map.set(e.tagKey, row)
+    let tag = tags.get(e.tagKey)
+    if (!tag) tags.set(e.tagKey, (tag = { label: e.tag, total: 0, vendors: new Map() }))
+    tag.total += e.amount
+    const vKey = e.vendorName ? normalizeName(e.vendorName) : ''
+    const v = tag.vendors.get(vKey) ?? { label: e.vendorName ?? null, total: 0 }
+    v.total += e.amount
+    tag.vendors.set(vKey, v)
   }
-  const rows: { key: string; tag: string | null; total: number }[] = [
-    { key: 'food', tag: null, total: food }, // tag null = "food" (localized by the caller)
-    ...map.values(),
-  ]
-  return rows.filter((r) => r.total > 0).sort((a, b) => b.total - a.total)
+  const tagNodes = [...tags.entries()].map(([key, tag]) =>
+    node(
+      key,
+      'tag',
+      tag.label,
+      tag.total,
+      byTotalDesc(
+        [...tag.vendors.entries()].map(([vKey, v]) =>
+          vKey === ''
+            ? node('__uncat', 'uncategorized', null, v.total)
+            : node(vKey, 'vendor', v.label, v.total),
+        ),
+      ),
+    ),
+  )
+
+  const children = byTotalDesc([food, ...tagNodes])
+  return node('root', 'root', null, children.reduce((s, c) => s + c.total, 0), children)
 }
 
 // ── Grocery list ────────────────────────────────────────────────────

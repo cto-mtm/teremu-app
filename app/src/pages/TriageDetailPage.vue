@@ -120,7 +120,7 @@ const stale = computed(
 let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   pollTimer = setInterval(() => {
-    if (invoice.value?.status === 'processing') void store.refresh()
+    if (invoice.value?.status === 'processing') void store.refreshOne(invoice.value.id)
   }, 4000)
 })
 onUnmounted(() => {

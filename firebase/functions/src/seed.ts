@@ -6,8 +6,22 @@ import {
   type InvoiceDoc,
   type LineItem,
   type MenuItemDoc,
+  type Subcategory,
   type Unit,
 } from "./models.js";
+
+// Subcategory per seeded product — one map feeds both the ingredient
+// docs and the invoice line items (feeds the category drill-down).
+const SEED_SUBS: Record<string, Subcategory> = {
+  "Roma Tomatoes": "vegetables",
+  "Chicken Breast": "chicken",
+  "Atlantic Salmon": "fish",
+  "Yellow Onions": "vegetables",
+  "Heavy Cream": "milk_cream",
+  "Arborio Rice": "rice_grains",
+  Parmesan: "cheese",
+  "Olive Oil": "oil_vinegar",
+};
 
 /**
  * Demo dataset that exercises every feature:
@@ -56,6 +70,7 @@ export async function seedDemoData(rid: string): Promise<{
       nameKey: normalizeName(name),
       unit,
       category,
+      subcategory: SEED_SUBS[name] ?? null,
       lastUnitPrice: last,
       prevUnitPrice: prev,
       lastPriceAt: now - DAY,
@@ -93,6 +108,7 @@ export async function seedDemoData(rid: string): Promise<{
     total: +(qty * unitPrice).toFixed(2),
     ingredientId,
     category,
+    subcategory: SEED_SUBS[name] ?? null,
   });
 
   const invoiceSpecs = [

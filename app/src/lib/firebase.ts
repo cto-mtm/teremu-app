@@ -44,10 +44,31 @@ const app = initializeApp(
 export const auth = getAuth(app)
 if (!hasRealConfig) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+
+  // DEV DIAGNOSTIC: intercept fetch to the Auth emulator to catch silent
+  // token refresh failures that cause phantom logouts.
+  const _originalFetch = window.fetch.bind(window)
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+    if (url.includes('127.0.0.1:9099') || url.includes('securetoken') || url.includes('identitytoolkit')) {
+      const res = await _originalFetch(input, init)
+      if (!res.ok) {
+        const body = await res.clone().text()
+        console.error(`[auth-debug] Auth emulator request FAILED: ${res.status} ${url}`, body.slice(0, 500))
+      }
+      return res
+    }
+    return _originalFetch(input, init)
+  }
 }
 
 export function watchAuth(cb: (user: User | null) => void): () => void {
-  return onAuthStateChanged(auth, cb)
+  return onAuthStateChanged(auth, (u) => {
+    // New auth state → stale cached token.
+    _tokenPromise = null
+    _tokenUid = null
+    cb(u)
+  })
 }
 
 export async function signInWithGoogle(): Promise<void> {
@@ -60,7 +81,35 @@ export async function signOut(): Promise<void> {
   await firebaseSignOut(auth)
 }
 
-/** Current user's ID token for the Authorization header, or null. */
-export async function idToken(): Promise<string | null> {
-  return auth.currentUser ? auth.currentUser.getIdToken() : null
+/**
+ * Current user's ID token for the Authorization header, or null.
+ *
+ * Deduplicates concurrent callers: when 6 parallel apiFetch calls fire
+ * after sign-in, they all await the same getIdToken() promise instead of
+ * each triggering a separate token refresh against the Auth emulator.
+ * This prevents the race condition where parallel refresh requests
+ * confuse the emulator into invalidating the session.
+ *
+ * The cache is keyed to the uid: during a fast sign-out/sign-in switch
+ * a caller must never be handed the PREVIOUS user's token (the
+ * onAuthStateChanged reset alone leaves a window where currentUser is
+ * already the new user but the old promise is still in flight). The
+ * settle handlers only clear the cache if it still holds their own
+ * promise, so a stale settlement can't discard a newer in-flight one.
+ */
+let _tokenPromise: Promise<string | null> | null = null
+let _tokenUid: string | null = null
+
+export function idToken(): Promise<string | null> {
+  const user = auth.currentUser
+  if (!user) return Promise.resolve(null)
+  if (!_tokenPromise || _tokenUid !== user.uid) {
+    const p: Promise<string | null> = user.getIdToken().then(
+      (token) => { if (_tokenPromise === p) _tokenPromise = null; return token },
+      (err) => { if (_tokenPromise === p) _tokenPromise = null; throw err },
+    )
+    _tokenPromise = p
+    _tokenUid = user.uid
+  }
+  return _tokenPromise
 }

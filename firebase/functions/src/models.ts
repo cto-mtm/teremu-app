@@ -1,9 +1,12 @@
 import { z } from "zod";
 import {
   categorySchema,
+  currencySchema,
   docTypeSchema,
   invoiceStatusSchema,
+  isSubcategoryOf,
   permsSchema,
+  subcategorySchema,
   unitSchema,
   type Perms,
 } from "@teremu/shared";
@@ -36,6 +39,9 @@ export const lineItemSchema = z.object({
   flagged: z.boolean().optional(),
   // Assigned by OCR; copied onto newly created ingredients at approval.
   category: categorySchema.optional(),
+  // Second taxonomy level (meat → beef, produce → fruit…). Best-effort
+  // from OCR; approval drops a value that doesn't pair with `category`.
+  subcategory: subcategorySchema.nullable().optional(),
   // For case/box/bunch lines: contents of ONE container, extracted by
   // OCR ("24 × 400 g" → packQty 9.6, packUnit kg). Lets container
   // purchases convert into stock math at approval.
@@ -78,6 +84,11 @@ export const invoiceDocSchema = z.object({
   // field (true or false) — for those, PUT /invoices/:id/complete runs
   // the pipeline once every page is in.
   pagesPending: z.boolean().optional(),
+  // SHA-256 per uploaded page, in order — the upload idempotency key.
+  // POST /invoices rejects bytes any invoice in this restaurant already
+  // holds (double-tap / client retry), and /pages rejects re-adding a
+  // page this capture already has. Absent on pre-hash documents.
+  imageHashes: z.array(z.string()).optional(),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Validation-stage warning codes: "total_mismatch", "line_math".
@@ -102,6 +113,8 @@ export const ingredientDocSchema = z.object({
   unit: unitSchema,
   // .catch so pre-category documents still parse (they become "other").
   category: categorySchema.catch("other"),
+  // .catch so pre-subcategory documents still parse (null = unknown).
+  subcategory: subcategorySchema.nullable().catch(null),
   lastUnitPrice: z.number().nullable(),
   prevUnitPrice: z.number().nullable(),
   lastPriceAt: z.number().nullable(),
@@ -154,21 +167,33 @@ export const countSchema = z.object({
   qty: z.number().min(0),
 });
 
-/** PUT /ingredients/:id — editable ingredient fields (category for now). */
-export const updateIngredientSchema = z.object({
-  category: categorySchema,
-});
+/** PUT /ingredients/:id — editable ingredient fields (categorization).
+ * Omitted/null subcategory = unknown; a mismatched pair is a 400,
+ * not a silent fix — these bodies are human edits, not model output. */
+export const updateIngredientSchema = z
+  .object({
+    category: categorySchema,
+    subcategory: subcategorySchema.nullable().optional(),
+  })
+  .refine((b) => b.subcategory == null || isSubcategoryOf(b.category, b.subcategory), {
+    message: "subcategory does not belong to category",
+  });
 
 /** POST /ingredients — manual creation (cold-start / menu building).
  * Price and stock are optional: the AI's catalog matching links scanned
  * invoice lines onto these by name, filling both automatically. */
-export const createIngredientSchema = z.object({
-  name: z.string().min(1).max(80),
-  unit: unitSchema,
-  category: categorySchema,
-  lastUnitPrice: z.number().positive().optional(),
-  theoreticalQty: z.number().min(0).optional(),
-});
+export const createIngredientSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    unit: unitSchema,
+    category: categorySchema,
+    subcategory: subcategorySchema.nullable().optional(),
+    lastUnitPrice: z.number().positive().optional(),
+    theoreticalQty: z.number().min(0).optional(),
+  })
+  .refine((b) => b.subcategory == null || isSubcategoryOf(b.category, b.subcategory), {
+    message: "subcategory does not belong to category",
+  });
 
 /**
  * POST /expenses — non-food spend (marketing, staff, rent…). Tags are
@@ -247,9 +272,11 @@ export const restaurantDocSchema = z.object({
   plan: z.enum(["free", "pro", "max"]),
   scanPeriod: z.string().nullable(),
   scanCount: z.number(),
-  // €/hour of kitchen labor — feeds prep-time plate costing in the app.
-  // Absent/null = labor costing off (plate cost stays ingredients-only).
+  // Kitchen labor per hour, in the restaurant's currency — feeds prep-time
+  // plate costing in the app. Absent/null = labor costing off.
   laborRatePerHour: z.number().min(0).nullable().optional(),
+  // Display currency for every amount (see shared vocab). Absent = default.
+  currency: currencySchema.optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
@@ -260,11 +287,12 @@ export const restaurantProfileSchema = z.object({
   name: z.string().min(1).max(80),
 });
 
-/** PUT /restaurants/:rid — partial profile update (rename and/or the
- * labor rate that feeds prep-time plate costing). */
+/** PUT /restaurants/:rid — partial profile update (rename, the labor
+ * rate that feeds prep-time plate costing, and/or the display currency). */
 export const updateRestaurantSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   laborRatePerHour: z.number().min(0).max(500).nullable().optional(),
+  currency: currencySchema.optional(),
 });
 
 /** POST /members — invite by email with explicit perms. */

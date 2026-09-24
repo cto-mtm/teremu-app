@@ -50,11 +50,11 @@ If any single task underperforms on the lite tier, bump `LLM_MODEL` (or, if task
 
 ## Usage & cost model (per call, Gemini 3.1 Flash-Lite prices)
 
-Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2048 OCR / 3072 menu / 4096 drafts / 600 assistant), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and the assistant snapshot is capped by its Firestore query limits (300 ingredients, 200 dishes, 40 documents, 90+90 finance rows — `assistant.ts`).
+Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2560 OCR — sized for the line-item shape including subcategory / 3072 menu / 4096 drafts / 600 assistant), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and the assistant snapshot is capped by its Firestore query limits (300 ingredients, 200 dishes, 40 documents, 90+90 finance rows — `assistant.ts`).
 
 | Call | Input tokens (low/avg/worst) | Output (low/avg/cap) | Cost low/avg/worst |
 | --- | --- | --- | --- |
-| Invoice scan | 1K / 2.7K / 8.5K (prompt 700 + catalog 0–1.8K + image 0.3–6K) | 300 / 800 / 2048 | $0.001 / $0.0025 / $0.01 |
+| Invoice scan | 1K / 2.8K / 8.6K (prompt 800 + catalog 0–1.8K + image 0.3–6K) | 350 / 900 / 2560 | $0.001 / $0.003 / $0.012 |
 | Assistant question | 1.7K / 8K / 30K (system + ≤10 history turns + data snapshot) | ≤600 | $0.0007 / $0.003 / $0.009 |
 | Menu wizard (extract + drafts, one-time) | ~2K / 5K / 12K across both calls | ≤3072 + ≤4096 | $0.002 / $0.005 / $0.02 per full run |
 
@@ -75,6 +75,10 @@ Two fallbacks behind that, because "the provider honors it" is not guaranteed:
 2. **`parseModelJson`** reads every reply — never a bare `JSON.parse`. It parses strictly first and only falls back to a repair pass for markdown fences, trailing commas, replies cut off by `max_tokens`, and the one that actually bit us: an unescaped quote inside a value (`"Bandeja 12" x 8""`). This matters even on Gemini, whose compat layer *silently ignores* params it does not support — an unconstrained reply can arrive with no error to detect it by. It logs `llm_json_repaired` (recovered) or `llm_json_unparseable` (lost, with the payload).
 
 `llm_usage` carries a `structured` field, so a rise in unconstrained calls or repairs is queryable in Cloud Logging rather than something you find in a stack trace. Covered by `test/llm-json.test.ts`.
+
+## Record / replay (cassettes)
+
+`LLM_CASSETTE_MODE` + `LLM_CASSETTE_DIR` make image calls reproducible: `record` stores every raw reply keyed by label + image bytes (reusing what is already recorded, so interrupted evals resume), `replay` serves them back with no key and no network (a miss throws — never a silent mock). Requests the provider refuses for their content (400/422) are recorded and replay as the same error; auth, retired-model, rate-limit and network failures never are. Ignored in a deployed function. Callers pick their offline mock with `llmEnabled()`, which is true under replay. Used by the real-corpus eval, suite and seed — see `docs/real-samples.md`.
 
 ## Caveats
 

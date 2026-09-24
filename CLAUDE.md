@@ -4,12 +4,12 @@ AI-powered invoice scanning, dish-margin tracking, and intelligent inventory for
 
 ## Project Structure
 
-npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebase/functions"]`).
+npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebase", "firebase/functions"]`).
 
 - `shared/` — `@teremu/shared`: schema **vocabulary** (units, categories, doc type, permissions) imported by both the app and the API. Build with `npm run build --workspace @teremu/shared` (must run before typechecking the others).
 - `app/` — Vue 3 + Vite web app, wrapped by Capacitor for iOS/Android
 - `firebase/` — Firebase Hosting config + Cloud Functions API (invoice OCR, pantry, margins) + emulator scripts
-- `docs/` — Internal documentation (read `docs/animations.md` before touching any animation, `docs/i18n.md` before touching any user-facing string, `docs/llm.md` before touching any AI call — all LLM traffic goes through `firebase/functions/src/llm.ts`; the provider is env config, never hardcoded in callers — and `docs/pos.md` before touching any POS/integration code)
+- `docs/` — Internal documentation (read `docs/animations.md` before touching any animation, `docs/i18n.md` before touching any user-facing string, `docs/llm.md` before touching any AI call — all LLM traffic goes through `firebase/functions/src/llm.ts`; the provider is env config, never hardcoded in callers — `docs/pos.md` before touching any POS/integration code, and `docs/real-samples.md` before touching the real client corpus in `docs/samples/real/` — gitignored client data, never copied into a committed path)
 
 ## Schemas (shared vs mirrored)
 
@@ -24,6 +24,7 @@ npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebas
 - The dev server (`npm run dev` in `app/`) and the Firebase emulators (`npm run emulators` in `firebase/`) are managed by the user separately.
 - Local dev never needs a real Firebase project — the emulators run offline under the `demo-app` project id. Without an `NVIDIA_API_KEY`, receipt OCR falls back to a deterministic mock so the whole flow works offline.
 - Use `npm` as the package manager (not yarn or pnpm).
+- Two test tiers, both emulator-backed and both in the pre-deploy gate: `npm run test` (integration, `firebase/functions/test/`) and `npm run test:e2e` (Playwright, `e2e/` — read `e2e/README.md` before adding or fixing a spec). Both boot what they need; **don't** run them unless asked, and never as a substitute for a build.
 
 ## i18n rules (non-negotiable)
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { currencySymbol } from '../i18n'
 import { apiFetch, apiUpload } from '../lib/api'
 import { compressReceipt } from '../lib/compress'
 import { normalizeName } from '../lib/domain'
@@ -288,7 +289,7 @@ async function saveAll(withRecipes: boolean): Promise<void> {
                   inputmode="decimal"
                   step="0.01"
                   class="input w-20 px-2 py-1 text-right text-sm"
-                  :placeholder="t('menu.editor.menuPrice')"
+                  :placeholder="t('menu.editor.menuPrice', { symbol: currencySymbol })"
                 />
               </div>
             </div>
@@ -335,7 +336,7 @@ async function saveAll(withRecipes: boolean): Promise<void> {
                       class="ml-1 font-semibold"
                       :class="estMargin(dish)! >= 70 ? 'text-herb-700' : 'text-coral-600'"
                     >
-                      {{ estMargin(dish)!.toFixed(0) }}% {{ t('menu.scan.estMargin') }}
+                      {{ n(estMargin(dish)! / 100, 'percentWhole') }} {{ t('menu.scan.estMargin') }}
                     </span>
                   </div>
                 </div>

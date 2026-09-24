@@ -1,0 +1,11 @@
+node_modules/
+dist/
+playwright/.auth/
+# Real-corpus seed summary (client vendor names) - docs/real-samples.md
+playwright/.real/
+playwright-report/
+blob-report/
+test-results/
+recordings/
+last-run.log
+.run.lock

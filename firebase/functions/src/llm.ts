@@ -14,6 +14,9 @@
  * name — it holds whichever provider's key). LLM_API_KEY also works
  * and wins when both are set.
  */
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
 
@@ -49,6 +52,68 @@ export function llmApiKey(): string | undefined {
   return process.env.LLM_API_KEY || process.env.NVIDIA_API_KEY;
 }
 
+/** The model every call uses (env override, else the provider preset). */
+export function llmModel(): string {
+  return process.env.LLM_MODEL || process.env.NVIDIA_MODEL || provider().model;
+}
+
+/** Real answers are available — a live key, or recorded replies being
+ * replayed. Callers branch on this (not llmApiKey) to pick their mock. */
+export function llmEnabled(): boolean {
+  return cassetteMode() === "replay" || llmApiKey() !== undefined;
+}
+
+// ── Cassettes (record / replay) ─────────────────────────────────────
+// Makes model-dependent flows deterministic: a live run with
+// LLM_CASSETTE_MODE=record stores each raw reply (reusing any already
+// recorded, so an interrupted run resumes for free); replay serves it back
+// with no key and no network, so everything downstream (sanitize,
+// validation, approval, reports) runs bit-for-bit reproducibly on real
+// documents. See docs/real-samples.md.
+//
+// The key is label + the exact image bytes — NOT the prompt text: the
+// OCR prompt embeds the restaurant's growing ingredient catalog, which
+// would make every key order-dependent. So replay tests the PIPELINE on
+// real model output; measuring a prompt change is the live eval's job.
+// Never active in a deployed function (K_SERVICE without the emulator).
+
+function cassetteMode(): "record" | "replay" | null {
+  const mode = process.env.LLM_CASSETTE_MODE;
+  if (!process.env.LLM_CASSETTE_DIR || (mode !== "record" && mode !== "replay")) return null;
+  if (process.env.K_SERVICE && process.env.FUNCTIONS_EMULATOR !== "true") return null;
+  return mode;
+}
+
+function cassetteKey(messages: ChatMessage[], label: string): string | null {
+  const images = messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? m.content.flatMap((p) => {
+          const url = (p as { image_url?: { url?: string } }).image_url?.url;
+          return url ? [url] : [];
+        })
+      : [],
+  );
+  if (images.length === 0) return null; // text-only calls have no stable key
+  return cassetteKeyForImages(label, images);
+}
+
+/** The cassette a call with these image parts (in order) records to —
+ * exported so the real-corpus suite can tell which documents are covered. */
+export function cassetteKeyForImages(label: string, imageUrls: string[]): string {
+  const hash = createHash("sha256");
+  for (const url of imageUrls) hash.update(url).update("\n");
+  return `${label}-${hash.digest("hex").slice(0, 40)}`;
+}
+
+interface Cassette {
+  key: string;
+  model: string;
+  recordedAt: string;
+  content: string;
+  /** Set when the provider refused the request — replays as a throw. */
+  error?: string;
+}
+
 /** OpenAI-style message; content is a string or a multimodal part array. */
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -72,9 +137,51 @@ export async function chatCompletion(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<string> {
+  const mode = cassetteMode();
+  const key = mode ? cassetteKey(messages, opts.label ?? "unlabeled") : null;
+  const file = key ? join(process.env.LLM_CASSETTE_DIR!, `${key}.json`) : null;
+  const play = (c: Cassette): string => {
+    if (c.error !== undefined) throw new Error(c.error);
+    return c.content;
+  };
+  if (file && existsSync(file)) return play(JSON.parse(readFileSync(file, "utf8")) as Cassette);
+  // A replay miss is a hard failure, never a fallback: silently answering
+  // with the random mock is exactly the nondeterminism replay removes.
+  if (mode === "replay") throw new Error(`llm cassette miss: ${key ?? "(text-only call)"}`);
   const apiKey = llmApiKey();
   if (!apiKey) throw new Error("no LLM API key"); // callers mock before reaching here
-  const model = process.env.LLM_MODEL || process.env.NVIDIA_MODEL || provider().model;
+  const record = (outcome: { content: string } | { error: string }) => {
+    if (mode !== "record" || !file || !key) return;
+    const cassette: Cassette = {
+      key,
+      model: llmModel(),
+      recordedAt: new Date().toISOString(),
+      content: "",
+      ...outcome,
+    };
+    mkdirSync(process.env.LLM_CASSETTE_DIR!, { recursive: true });
+    writeFileSync(file, JSON.stringify(cassette, null, 1));
+  };
+  let content: string;
+  try {
+    content = await callProvider(apiKey, messages, opts);
+  } catch (err) {
+    // A request the provider refuses FOR ITS CONTENT (400/422 — e.g. "at
+    // most 1 image" on a multi-page scan) is the real outcome for this
+    // input, so it is recorded and replays as the same error. Everything
+    // else says nothing about the document — auth (401/403), a retired or
+    // unknown model (404/410), rate limits (429), 5xx, network — and is
+    // never recorded.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/^LLM API (400|422)\b/.test(message)) record({ error: message });
+    throw err;
+  }
+  record({ content });
+  return content;
+}
+
+async function callProvider(apiKey: string, messages: ChatMessage[], opts: ChatOptions): Promise<string> {
+  const model = llmModel();
   const url = process.env.LLM_URL || provider().url;
   const body: Record<string, unknown> = {
     model,
@@ -95,12 +202,31 @@ export async function chatCompletion(
     };
   }
 
-  const send = () =>
+  const post = () =>
     fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  // Transient provider trouble — rate limits (free tiers throttle bursts:
+  // a stack of scans uploaded at once), overloaded workers, dropped
+  // connections — is retried twice with backoff, honoring Retry-After
+  // (capped so a scan stays well inside the function timeout). Anything
+  // else fails at once: a 400/401/404/410 will not fix itself.
+  const send = async (): Promise<Response> => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const res = await post();
+        if (!RETRYABLE.has(res.status) || attempt >= RETRY_DELAYS_MS.length) return res;
+        const after = Number(res.headers.get("retry-after"));
+        await sleep(Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 5000) : RETRY_DELAYS_MS[attempt]);
+      } catch (err) {
+        if (attempt >= RETRY_DELAYS_MS.length) throw err;
+        await sleep(RETRY_DELAYS_MS[attempt]);
+      }
+      logger.warn("llm_retry", { model, label: opts.label ?? "unlabeled", attempt: attempt + 1 });
+    }
+  };
 
   let res = await send();
   // A model that does not implement response_format rejects the whole
@@ -145,6 +271,11 @@ export async function chatCompletion(
 // drafts): the provider constrains decoding to the schema, so invalid
 // JSON and off-vocabulary units/categories are unrepresentable rather
 // than merely discouraged by the prompt.
+
+/** Provider statuses worth retrying (rate limit / overloaded / gateway). */
+const RETRYABLE = new Set([429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1000, 3000];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Models proven not to support response_format — skipped for the rest of this process. */
 const noStructuredOutput = new Set<string>();

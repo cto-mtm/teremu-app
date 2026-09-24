@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { currencySymbol } from '../i18n'
+import { amountField, decimalMarkFor, detectDelimiter, parseAmount, parseDate, splitCsvLine } from '../lib/csv'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
@@ -14,16 +16,20 @@ import {
   pantryValue,
   priceChangePct,
   priceHistory,
-  spendByTag,
+  realtimeSpend,
   vendorWeeklySpend,
   weeklySeries,
 } from '../lib/domain'
 import type { ExpenseEntry, Ingredient, MenuItem, RevenueEntry } from '../lib/types'
+import { CHART_COLORS, CHART_REST_COLOR } from '../lib/palette'
 import BaseButton from '../components/BaseButton.vue'
 import PageLoader from '../components/PageLoader.vue'
+import ProvidersPanel from '../components/ProvidersPanel.vue'
+import SpendDrilldown from '../components/SpendDrilldown.vue'
 import Sparkline from '../components/Sparkline.vue'
 
-const { t, n, d } = useI18n()
+const { t, n, d, locale } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const invoicesStore = useInvoicesStore()
 const kitchen = useKitchenStore()
@@ -32,8 +38,45 @@ const canEdit = computed(() => auth.can('finance', 'edit'))
 // Restaurant labor rate (Settings) — 0/unset keeps costs ingredients-only.
 const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 
+// ── Dashboard tabs. Local state, NOT a router navigation: a panel
+// switch is within-page UI (docs/animations.md draws that line), so it
+// must not pay the auth guard, the scroll reset, or a full-page
+// startViewTransition snapshot. The URL still mirrors the tab for deep
+// links — read once on load, written back via history.replaceState.
+type Tab = 'overview' | 'categories' | 'providers'
+const tabs = computed<Tab[]>(() =>
+  auth.can('vendors') ? ['overview', 'categories', 'providers'] : ['overview', 'categories'],
+)
+const initialTab = route.query.tab as Tab
+const tab = ref<Tab>(tabs.value.includes(initialTab) ? initialTab : 'overview')
+// Panels lazy-mount on first visit and stay alive (v-show) afterwards,
+// so the drill position and computed caches survive tab switches.
+const seen = ref<Record<Tab, boolean>>({ overview: true, categories: false, providers: false })
+watch(
+  tab,
+  (v) => {
+    seen.value[v] = true
+    const url = new URL(window.location.href)
+    if (v === 'overview') url.searchParams.delete('tab')
+    else url.searchParams.set('tab', v)
+    history.replaceState(history.state, '', url)
+  },
+  { immediate: true },
+)
+
+// ── Billed vs real-time spend (facturado vs recibido) ───────────
+// Real time adds approved albaranes no factura covers yet; the toggle
+// only appears while such notes exist (the views are identical
+// otherwise). Price history & alerts stay billed-only — albarán prices
+// are estimates, not payments.
+const spendMode = ref<'billed' | 'realtime'>('billed')
+const realtime = computed(() => realtimeSpend(invoicesStore.invoices, kitchen.ingredientMap))
+const spendDocs = computed(() =>
+  spendMode.value === 'realtime' ? realtime.value.docs : invoicesStore.invoices,
+)
+
 // ── Expenses vs revenue (8 weeks) — includes tagged non-food spend ──
-const series = computed(() => weeklySeries(invoicesStore.invoices, kitchen.revenue, kitchen.expenses))
+const series = computed(() => weeklySeries(spendDocs.value, kitchen.revenue, kitchen.expenses))
 const thisWeek = computed(() => series.value[series.value.length - 1])
 
 const W = 640
@@ -52,7 +95,7 @@ function points(key: 'expenses' | 'revenue'): string {
 }
 
 // ── Food-cost % with target band ────────────────────────────────
-const foodCost = computed(() => foodCostSeries(invoicesStore.invoices, kitchen.revenue))
+const foodCost = computed(() => foodCostSeries(spendDocs.value, kitchen.revenue))
 const fcThisWeek = computed(() => foodCost.value[foodCost.value.length - 1]?.pct ?? null)
 const FC = { w: 300, h: 150, pad: 8 }
 const fcMax = computed(() => Math.max(50, ...foodCost.value.map((p) => p.pct ?? 0)) * 1.15)
@@ -69,8 +112,8 @@ const fcPoints = computed(() =>
 const weekTicks = computed(() => series.value.filter((_, i) => i % 2 === 0))
 
 // ── Vendor spend, stacked weekly (click a segment → vendor page) ─
-const VENDOR_COLORS = ['#ff751f', '#2e9e5b', '#1c1410', '#7a6f66', '#d1d5db']
-const vendorSpend = computed(() => vendorWeeklySpend(invoicesStore.invoices))
+const VENDOR_COLORS = [...CHART_COLORS.slice(0, 4), CHART_REST_COLOR]
+const vendorSpend = computed(() => vendorWeeklySpend(spendDocs.value))
 const vendorLegend = computed(() =>
   vendorSpend.value.vendors.map((v, i) => ({ ...v, color: VENDOR_COLORS[i % VENDOR_COLORS.length] })),
 )
@@ -144,12 +187,8 @@ const priceWatch = computed(() =>
 )
 
 // ── Pareto: top ingredients by spend ────────────────────────────
-const topSpend = computed(() => ingredientSpend(invoicesStore.invoices, 8))
+const topSpend = computed(() => ingredientSpend(spendDocs.value, 8))
 const topSpendMax = computed(() => topSpend.value[0]?.total ?? 1)
-
-// ── Spend by category: food (invoices) + dynamic expense tags ───
-const byTag = computed(() => spendByTag(invoicesStore.invoices, kitchen.expenses))
-const byTagMax = computed(() => byTag.value[0]?.total ?? 1)
 
 // ── Stat cards ──────────────────────────────────────────────────
 const stockValue = computed(() => pantryValue(kitchen.ingredients))
@@ -299,20 +338,28 @@ async function importCsv(event: Event): Promise<void> {
   csvBusy.value = true
   try {
     const text = await file.text()
+    const delimiter = detectDelimiter(text)
+    const decimal = decimalMarkFor(locale.value)
     const existing = new Set(kitchen.revenue.map((r) => r.date))
     let ok = 0
     let skipped = 0
     let bad = 0
+    let firstRow = true
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim()
       if (!line) continue
-      const [dateStr, amountStr] = line.split(/[,;\t]/).map((s) => s?.trim())
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr ?? '')) {
-        // header rows and malformed lines land here
-        if (dateStr && !/^(fecha|date)$/i.test(dateStr)) bad += 1
+      const fields = splitCsvLine(line, delimiter)
+      // Dates in the UI language's order (01/05/2026 = 1 May in es).
+      const dateStr = parseDate(fields[0] ?? '', locale.value)
+      const header = firstRow
+      firstRow = false
+      if (!dateStr) {
+        // A first line that isn't data is the header, whatever it says
+        // ("fecha;importe", "Día;Ventas"…); anything later is malformed.
+        if (!header) bad += 1
         continue
       }
-      const amount = Number((amountStr ?? '').replace(',', '.'))
+      const amount = parseAmount(amountField(fields, delimiter), decimal)
       if (!Number.isFinite(amount) || amount <= 0) {
         bad += 1
         continue
@@ -379,11 +426,61 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
+    <!-- Tab strip: Overview / Categories / Providers -->
+    <div class="flex gap-1 rounded-xl bg-gray-100 p-1" role="tablist" :aria-label="t('pulse.title')">
+      <button
+        v-for="tb in tabs"
+        :key="tb"
+        role="tab"
+        :aria-selected="tab === tb"
+        class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium sm:flex-none"
+        :class="tab === tb ? 'bg-white text-ink shadow-sm' : 'text-smoke hover:text-ink'"
+        @click="tab = tb"
+      >
+        {{ t('pulse.tabs.' + tb) }}
+      </button>
+    </div>
+
+    <!-- Billed vs real-time toggle: only while pending albaranes exist
+         (the two views are identical otherwise) -->
+    <div
+      v-if="tab !== 'providers' && realtime.pendingCount > 0"
+      class="flex items-center gap-2"
+      role="group"
+      :aria-label="t('pulse.view.label')"
+    >
+      <span class="text-xs text-smoke">{{ t('pulse.view.label') }}</span>
+      <div class="flex gap-1 rounded-lg bg-gray-100 p-0.5">
+        <button
+          v-for="m in (['billed', 'realtime'] as const)"
+          :key="m"
+          :aria-pressed="spendMode === m"
+          class="rounded-md px-2.5 py-1 text-xs font-medium"
+          :class="spendMode === m ? 'bg-white text-ink shadow-sm' : 'text-smoke hover:text-ink'"
+          @click="spendMode = m"
+        >
+          {{ t('pulse.view.' + m) }}
+        </button>
+      </div>
+    </div>
+
     <!-- Loading skeleton -->
     <PageLoader v-if="kitchen.loading && !kitchen.revenue.length" />
 
-    <!-- Loaded content -->
     <template v-else>
+
+    <!-- Categories: hierarchical spend pie with breadcrumb drill-down -->
+    <SpendDrilldown
+      v-if="seen.categories"
+      v-show="tab === 'categories'"
+      :realtime="spendMode === 'realtime'"
+    />
+
+    <!-- Providers: the whole vendor directory inline -->
+    <ProvidersPanel v-if="seen.providers" v-show="tab === 'providers'" />
+
+    <!-- Overview -->
+    <div v-show="tab === 'overview'" class="space-y-4">
 
     <!-- Stat cards -->
     <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -401,7 +498,7 @@ watch(showExpense, (open) => {
           class="mt-1 text-2xl font-bold"
           :class="fcThisWeek == null ? '' : fcThisWeek > 35 ? 'text-coral-600' : 'text-herb-700'"
         >
-          {{ fcThisWeek == null ? '—' : fcThisWeek.toFixed(1) + '%' }}
+          {{ fcThisWeek == null ? '—' : n(fcThisWeek / 100, 'percent') }}
         </div>
       </div>
       <RouterLink to="/pantry" class="card block hover:border-ember/40">
@@ -409,6 +506,27 @@ watch(showExpense, (open) => {
         <div class="mt-1 text-2xl font-bold">{{ n(stockValue, 'currency') }}</div>
       </RouterLink>
     </div>
+
+    <!-- Received, not yet billed: the billed↔realtime delta — shown in
+         BOTH views (it's the number the toggle is about) -->
+    <RouterLink
+      v-if="realtime.pendingCount > 0"
+      to="/triage"
+      class="card flex items-center justify-between gap-3 border-ember/30 hover:border-ember/60"
+    >
+      <div class="min-w-0">
+        <div class="text-sm font-semibold">{{ t('pulse.pendingNotes') }}</div>
+        <div class="text-xs text-smoke">
+          {{ t('pulse.pendingNotesDetail', { n: realtime.pendingCount }) }}
+          <template v-if="realtime.unvaluedLines">
+            · {{ t('pulse.pendingUnvalued', { n: realtime.unvaluedLines }) }}
+          </template>
+        </div>
+      </div>
+      <div class="shrink-0 text-lg font-bold text-ember-700">
+        {{ n(realtime.pendingTotal, 'currency') }}
+      </div>
+    </RouterLink>
 
     <!-- Expenses vs revenue -->
     <div class="card">
@@ -440,10 +558,10 @@ watch(showExpense, (open) => {
           <rect :x="FC.pad" :y="fcY(35)" :width="FC.w - 2 * FC.pad" :height="Math.max(0, fcY(28) - fcY(35))" fill="#ECF8F0" />
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="fcY(35)" :y2="fcY(35)" stroke="#2E9E5B" stroke-dasharray="3 3" stroke-width="1" />
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="fcY(28)" :y2="fcY(28)" stroke="#2E9E5B" stroke-dasharray="3 3" stroke-width="1" />
-          <text :x="FC.w - FC.pad - 2" :y="fcY(35) - 4" text-anchor="end" font-size="9" fill="#1E6B3D">35%</text>
-          <text :x="FC.w - FC.pad - 2" :y="fcY(28) + 11" text-anchor="end" font-size="9" fill="#1E6B3D">28%</text>
+          <text :x="FC.w - FC.pad - 2" :y="fcY(35) - 4" text-anchor="end" font-size="9" fill="#1E6B3D">{{ n(0.35, 'percentWhole') }}</text>
+          <text :x="FC.w - FC.pad - 2" :y="fcY(28) + 11" text-anchor="end" font-size="9" fill="#1E6B3D">{{ n(0.28, 'percentWhole') }}</text>
           <text v-if="fcThisWeek != null" :x="FC.pad + 2" :y="FC.pad + 9" font-size="9" fill="#7A6F66">
-            {{ fcMax.toFixed(0) }}%
+            {{ n(fcMax / 100, 'percentWhole') }}
           </text>
           <line :x1="FC.pad" :x2="FC.w - FC.pad" :y1="FC.h - FC.pad" :y2="FC.h - FC.pad" stroke="#E5E7EB" />
           <polyline :points="fcPoints" fill="none" stroke="#FF751F" stroke-width="2.5" stroke-linejoin="round" />
@@ -518,7 +636,7 @@ watch(showExpense, (open) => {
         >
           <circle :cx="dot.cx" :cy="dot.cy" r="9" :fill="dot.color" fill-opacity="0.9" />
           <text :x="dot.cx + 13" :y="dot.cy + 4" font-size="12" fill="#1C1410">{{ dot.name }}</text>
-          <title>{{ dot.name }} · {{ t('pulse.soldUnits', { n: dot.units }) }} · {{ dot.margin.toFixed(1) }}%</title>
+          <title>{{ dot.name }} · {{ t('pulse.soldUnits', { n: dot.units }) }} · {{ n(dot.margin / 100, 'percent') }}</title>
         </g>
         </svg>
       </div>
@@ -544,7 +662,7 @@ watch(showExpense, (open) => {
             </div>
             <Sparkline :values="hist.map((h) => h.unitPrice)" :width="90" :height="26" />
             <span v-if="change != null" :class="change > 0 ? 'chip-up' : 'chip-down'">
-              {{ change > 0 ? '↑' : '↓' }}{{ Math.abs(change).toFixed(1) }}%
+              {{ change > 0 ? '↑' : '↓' }}{{ n(Math.abs(change) / 100, 'percent') }}
             </span>
           </RouterLink>
         </div>
@@ -574,25 +692,8 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
-    <!-- Spend by category: food + dynamic expense tags -->
-    <div v-if="byTag.length" class="card">
-      <div class="mb-2 text-sm font-semibold">{{ t('pulse.categoryTitle') }}</div>
-      <div class="space-y-2">
-        <div v-for="row in byTag" :key="row.key">
-          <div class="mb-0.5 flex items-center justify-between text-xs">
-            <span class="font-medium">{{ row.tag ?? t('pulse.categoryFood') }}</span>
-            <span class="text-smoke">{{ n(row.total, 'currency') }}</span>
-          </div>
-          <div class="h-2 rounded-full bg-gray-100">
-            <div
-              class="h-2 rounded-full"
-              :class="row.key === 'food' ? 'bg-ember' : 'bg-smoke/60'"
-              :style="{ width: (row.total / byTagMax) * 100 + '%' }"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Spend by category moved to the Categories tab (richer: a
+         drillable pie with subcategories and breadcrumbs) -->
 
     <!-- Recent entries: revenue + expenses, editable -->
     <div v-if="entries.length" class="card p-0">
@@ -647,7 +748,7 @@ watch(showExpense, (open) => {
                 </RouterLink>
               </template>
               <template #pct>
-                <span :class="change > 0 ? 'chip-up' : 'chip-down'">{{ Math.abs(change).toFixed(1) }}%</span>
+                <span :class="change > 0 ? 'chip-up' : 'chip-down'">{{ n(Math.abs(change) / 100, 'percent') }}</span>
               </template>
             </i18n-t>
             <span class="text-smoke">
@@ -674,7 +775,7 @@ watch(showExpense, (open) => {
                   {{ m.name }}
                 </RouterLink>
               </template>
-              <template #pct><span class="chip-up">{{ margin.toFixed(1) }}%</span></template>
+              <template #pct><span class="chip-up">{{ n(margin / 100, 'percent') }}</span></template>
             </i18n-t>
             <span class="text-smoke">
               {{ t('pulse.marginDetail', { target: m.targetMarginPct, cost: n(cost, 'currency') }) }}
@@ -682,6 +783,7 @@ watch(showExpense, (open) => {
           </div>
         </div>
       </div>
+    </div>
     </div>
     </template>
 
@@ -703,7 +805,7 @@ watch(showExpense, (open) => {
               <input v-model="expDate" type="date" class="input" />
             </label>
             <label class="space-y-1 text-sm">
-              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount') }}</span>
+              <span class="text-xs text-smoke">{{ t('pulse.expenseSheet.amount', { symbol: currencySymbol }) }}</span>
               <input v-model="expAmount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
             </label>
           </div>
@@ -748,7 +850,7 @@ watch(showExpense, (open) => {
               <input v-model="date" type="date" class="input" />
             </label>
             <label class="space-y-1 text-sm">
-              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount') }}</span>
+              <span class="text-xs text-smoke">{{ t('pulse.sheet.amount', { symbol: currencySymbol }) }}</span>
               <input v-model="amount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
             </label>
           </div>

@@ -1,12 +1,13 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
-import { extractInvoice } from "./ocr.js";
+import { extractInvoice, type OcrResult } from "./ocr.js";
 import { convertQty } from "./units.js";
 import {
   ingredientDocSchema,
   menuItemDocSchema,
   normalizeName,
+  pairSubcategory,
   type IngredientDoc,
   type InvoiceDoc,
   type LineItem,
@@ -40,7 +41,7 @@ function contentTerms(li: LineItem): { qty: number; unit: LineItem["unit"]; unit
  * a wrong digit almost always breaks the math somewhere.
  * Returns warning codes and flags suspect lines (Triage highlights them).
  */
-function validateArithmetic(
+export function validateArithmetic(
   lineItems: LineItem[],
   statedTotal: number
 ): { lineItems: LineItem[]; warnings: string[] } {
@@ -64,6 +65,34 @@ function validateArithmetic(
   return { lineItems: checked, warnings };
 }
 
+type OcrPatch =
+  | { status: "failed"; error: "not_a_document" | "unreadable" }
+  | (Pick<InvoiceDoc, "docType" | "vendorName" | "invoiceDate" | "lineItems" | "total" | "warnings"> & {
+      status: "needs_review";
+      error: null;
+    });
+
+/**
+ * Stages 1–3 as a pure decision: the OCR result → the invoice fields it
+ * sets. Shared by the pipeline and the real-corpus prod seed, so seeded
+ * documents are exactly what a scan would have stored.
+ */
+export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
+  if (result.notDocument) return { status: "failed", error: "not_a_document" };
+  if (result.unreadable || result.lineItems.length === 0) return { status: "failed", error: "unreadable" };
+  const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
+  return {
+    status: "needs_review",
+    docType: result.docType,
+    vendorName: result.vendor,
+    invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
+    lineItems,
+    total: result.total,
+    warnings,
+    error: null,
+  };
+}
+
 /**
  * Background OCR pipeline, in stages:
  *   1. classify — the model tags the image (receipt vs not a document)
@@ -85,38 +114,31 @@ export async function processInvoiceImage(
     );
     // Feed the model the user's ingredient catalog so it maps line items
     // onto existing products ("TOMATE 25#" → "Roma Tomatoes") instead of
-    // spawning near-duplicates.
-    const catalogSnap = await restCol(rid, "ingredients").limit(300).get();
+    // spawning near-duplicates — and the restaurant's own name, so the
+    // buyer printed in the "cliente / bill to" box is never mistaken
+    // for the vendor.
+    const [catalogSnap, restaurantSnap] = await Promise.all([
+      restCol(rid, "ingredients").limit(300).get(),
+      getFirestore().collection("restaurants").doc(rid).get(),
+    ]);
     const catalog = catalogSnap.docs
       .map((d) => (d.data() as IngredientDoc).name)
       .filter(Boolean);
-    const result = await extractInvoice(buffers.map((b) => b.toString("base64")), catalog);
-
-    if (result.notDocument) {
-      await ref.update({ status: "failed", error: "not_a_document" });
-      return;
-    }
-    if (result.unreadable || result.lineItems.length === 0) {
-      await ref.update({ status: "failed", error: "unreadable" });
-      return;
-    }
-
-    const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
-
-    await ref.update({
-      status: "needs_review",
-      docType: result.docType,
-      vendorName: result.vendor,
-      invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
-      lineItems,
-      total: result.total,
-      warnings,
-      error: null,
-    });
-    logger.info(
-      `Invoice ${invoiceId} digitized for ${rid}: ${lineItems.length} items` +
-        (warnings.length ? ` (warnings: ${warnings.join(", ")})` : "")
+    const restaurantName = (restaurantSnap.get("name") as string | undefined) ?? null;
+    const result = await extractInvoice(
+      buffers.map((b) => b.toString("base64")),
+      catalog,
+      restaurantName,
     );
+
+    const patch = invoicePatchFromOcr(result);
+    await ref.update(patch);
+    if (patch.status === "needs_review") {
+      logger.info(
+        `Invoice ${invoiceId} digitized for ${rid}: ${patch.lineItems.length} items` +
+          (patch.warnings.length ? ` (warnings: ${patch.warnings.join(", ")})` : "")
+      );
+    }
   } catch (err) {
     logger.error(`OCR failed for invoice ${invoiceId}`, err);
     try {
@@ -165,8 +187,15 @@ export async function approveInvoice(
   const resolved: LineItem[] = [];
 
   for (const raw of lineItems) {
-    // Strip validation flags — approved numbers are human-verified.
-    const { flagged: _flagged, ...li } = raw;
+    // Strip validation flags — approved numbers are human-verified —
+    // and normalize the pairing so data AT REST upholds the invariant
+    // (approve bodies come from client edits; lineItemSchema deliberately
+    // doesn't refine the pairing, a crossed pair degrades to null here).
+    const { flagged: _flagged, ...stripped } = raw;
+    const li: LineItem = {
+      ...stripped,
+      subcategory: pairSubcategory(stripped.category ?? "other", stripped.subcategory),
+    };
     const key = normalizeName(li.name);
     if (!key) {
       resolved.push({ ...li, ingredientId: null });
@@ -187,12 +216,22 @@ export async function approveInvoice(
       const qtyAdd = ratio != null ? terms.qty * ratio : terms.qty;
       const pricePerStockUnit =
         ratio != null && ratio !== 0 ? +(terms.unitPrice / ratio).toFixed(4) : terms.unitPrice;
+      // Opportunistic backfill: an ingredient that predates subcategories
+      // (or was never classified) adopts the line's — piggybacking on the
+      // update this batch already writes, so it costs zero extra writes.
+      // Only when the line's category agrees with the ingredient's (the
+      // line's subcategory is already normalized against li.category).
+      const subFill =
+        existing.data.subcategory == null && li.category === existing.data.category
+          ? li.subcategory
+          : null;
       batch.update(ingredients.doc(existing.id), {
         prevUnitPrice: existing.data.lastUnitPrice,
         lastUnitPrice: pricePerStockUnit,
         lastPriceAt: now,
         lastVendorName: vendorName,
         theoreticalQty: FieldValue.increment(qtyAdd),
+        ...(subFill ? { subcategory: subFill } : {}),
       });
     } else {
       if (!applyEffects) {
@@ -206,6 +245,7 @@ export async function approveInvoice(
         // Stock in content units (kg, not "case") when pack info exists.
         unit: terms.unit,
         category: li.category ?? "other",
+        subcategory: li.subcategory ?? null,
         lastUnitPrice: terms.unitPrice,
         prevUnitPrice: null,
         lastPriceAt: now,

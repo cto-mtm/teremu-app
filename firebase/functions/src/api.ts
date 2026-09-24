@@ -1,6 +1,7 @@
 import { onRequest, type Request } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
+import { createHash } from "node:crypto";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import type { Response } from "express";
@@ -95,12 +96,18 @@ async function route(req: Request, res: Response): Promise<unknown> {
   }
 
   // ── auth gate: resolve membership (bootstraps on first sign-in) ─
+  // Every call after /me names its location (X-Restaurant-Id), so the
+  // plan read starts alongside auth instead of after it. The result is
+  // used ONLY if the verified member really belongs to that location.
+  const headerRid = typeof req.headers["x-restaurant-id"] === "string" ? req.headers["x-restaurant-id"] : "";
+  const speculativePlan =
+    headerRid && req.headers.authorization ? getPlanInfo(headerRid).catch(() => null) : null;
   const member = await requireMember(req);
   if (!member) return json(res, 401, { error: "unauthenticated" });
   const rid = member.rid;
   const col = (name: string) => db.collection("restaurants").doc(rid).collection(name);
   // Freemium gates: one plan read per request, enforced server-side.
-  const planInfo = await getPlanInfo(rid);
+  const planInfo = (rid === headerRid && (await speculativePlan)) || (await getPlanInfo(rid));
   // The tier a paywalled action would need — null when already on the
   // top plan, so the client can turn "limit reached" into a real upgrade
   // CTA instead of a dead-end message (and never nag a max user to upgrade).
@@ -140,6 +147,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       plan: planInfo.plan,
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
       laborRatePerHour: planInfo.laborRatePerHour,
+      currency: planInfo.currency,
       locations,
     });
   }
@@ -167,6 +175,17 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const buffer = req.rawBody;
       if (!buffer || buffer.length === 0) return json(res, 400, { error: "empty image body" });
       if (buffer.length > 10 * 1024 * 1024) return json(res, 413, { error: "image too large (10 MB max)" });
+      // Idempotency: the same bytes uploaded twice (double-tap, retry
+      // after a timed-out response) must not create a second invoice —
+      // or burn a second scan, so this runs BEFORE the quota. Exact
+      // hash match only: two camera shots of the same paper are
+      // different bytes and legitimately two scans.
+      const imageHash = createHash("sha256").update(buffer).digest("hex");
+      const dup = await col("invoices")
+        .where("imageHashes", "array-contains", imageHash)
+        .limit(1)
+        .get();
+      if (!dup.empty) return json(res, 409, { error: "duplicate_image", id: dup.docs[0].id });
       // Monthly scan quota (the freemium value metric) — atomic.
       const quota = await consumeScan(rid);
       if (!quota.ok) return paywall("scan_limit");
@@ -183,6 +202,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         invoiceDate: null,
         imagePath,
         ...(morePages ? { imagePaths: [imagePath], pagesPending: true } : {}),
+        imageHashes: [imageHash],
         lineItems: [],
         total: null,
         warnings: [],
@@ -243,11 +263,16 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (paths.length >= MAX_INVOICE_PAGES) {
           return json(res, 400, { error: `page limit reached (${MAX_INVOICE_PAGES})` });
         }
+        // Idempotency within the capture: the same page double-added
+        // (double-tap, retry) must not appear twice in the document.
+        const pageHash = createHash("sha256").update(buffer).digest("hex");
+        const hashes = inv.imageHashes ?? [];
+        if (hashes.includes(pageHash)) return json(res, 409, { error: "duplicate_page" });
         // One level deeper than page 1 on purpose — the Storage trigger's
         // path regex must not fire for additional pages.
         const pagePath = `receipts/${rid}/${id}/p${paths.length + 1}.jpg`;
         await getStorage().bucket().file(pagePath).save(buffer, { contentType: "image/jpeg" });
-        await ref.update({ imagePaths: [...paths, pagePath] });
+        await ref.update({ imagePaths: [...paths, pagePath], imageHashes: [...hashes, pageHash] });
         return json(res, 201, { id, pages: paths.length + 1 });
       }
       if (m === "PUT" && action === "complete") {
@@ -377,6 +402,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         nameKey,
         unit: body.unit,
         category: body.category,
+        subcategory: body.subcategory ?? null,
         lastUnitPrice: body.lastUnitPrice ?? null,
         prevUnitPrice: null,
         lastPriceAt: body.lastUnitPrice != null ? Date.now() : null,
@@ -391,7 +417,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "PUT" && id && seg.length === 2) {
       if (!can(member, "pantry", "edit")) return forbidden(res);
       const body = updateIngredientSchema.parse(req.body);
-      await col("ingredients").doc(id).update({ category: body.category });
+      // Omitted subcategory clears it — a category change invalidates the
+      // old pairing, so "keep whatever was there" is never correct.
+      await col("ingredients").doc(id).update({
+        category: body.category,
+        subcategory: body.subcategory ?? null,
+      });
       const snap = await col("ingredients").doc(id).get();
       return json(res, 200, { id, ...snap.data() });
     }
@@ -689,6 +720,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) patch.name = body.name.trim();
       if (body.laborRatePerHour !== undefined) patch.laborRatePerHour = body.laborRatePerHour;
+      if (body.currency !== undefined) patch.currency = body.currency;
       if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
       await db.collection("restaurants").doc(rid).set(patch, { merge: true });
       return json(res, 200, { ok: true, ...patch });
@@ -766,7 +798,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       return json(res, 429, { error: "one question every 10 seconds" });
     }
     await memberRef.update({ lastAskAt: Date.now() });
-    const answer = await askAssistant(rid, member, question, history ?? []);
+    const answer = await askAssistant(rid, member, question, history ?? [], planInfo.currency);
     return json(res, 200, { answer });
   }
 

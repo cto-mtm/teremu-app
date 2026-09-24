@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // test/real/ runs on client documents via its own config
+    // (vitest.real.config.ts, `npm run test:real`) — never in the gate.
+    exclude: ["**/node_modules/**", "test/real/**"],
     globalSetup: ["./test/global-setup.ts"],
     setupFiles: ["./test/setup.ts"],
     testTimeout: 20_000,

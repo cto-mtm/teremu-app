@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { armHero, heroStyle } from '../composables/useHero'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { normalizeName, vendorSummaries } from '../lib/domain'
@@ -89,11 +90,12 @@ const vendors = computed(() => {
         :key="v.key"
         :to="`/vendors/${v.key}`"
         class="card block hover:border-ember/40"
+        @click="armHero('vendor', v.key)"
       >
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
             <!-- HERO SOURCE: morphs into the detail page title -->
-            <div class="truncate font-semibold" :style="{ viewTransitionName: 'vendor-' + v.key }">
+            <div class="truncate font-semibold" :style="heroStyle('vendor', v.key)">
               {{ v.name }}
             </div>
             <div class="mt-0.5 text-xs text-smoke">

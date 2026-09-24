@@ -84,9 +84,9 @@ const weekStarts = computed(() => {
           class="mt-1 text-2xl font-bold"
           :class="margin.margin != null && margin.margin < dish.targetMarginPct ? 'text-coral-600' : 'text-herb-700'"
         >
-          {{ margin.margin != null ? margin.margin.toFixed(1) + '%' : '—' }}
+          {{ margin.margin != null ? n(margin.margin / 100, 'percent') : '—' }}
         </div>
-        <div class="text-[11px] text-smoke">{{ t('menu.target', { pct: dish.targetMarginPct }) }}</div>
+        <div class="text-[11px] text-smoke">{{ t('menu.target', { pct: n(dish.targetMarginPct / 100, 'percentWhole') }) }}</div>
       </div>
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.sold14') }}</div>

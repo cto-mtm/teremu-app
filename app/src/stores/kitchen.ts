@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { apiFetch } from '../lib/api'
+import { apiFetch, writeEpoch } from '../lib/api'
 import { replaceById } from '../lib/collections'
 import {
   expenseListSchema,
@@ -21,6 +21,7 @@ import type {
   MenuItem,
   RecipeLine,
   RevenueEntry,
+  Subcategory,
   Unit,
   VendorContact,
 } from '../lib/types'
@@ -42,6 +43,10 @@ export const useKitchenStore = defineStore('kitchen', () => {
 
   let lastFlags = { ingredients: true, menu: true, revenue: true, expenses: true, contacts: true }
 
+  let staleRetries = 0
+  // Bumped by reset() (location switch) — a load for the previous
+  // location must not land on the new one.
+  let generation = 0
   async function refresh(flags?: {
     ingredients?: boolean
     menu?: boolean
@@ -54,6 +59,8 @@ export const useKitchenStore = defineStore('kitchen', () => {
     if (flags) lastFlags = { ...lastFlags, ...flags }
     const f = lastFlags
     loading.value = true
+    const gen = generation
+    const epoch = writeEpoch()
     const results = await Promise.all([
       f.ingredients ? apiFetch<Ingredient[]>('/ingredients', undefined, ingredientListSchema) : null,
       f.menu ? apiFetch<MenuItem[]>('/menu-items', undefined, menuItemListSchema) : null,
@@ -61,6 +68,15 @@ export const useKitchenStore = defineStore('kitchen', () => {
       f.expenses ? apiFetch<ExpenseEntry[]>('/expenses', undefined, expenseListSchema) : null,
       f.contacts ? apiFetch<VendorContact[]>('/vendor-contacts', undefined, vendorContactListSchema) : null,
     ])
+    if (gen !== generation) return // location switched mid-load: drop it
+    // A write overlapped this load: its snapshot may predate it (the new
+    // ingredient would vanish). Load again instead — bounded, so a burst
+    // of writes can't loop forever.
+    if (writeEpoch() !== epoch && staleRetries < 3) {
+      staleRetries += 1
+      return refresh()
+    }
+    staleRetries = 0
     const [ing, menu, rev, exp, contacts] = results
     if (ing?.ok) ingredients.value = ing.data
     if (menu?.ok) menuItems.value = menu.data
@@ -276,11 +292,16 @@ export const useKitchenStore = defineStore('kitchen', () => {
     return null
   }
 
-  /** Re-categorize an ingredient (OCR guesses; the chef corrects). */
-  async function setCategory(ingredientId: string, category: Category): Promise<boolean> {
+  /** Re-categorize an ingredient (OCR guesses; the chef corrects).
+   * Omitting subcategory clears it — a category change invalidates it. */
+  async function setCategory(
+    ingredientId: string,
+    category: Category,
+    subcategory: Subcategory | null = null,
+  ): Promise<boolean> {
     const res = await apiFetch<Ingredient>(
       `/ingredients/${ingredientId}`,
-      { method: 'PUT', body: JSON.stringify({ category }) },
+      { method: 'PUT', body: JSON.stringify({ category, subcategory }) },
       ingredientSchema,
     )
     if (res.ok) {
@@ -310,6 +331,9 @@ export const useKitchenStore = defineStore('kitchen', () => {
    * the refetch lands, so nothing from the previous restaurant flashes
    * on screen (see docs/multi-location-plan.md). */
   function reset(): void {
+    generation += 1
+    staleRetries = 0
+    loading.value = false
     ingredients.value = []
     menuItems.value = []
     revenue.value = []

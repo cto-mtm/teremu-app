@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { User } from 'firebase/auth'
 import { signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
 import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
-import { meSchema } from '../lib/schemas'
+import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
+import { setCurrency } from '../i18n'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 }
@@ -14,6 +15,10 @@ export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false) // true once the initial auth state is known
   /** Membership + granular perms from GET /me (bootstraps server-side). */
   const profile = ref<Me | null>(null)
+  // The i18n currency is DERIVED from the active location's profile, never
+  // set by hand: every path that changes the profile (sign-in, reload after
+  // a Settings save, location switch, sign-out) re-renders every amount.
+  watch(() => profile.value?.currency ?? DEFAULT_CURRENCY, setCurrency, { immediate: true })
   const error = ref<string | null>(null)
   const busy = ref(false)
 
@@ -28,7 +33,22 @@ export const useAuthStore = defineStore('auth', () => {
     resolveProfile = resolve
   })
 
+  let _prevUid: string | null = null
+  // Set by signOut() so the phantom-logout diagnostic below doesn't
+  // false-positive on every legitimate logout; consumed (reset) by the
+  // very next auth-state event, whatever it is.
+  let _explicitSignOut = false
   watchAuth((u) => {
+    if (import.meta.env.DEV) {
+      const transition = `${_prevUid ?? '(init)'} → ${u ? u.uid : 'null'}`
+      console.warn(`[auth] onAuthStateChanged: ${transition}`)
+      if (_prevUid && !u && !_explicitSignOut) {
+        console.error('[auth] ⚠️ UNEXPECTED SIGN-OUT — user went from signed-in to null without explicit signOut')
+        console.trace()
+      }
+      _prevUid = u?.uid ?? null
+    }
+    _explicitSignOut = false
     user.value = u
     ready.value = true
     resolveReady?.()
@@ -46,6 +66,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function loadProfile(): Promise<void> {
     const res = await apiFetch<Me>('/me', undefined, meSchema)
+    if (import.meta.env.DEV) {
+      console.warn('[auth] loadProfile result:', res.ok ? 'ok' : `FAILED: ${res.error}`)
+    }
     profile.value = res.ok ? res.data : null
     if (res.ok) {
       // Cold start (no/stale X-Restaurant-Id) resolves a default
@@ -95,6 +118,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function signOut(): Promise<void> {
+    if (import.meta.env.DEV) console.warn('[auth] explicit signOut() called')
+    // Before the await: the auth-state callback fires during it.
+    _explicitSignOut = true
     await fbSignOut()
   }
 

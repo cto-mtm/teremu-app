@@ -35,7 +35,9 @@ const CONFIG = {
   },
   // Pre-deploy test gate — array of commands run (in order) against the local
   // emulators before anything ships. Empty array = no gate. Skip with --skip-tests.
-  testGate: ['npm run test'],
+  // Integration first (fast, API-level), then e2e (slow, drives the real UI in
+  // a browser) — a broken API should fail in seconds, not after a browser run.
+  testGate: ['npm run test', 'npm run test:e2e'],
   // Free stale emulator ports before the gate (the gate boots its own).
   killEmulatorPorts: true,
 };

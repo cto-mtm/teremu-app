@@ -8,6 +8,8 @@ import { useAuthStore } from '../stores/auth'
 import AssistantSheet from './AssistantSheet.vue'
 import BootLoader from './BootLoader.vue'
 import LocationSwitcher from './LocationSwitcher.vue'
+import MobileLauncher from './MobileLauncher.vue'
+import NavIcon from './NavIcon.vue'
 import OnboardingWizard from './OnboardingWizard.vue'
 import logoColor from '../assets/logo-color.svg'
 
@@ -29,6 +31,31 @@ watch(() => route.path, () => (navOpen.value = false))
 // Stateless AI assistant, available to every member (context filtered
 // server-side by their perms).
 const assistantOpen = ref(false)
+
+// Mobile launcher (full-screen hub). Auto-opens ONCE per app session on
+// phones — the "land on the menu, then dive into pages" flow — then
+// it's reopened on demand via the bottom-right FAB. sessionStorage (not
+// localStorage) so it re-greets on a fresh launch but never nags across
+// in-app navigations. Never on desktop (the sidebar is always visible),
+// and it yields to the first-login onboarding tour: a brand-new user
+// sees the tour, and the launcher waits for their next session / the FAB
+// (checking onboarding's own localStorage key rather than its ref, which
+// is declared below).
+const launcherOpen = ref(false)
+const LAUNCHER_SEEN = 'teremu-launcher-seen'
+watch(
+  () => [authStore.ready, authStore.user, authStore.profile] as const,
+  ([ready, user, profile]) => {
+    if (!ready || !user || !profile) return
+    const isMobile = matchMedia('(max-width: 767px)').matches
+    const onboardingPending = !localStorage.getItem(`teremu-onboarded:${user.uid}`)
+    if (isMobile && !onboardingPending && !sessionStorage.getItem(LAUNCHER_SEEN)) {
+      launcherOpen.value = true
+      sessionStorage.setItem(LAUNCHER_SEEN, '1')
+    }
+  },
+  { immediate: true },
+)
 
 // First-login tour: per DEVICE (localStorage, keyed by uid so shared
 // tablets behave). Skipping counts as seen; closing it marks it seen.
@@ -52,12 +79,12 @@ watch(onboardingOpen, (isOpen) => {
 // Nav filtered by the member's granular perms (server enforces too).
 const tabs = computed(() =>
   [
-    { to: '/', label: t('shell.tab.pulse'), icon: 'pulse', show: authStore.can('finance') },
-    { to: '/scan', label: t('shell.tab.scan'), icon: 'scan', show: authStore.can('scan') },
-    { to: '/triage', label: t('shell.tab.triage'), icon: 'triage', badge: invoicesStore.triageCount, show: authStore.can('triage') },
-    { to: '/menu', label: t('shell.tab.menu'), icon: 'menu', show: authStore.can('menu') },
-    { to: '/pantry', label: t('shell.tab.pantry'), icon: 'pantry', show: authStore.can('pantry') },
-    { to: '/vendors', label: t('shell.tab.vendors'), icon: 'vendors', show: authStore.can('vendors') },
+    { to: '/', label: t('shell.tab.pulse'), icon: 'pulse' as const, show: authStore.can('finance') },
+    { to: '/scan', label: t('shell.tab.scan'), icon: 'scan' as const, show: authStore.can('scan') },
+    { to: '/triage', label: t('shell.tab.triage'), icon: 'triage' as const, badge: invoicesStore.triageCount, show: authStore.can('triage') },
+    { to: '/menu', label: t('shell.tab.menu'), icon: 'menu' as const, show: authStore.can('menu') },
+    { to: '/pantry', label: t('shell.tab.pantry'), icon: 'pantry' as const, show: authStore.can('pantry') },
+    { to: '/vendors', label: t('shell.tab.vendors'), icon: 'vendors' as const, show: authStore.can('vendors') },
   ].filter((tab) => tab.show),
 )
 
@@ -65,25 +92,42 @@ const tabs = computed(() =>
 const isActive = (to: string): boolean =>
   to === '/' ? route.path === '/' : route.path.startsWith(to)
 
-// Load the member's data once their profile (and perms) is known; only
-// hit endpoints they can read. Bounce to /login on sign-out (the route
-// guard only runs on navigation, not on auth-state changes).
+// Load the member's data when WHO/WHERE they are changes — the location,
+// role or perms — and only hit endpoints they can read. Keyed on that
+// scope rather than the profile object: /me returns a fresh object on
+// every reloadProfile() (currency/plan/rename saves), and refetching
+// every dataset — invoices alone ~220 KB — for a label change is waste.
+const dataScope = computed(() => {
+  const p = authStore.profile
+  return authStore.ready && authStore.user && p ? `${p.restaurantId}|${p.role}|${JSON.stringify(p.perms)}` : null
+})
 watch(
-  () => [authStore.ready, authStore.user, authStore.profile] as const,
-  ([ready, user, profile]) => {
-    if (!ready) return
-    if (user && profile) {
-      if (authStore.can('triage') || authStore.can('finance') || authStore.can('vendors')) {
-        void invoicesStore.refresh()
+  dataScope,
+  (scope) => {
+    if (!scope) return
+    if (authStore.can('triage') || authStore.can('finance') || authStore.can('vendors')) {
+      void invoicesStore.refresh()
+    }
+    void kitchenStore.refresh({
+      ingredients: authStore.can('pantry') || authStore.can('menu'),
+      menu: authStore.can('menu') || authStore.can('finance') || authStore.can('pantry'),
+      revenue: authStore.can('finance'),
+      expenses: authStore.can('finance') || authStore.can('vendors'),
+      contacts: authStore.can('pantry') || authStore.can('vendors'),
+    })
+  },
+  { immediate: true },
+)
+
+// Bounce to /login on sign-out (the route guard only runs on
+// navigation, not on auth-state changes).
+watch(
+  () => [authStore.ready, authStore.user] as const,
+  ([ready, user]) => {
+    if (ready && !user && route.name !== 'login') {
+      if (import.meta.env.DEV) {
+        console.warn('[AppShell] redirecting to login — user is null, current route:', route.name)
       }
-      void kitchenStore.refresh({
-        ingredients: authStore.can('pantry') || authStore.can('menu'),
-        menu: authStore.can('menu') || authStore.can('finance') || authStore.can('pantry'),
-        revenue: authStore.can('finance'),
-        expenses: authStore.can('finance') || authStore.can('vendors'),
-        contacts: authStore.can('pantry') || authStore.can('vendors'),
-      })
-    } else if (ready && !user && route.name !== 'login') {
       void router.replace({ name: 'login' })
     }
   },
@@ -149,30 +193,7 @@ watch(
           :class="isActive(tab.to) ? 'bg-ember-50 text-ember-700' : 'text-smoke hover:bg-gray-50 hover:text-ink'"
           :aria-label="tab.label"
         >
-          <svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <template v-if="tab.icon === 'pulse'">
-              <path d="M3 12h4l3-8 4 16 3-8h4" />
-            </template>
-            <template v-else-if="tab.icon === 'scan'">
-              <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
-              <circle cx="12" cy="12" r="3.5" />
-            </template>
-            <template v-else-if="tab.icon === 'triage'">
-              <path d="M4 4h16v12l-4 4H8l-4-4z" />
-              <path d="M4 13h5l1.5 2h3L15 13h5" />
-            </template>
-            <template v-else-if="tab.icon === 'menu'">
-              <path d="M3 11h18M5 11a7 7 0 0 1 14 0M8 19h8M12 19v-3" />
-            </template>
-            <template v-else-if="tab.icon === 'vendors'">
-              <path d="M1 5h14v11H1zM15 9h4l4 4v3h-8z" />
-              <circle cx="6" cy="18.5" r="1.8" />
-              <circle cx="18" cy="18.5" r="1.8" />
-            </template>
-            <template v-else>
-              <path d="M4 8h16v12H4zM4 8l2-4h12l2 4M12 12v4" />
-            </template>
-          </svg>
+          <NavIcon :name="tab.icon" class="h-5 w-5 shrink-0" />
           <span>{{ tab.label }}</span>
           <span
             v-if="tab.badge"
@@ -189,10 +210,7 @@ watch(
           :aria-label="t('assistant.open')"
           @click="assistantOpen = true"
         >
-          <svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z" />
-            <path d="M19 15l.6 1.9L21.5 17.5l-1.9.6L19 20l-.6-1.9L16.5 17.5l1.9-.6L19 15Z" />
-          </svg>
+          <NavIcon name="assistant" class="h-5 w-5 shrink-0" />
           <span>{{ t('assistant.title') }}</span>
         </button>
         <RouterLink
@@ -201,10 +219,7 @@ watch(
           :class="isActive('/settings') ? 'bg-ember-50 text-ember-700' : 'text-smoke hover:bg-gray-50 hover:text-ink'"
           :aria-label="t('shell.settings')"
         >
-          <svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z" />
-          </svg>
+          <NavIcon name="settings" class="h-5 w-5 shrink-0" />
           <span>{{ t('shell.settings') }}</span>
         </RouterLink>
         <button
@@ -212,9 +227,7 @@ watch(
           :aria-label="t('auth.signOut')"
           @click="authStore.signOut"
         >
-          <svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-          </svg>
+          <NavIcon name="signout" class="h-5 w-5 shrink-0" />
           <span>{{ t('auth.signOut') }}</span>
         </button>
       </div>
@@ -241,6 +254,26 @@ watch(
       :key="authStore.profile?.restaurantId"
       v-model="assistantOpen"
     />
+
+    <!-- Mobile launcher: full-screen hub + its bottom-right FAB. Both
+         phone-only (md:hidden); desktop uses the sidebar. Hidden on bare
+         routes (the scanner owns the viewport). -->
+    <template v-if="authStore.user && authStore.profile && !bare">
+      <button
+        class="pb-safe fixed right-4 bottom-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full bg-ember text-white shadow-lg transition-transform active:scale-90 md:hidden"
+        :aria-label="t('shell.launcher.open')"
+        @click="launcherOpen = true"
+      >
+        <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+      </button>
+      <MobileLauncher v-model="launcherOpen" />
+    </template>
+
     <OnboardingWizard v-if="authStore.user" v-model="onboardingOpen" />
   </div>
 </template>

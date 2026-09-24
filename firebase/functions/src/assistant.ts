@@ -7,6 +7,8 @@ import {
   ingredientDocSchema,
   invoiceDocSchema,
   menuItemDocSchema,
+  DEFAULT_CURRENCY,
+  type Currency,
 } from "./models.js";
 
 /**
@@ -82,10 +84,10 @@ async function buildContext(rid: string, member: Member): Promise<Record<string,
   return ctx;
 }
 
-const SYSTEM = `You are Teremu's kitchen assistant for an independent restaurant. Answer the user's question using ONLY the JSON data provided. Rules:
+const systemPrompt = (currency: Currency) => `You are Teremu's kitchen assistant for an independent restaurant. Answer the user's question using ONLY the JSON data provided. Rules:
 - Reply in the same language as the question (usually Spanish).
 - Be concise and concrete: numbers, names, short sentences. No markdown headers.
-- Money is USD unless the data suggests otherwise. Percentages to 1 decimal.
+- Money is in ${currency} (the restaurant's currency). Percentages to 1 decimal.
 - If the data doesn't contain the answer, say so plainly — never invent figures.
 - Margin of a dish = (price − plate cost) / price, where plate cost = Σ recipe qty × ingredient price (convert g/kg and ml/L when needed).`;
 
@@ -94,6 +96,7 @@ export async function askAssistant(
   member: Member,
   question: string,
   history: { role: "user" | "assistant"; content: string }[] = [],
+  currency: Currency = DEFAULT_CURRENCY,
 ): Promise<string> {
   const context = await buildContext(rid, member);
 
@@ -109,7 +112,7 @@ export async function askAssistant(
   try {
     const answer = await chatCompletion(
       [
-        { role: "system", content: SYSTEM },
+        { role: "system", content: systemPrompt(currency) },
         // Session turns (client-held) so follow-ups resolve; the DATA
         // snapshot still rebuilds fresh on every call.
         ...history.slice(-10),

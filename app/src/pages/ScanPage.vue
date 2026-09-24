@@ -177,7 +177,11 @@ async function send(source: Blob | HTMLCanvasElement): Promise<void> {
       limitHit.value = true
       return
     }
-    uploadError.value = t('scan.uploadFailed')
+    // duplicate_image / duplicate_page — the server refused a re-upload
+    // of bytes it already holds (double-tap, retry, same library photo).
+    uploadError.value = store.error?.includes('duplicate')
+      ? t('scan.duplicate')
+      : t('scan.uploadFailed')
     if (errorTimer) clearTimeout(errorTimer)
     errorTimer = setTimeout(() => (uploadError.value = null), 4000)
   }

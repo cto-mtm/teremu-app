@@ -34,6 +34,13 @@ firebase/functions/lib/
 app/ios/
 app/android/
 
+# Real client documents (a customer's actual supplier invoices, receipts
+# and rent slips — names, CIF/NIE, IBANs). Never commit them or anything
+# derived from them (page JPEGs, golden truth, recorded model replies).
+# The corpus lives only on machines that were handed it; the real-data
+# tests skip themselves when it is absent. See docs/real-samples.md.
+docs/samples/real/
+
 # Misc
 .DS_Store
 .claude/

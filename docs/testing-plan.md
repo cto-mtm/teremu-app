@@ -1,5 +1,13 @@
 # Integration testing plan
 
+> **Superseded in part (2026-09-23): the E2E tier now exists.** Everything below about
+> the *integration* tier still stands. What no longer does is the "no Playwright / no
+> E2E tier" call in **Settled decisions** and the deferral in **Out of scope** / **Future
+> tiers** — that mirrored Dirumed's house style at the time, and Dirumed has since added a
+> Playwright suite of its own. Teremu's now lives in `e2e/` (see `e2e/README.md`): sign-in
+> through the Auth emulator's Google picker, then scan → triage → approve, pantry,
+> margins and revenue, run in the pre-deploy gate after the integration suite.
+
 Status: **implemented, pending a first local gate run.** All specs in the coverage matrix below are written (`firebase/functions/test/`), type-check cleanly, and load correctly under Vitest. They have NOT yet been run against live emulators by their author — that requires `firebase emulators:exec`, and the environment that wrote this suite couldn't reach the Firestore/Storage emulator downloads (network-restricted sandbox). Run `npm test` from the repo root once to confirm everything is green; report back anything red. We deliberately skipped unit tests; these are **integration tests** that exercise the real API against the Firebase Emulator Suite. It mirrors the proven house style from the Dirumed project's `firebase/functions/test/` suite, adapted to Teremu's hand-rolled router.
 
 ## Why integration (not unit) is the right first tier
@@ -120,17 +128,26 @@ firebase/functions/
 
 ## Out of scope / limits
 
-- **Real NVIDIA OCR** — mock only (optionally one opt-in test gated on `NVIDIA_API_KEY`).
+- **Real NVIDIA OCR** — mock only in this tier. Real documents + real model output live in the opt-in real-corpus tier (`npm run test:real`, record/replay — see `docs/real-samples.md`), never in the gate.
 - **Real Stripe network / live deploy** — webhook via signed fixture; checkout redirects and `firebase deploy` validated manually.
-- **UI E2E** and **client pure-math unit tests** — deferred.
+- **Client pure-math unit tests** — still deferred.
+- **UI E2E** — no longer deferred; it lives in `e2e/` (Playwright). Out of scope *for this
+  document*, which covers the integration tier only.
 
 ## Future tiers (not now)
 
-- **Playwright E2E** against `npm run dev` + emulators: sign in via the Auth-emulator fake picker, scan → triage → approve → margin updates, location switcher. Add once the API suite is stable.
+- ~~**Playwright E2E**~~ — done. `e2e/` drives `npm run dev` + the emulators: sign in via
+  the Auth-emulator fake picker, scan → triage → approve, pantry true-up, dish margins,
+  revenue → pantry depletion. The location switcher is still uncovered and is the obvious
+  next spec.
 
 ## Settled decisions
 
-Runner (**Vitest**), location (**`firebase/functions/test/`**), request mechanism (**HTTP against the emulated function**), and **no Playwright / no E2E tier** all follow the Dirumed house style and are decided — do not introduce a browser-test tool.
+For the integration tier: runner (**Vitest**), location (**`firebase/functions/test/`**), and request mechanism (**HTTP against the emulated function**) follow the Dirumed house style and are decided.
+
+The former "no Playwright / no E2E tier" decision is **reversed** — Dirumed added a
+Playwright suite and Teremu followed (`e2e/`, same layout and runner). Browser tests
+belong there and nowhere else; do not add a second browser-test tool.
 
 ## Execution & verification (for whoever implements this)
 
