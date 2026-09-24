@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useAuthStore } from '../stores/auth'
+import { PDF_MAX_PAGES, isPdf, renderPdfPages, type RenderedPdf } from '../lib/pdf'
 import logoWhite from '../assets/logo-white.svg'
 
 /**
@@ -159,15 +160,30 @@ function retake(): void {
   qualityIssue.value = null
 }
 
+function showError(message: string): void {
+  uploadError.value = message
+  if (errorTimer) clearTimeout(errorTimer)
+  errorTimer = setTimeout(() => (uploadError.value = null), 4000)
+}
+
 async function send(source: Blob | HTMLCanvasElement): Promise<void> {
   // In multi-page mode only a NEW invoice bumps the invoice counter —
   // additional pages count in the page badge instead.
   const newInvoice = !multiPage.value || !store.multipageId
+  await track(newInvoice, () => (multiPage.value ? store.capturePage(source) : store.capture(source)))
+}
+
+/**
+ * Wrap one upload with the scanner's feedback: counter, flash, haptics,
+ * spinner and the failure notice. `upload` resolves to the server's
+ * verdict — the same contract as the store's capture methods.
+ */
+async function track(newInvoice: boolean, upload: () => Promise<boolean>): Promise<void> {
   if (newInvoice) count.value += 1
   flash.value += 1 // retriggers the confirmation flash overlay
   navigator.vibrate?.(30)
   uploading.value += 1
-  const ok = multiPage.value ? await store.capturePage(source) : await store.capture(source)
+  const ok = await upload()
   uploading.value -= 1
   if (!ok) {
     if (newInvoice) count.value -= 1
@@ -179,12 +195,61 @@ async function send(source: Blob | HTMLCanvasElement): Promise<void> {
     }
     // duplicate_image / duplicate_page — the server refused a re-upload
     // of bytes it already holds (double-tap, retry, same library photo).
-    uploadError.value = store.error?.includes('duplicate')
-      ? t('scan.duplicate')
-      : t('scan.uploadFailed')
-    if (errorTimer) clearTimeout(errorTimer)
-    errorTimer = setTimeout(() => (uploadError.value = null), 4000)
+    showError(store.error?.includes('duplicate') ? t('scan.duplicate') : t('scan.uploadFailed'))
   }
+}
+
+/**
+ * A PDF from the picker: rasterized on device (lib/pdf.ts), then its
+ * pages go up as ONE invoice. In multi-page mode they append to the open
+ * invoice like any other shot; otherwise a multi-page PDF opens and
+ * closes its own session so the server runs one OCR over every page.
+ * The scanner holds a single multi-page session, so PDFs are serialized
+ * through `pdfQueue` even when several are picked at once.
+ */
+let pdfQueue: Promise<void> = Promise.resolve()
+
+function enqueuePdf(file: File): void {
+  pdfQueue = pdfQueue.then(() => sendPdf(file)).catch(() => undefined)
+}
+
+async function sendPdf(file: File): Promise<void> {
+  uploading.value += 1 // rendering counts as "in flight" — the spinner shows
+  let rendered: RenderedPdf
+  try {
+    rendered = await renderPdfPages(file)
+  } catch {
+    // Encrypted, corrupt, or not really a PDF — tell them, keep the camera live.
+    uploading.value -= 1
+    navigator.vibrate?.([60, 40, 60])
+    showError(t('scan.pdfUnreadable'))
+    return
+  }
+  uploading.value -= 1
+  const { pages, total } = rendered
+  if (pages.length === 0) {
+    showError(t('scan.pdfUnreadable'))
+    return
+  }
+  if (total > pages.length) showError(t('scan.pdfTruncated', { n: PDF_MAX_PAGES, total }))
+  setThumbFromCanvas(pages[0])
+
+  if (multiPage.value || pages.length === 1) {
+    // Sequential so page order holds inside the open invoice.
+    for (const page of pages) await send(page)
+    return
+  }
+  await track(true, async () => {
+    let uploaded = 0
+    for (const page of pages) {
+      if (!(await store.capturePage(page))) break
+      uploaded += 1
+    }
+    // Close the session even after a mid-way failure — a partial invoice
+    // in Triage beats pages stranded on the server.
+    const closed = await store.finishMultipage()
+    return uploaded === pages.length && closed
+  })
 }
 
 /** From the scan-limit CTA — the user is out of scans anyway, so leaving
@@ -214,18 +279,24 @@ function snap(): void {
 function onFiles(event: Event): void {
   const files = (event.target as HTMLInputElement).files
   if (!files || files.length === 0) return
-  releaseThumb()
-  lastThumb.value = URL.createObjectURL(files[files.length - 1])
-  thumbIsObjectUrl = true
   const picked = Array.from(files)
+  const pdfs = picked.filter(isPdf)
+  const images = picked.filter((f) => !isPdf(f))
+  if (images.length > 0) {
+    // A PDF can't be an <img>; its thumbnail comes from the rendered page.
+    releaseThumb()
+    lastThumb.value = URL.createObjectURL(images[images.length - 1])
+    thumbIsObjectUrl = true
+  }
   if (multiPage.value) {
     // Pages of ONE invoice — upload sequentially so page order holds.
     void (async () => {
-      for (const f of picked) await send(f)
+      for (const f of images) await send(f)
     })()
   } else {
-    picked.forEach((f) => void send(f))
+    images.forEach((f) => void send(f))
   }
+  pdfs.forEach(enqueuePdf)
   if (fileInput.value) fileInput.value.value = ''
 }
 </script>
@@ -465,11 +536,13 @@ function onFiles(event: Event): void {
       </div>
     </div>
 
+    <!-- No `capture` attribute on purpose: with it, iOS and Android skip
+         the picker and open the camera, which the shutter already covers.
+         Without it the OS offers the photo library and Files (PDFs). -->
     <input
       ref="fileInput"
       type="file"
-      accept="image/*"
-      capture="environment"
+      accept="image/*,application/pdf,.pdf"
       multiple
       hidden
       @change="onFiles"

@@ -16,9 +16,9 @@ import NavIcon from './NavIcon.vue'
  *
  * Upload reuses the scanner's exact path (invoicesStore.capture →
  * compress → POST /invoices), so an uploaded image rides the same OCR
- * pipeline as a camera shot. Image files only for now — PDF invoices
- * need the server-side rasterization pipeline (docs/email-ingestion.md),
- * which isn't built yet; the file input's accept list reflects that.
+ * pipeline as a camera shot. Image files only here — PDFs go through the
+ * scanner's picker (ScanPage rasterizes them on device via lib/pdf.ts);
+ * the file input's accept list reflects that.
  */
 const model = defineModel<boolean>({ required: true })
 
