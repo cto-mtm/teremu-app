@@ -7,8 +7,16 @@ const es = {
   metric: 'Métrico',
   imperial: 'Imperial',
   currency: {
-    title: 'Moneda',
-    desc: 'La moneda en que se muestran todos los importes de este local. Cambiarla solo cambia el símbolo: los importes no se convierten.',
+    title: 'Moneda base',
+    desc: 'La moneda en la que se agregan todos los importes de este local: despensa, platos, márgenes y Pulse. Una factura en otra moneda se convierte a esta al aprobarla, con la tasa que confirmes en triaje.',
+    locked: 'Bloqueada: ya hay documentos aprobados en esta moneda.',
+  },
+  region: {
+    title: 'País y zona horaria',
+    desc: 'Sugeridos desde tu dispositivo; cámbialos si no son correctos. El país decide qué fuentes de tipo de cambio se ofrecen en triaje.',
+    country: 'País',
+    timezone: 'Zona horaria',
+    saved: 'Guardado',
   },
   labor: {
     title: 'Mano de obra',
@@ -74,8 +82,16 @@ const en: typeof es = {
   metric: 'Metric',
   imperial: 'Imperial',
   currency: {
-    title: 'Currency',
-    desc: 'The currency every amount in this location is shown in. Changing it only changes the symbol — amounts are not converted.',
+    title: 'Base currency',
+    desc: 'The currency every amount in this location is aggregated in: pantry, dishes, margins and Pulse. An invoice in another currency is converted into it at approval, at the rate you confirm in Triage.',
+    locked: 'Locked: documents have already been approved in this currency.',
+  },
+  region: {
+    title: 'Country & timezone',
+    desc: 'Suggested from your device; change them if they are wrong. The country decides which exchange-rate sources Triage offers.',
+    country: 'Country',
+    timezone: 'Timezone',
+    saved: 'Saved',
   },
   labor: {
     title: 'Labor',

@@ -22,14 +22,38 @@ export const UNITS = [
 export const unitSchema = z.enum(UNITS);
 export type Unit = z.infer<typeof unitSchema>;
 
-// The restaurant's currency (ISO 4217) — a DISPLAY attribute: amounts are
-// stored as plain numbers in it, never converted. How a number looks
-// (1,234.56 vs 1.234,56, symbol before/after) follows the UI language;
-// which symbol it carries follows this. Absent on a restaurant = default.
-export const CURRENCIES = ["USD", "EUR", "GBP", "MXN", "CAD"] as const;
+// ── Money (see docs/multi-currency.md — "it's timezones") ───────────
+// Three currencies, three jobs:
+//   document — what the paper says (`invoices/{id}.currency`; absent = base)
+//   base     — the restaurant's "UTC" (`restaurants/{rid}.currency`): every
+//              aggregated amount (pantry, dishes, margins, Pulse) is in it;
+//              foreign documents are converted into it ONCE, at approval
+//   display  — a per-viewer render-only lens (Phase 2)
+// How a number LOOKS (1,234.56 vs 1.234,56, symbol position) follows the
+// UI language; which symbol it carries follows the currency.
+export const CURRENCIES = ["USD", "EUR", "GBP", "MXN", "CAD", "VES"] as const;
 export const currencySchema = z.enum(CURRENCIES);
 export type Currency = z.infer<typeof currencySchema>;
 export const DEFAULT_CURRENCY: Currency = "USD";
+
+// Where the rate that took a foreign document to base came from. A closed
+// list both packages validate against; the *behaviour* behind a source
+// lives in the API (`fx/` for the generic ones, `countries/<cc>/` for the
+// country-specific ones — never anywhere else).
+//   printed  — the document itself prints the rate ("Tasa BCV 36,52")
+//   manual   — the reviewer typed it
+//   vendor   — what this vendor's last document used (learned)
+//   ecb      — European Central Bank reference crosses
+//   bcv      — Banco Central de Venezuela official rate
+//   parallel — a market reference rate (opt-in, country pack)
+export const FX_SOURCES = ["printed", "manual", "vendor", "ecb", "bcv", "parallel"] as const;
+export const fxSourceSchema = z.enum(FX_SOURCES);
+export type FxSource = z.infer<typeof fxSourceSchema>;
+
+/** ISO 3166-1 alpha-2, upper-case ("ES", "VE"). Selects the country pack. */
+export const countryCodeSchema = z.string().regex(/^[A-Z]{2}$/);
+/** IANA zone id ("Europe/Madrid"). Validated for shape only. */
+export const timezoneSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_+\-/]+$/);
 
 // "discarded" is the operator dismissing a scan from Triage (a photo of
 // a hand, a duplicate). The document and its image are kept — it just

@@ -3,14 +3,18 @@ import { z } from "zod";
 import { chatCompletion, llmEnabled, parseModelJson } from "./llm.js";
 import {
   categorySchema,
+  currencySchema,
+  DEFAULT_CURRENCY,
   docTypeSchema,
   normalizeName,
   pairSubcategory,
   SUBCATEGORIES,
   subcategorySchema,
   unitSchema,
+  type Currency,
   type LineItem,
 } from "./models.js";
+import type { CountryPack } from "./countries/types.js";
 
 // "meat: beef|pork|lamb|cured_meats; poultry: chicken|…" — the taxonomy
 // rendered for the prompt straight from the shared vocabulary, so the
@@ -30,6 +34,8 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
   "confidence": 0.9,
   "vendor": "vendor or supplier business name, or null",
   "date": "invoice date as YYYY-MM-DD, or null",
+  "currency": "ISO 4217 code of the currency the LINE prices are printed in (USD, EUR, VES, MXN, GBP, CAD), or null if it cannot be determined",
+  "printedFxRate": null,
   "lineItems": [
     { "name": "clean product name", "match": "EXACT name from KNOWN INGREDIENTS if it is the same product, else null", "qty": 1.0, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen, case, box, bunch", "unitPrice": 0.00, "total": 0.00, "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other", "subcategory": "the specific type within the category, or null", "packQty": null, "packUnit": null }
   ],
@@ -48,6 +54,7 @@ Rules:
 - "subcategory" must come from ITS OWN category's list (or be null when unsure): ${SUBCATEGORY_GUIDE}.
 - Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
 - Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
+- "currency" is the currency the LINE prices are printed in; report every amount in that one currency. If the document ALSO prints an exchange rate ("tasa", "tipo de cambio", "T/C", "exchange rate") — typically next to a grand total shown in a second currency — copy that rate as a plain number into "printedFxRate" and still report "total" in the line currency. Otherwise "printedFxRate" is null.
 - Never write a " character inside a value: spell inches as "in" ("12 in", not 12") and drop quotes around brand names.
 - If the image is a purchase document but too blurry/dark to read, reply {"error": "unreadable"}.`;
 
@@ -58,8 +65,24 @@ export interface OcrResult {
   lineItems: LineItem[];
   total: number;
   confidence: number;
+  /** Document currency. A code = read from the page; null = the model
+   * could not tell (Triage gets a `currency_assumed` warning); undefined
+   * = not reported at all (a reply that predates the field). */
+  currency?: Currency | null;
+  /** Exchange rate the document itself prints, if any. */
+  printedFxRate: number | null;
   unreadable?: boolean;
   notDocument?: boolean;
+}
+
+/** Everything about the restaurant the extraction is allowed to know. */
+export interface ExtractionContext {
+  knownIngredients?: string[];
+  restaurantName?: string | null;
+  /** The restaurant's base currency — a hint line, never an override. */
+  baseCurrency?: Currency;
+  /** The restaurant's country pack: OCR hints, tax-line names, aliases. */
+  pack?: CountryPack;
 }
 
 // ── Zod schema for the (untrusted) model output ─────────────────────
@@ -87,9 +110,31 @@ const ocrResponseSchema = z.object({
   confidence: z.coerce.number().min(0).max(1).catch(0.5),
   vendor: z.string().min(1).nullable().catch(null),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().catch(null),
+  // Three states on purpose (see OcrResult.currency): an off-vocabulary
+  // code degrades to "not reported", never to "assumed".
+  currency: currencySchema.nullable().optional().catch(undefined),
+  printedFxRate: z.coerce.number().positive().nullable().optional().catch(null),
   lineItems: z.array(ocrLineSchema).catch([]),
   total: z.coerce.number().positive().catch(0),
 });
+
+/**
+ * Country-pack aliases ("Bs.D" → "VES") applied to the RAW reply before
+ * the schema sees it — the model was told to answer in ISO codes, but a
+ * local spelling is the likeliest slip and the schema would otherwise
+ * drop it to "not reported".
+ */
+function applyCurrencyAliases(raw: unknown, aliases: Record<string, Currency> | undefined): unknown {
+  if (!raw || typeof raw !== "object" || !("currency" in raw)) return raw;
+  const value = (raw as { currency: unknown }).currency;
+  if (typeof value !== "string") return raw;
+  const trimmed = value.trim();
+  const upper = trimmed.toUpperCase();
+  const aliased =
+    aliases &&
+    Object.entries(aliases).find(([k]) => k.toLowerCase() === trimmed.toLowerCase())?.[1];
+  return { ...(raw as object), currency: aliased ?? upper };
+}
 
 function sanitize(
   parsed: z.infer<typeof ocrResponseSchema>,
@@ -126,6 +171,8 @@ function sanitize(
     lineItems: items,
     total: parsed.total > 0 ? parsed.total : +items.reduce((s, l) => s + l.total, 0).toFixed(2),
     confidence: parsed.confidence,
+    currency: parsed.currency,
+    printedFxRate: parsed.printedFxRate ?? null,
   };
 }
 
@@ -141,12 +188,15 @@ export const imageDataUrl = (b64: string): string => `data:image/jpeg;base64,${b
 
 export async function extractInvoice(
   imagesBase64: string[],
-  knownIngredients: string[] = [],
-  restaurantName: string | null = null,
+  context: ExtractionContext = {},
 ): Promise<OcrResult> {
+  const knownIngredients = context.knownIngredients ?? [];
+  const restaurantName = context.restaurantName ?? null;
+  const baseCurrency = context.baseCurrency ?? DEFAULT_CURRENCY;
+
   if (!llmEnabled()) {
     logger.warn("LLM API key not set — returning mock OCR extraction");
-    return mockExtraction();
+    return mockExtraction(baseCurrency);
   }
 
   let prompt = EXTRACTION_PROMPT;
@@ -158,6 +208,14 @@ export async function extractInvoice(
   }
   if (restaurantName) {
     prompt += `\n\nBUYER (the restaurant receiving these goods — never the vendor): ${JSON.stringify(restaurantName)}`;
+  }
+  // The restaurant's own currency is a prior, not an answer: most of its
+  // documents are in it, but the page wins when it says otherwise.
+  prompt += `\n\nBASE CURRENCY (the restaurant's own; most of its documents are in it — but report what is PRINTED): ${baseCurrency}`;
+  const pack = context.pack;
+  if (pack?.ocrHints) prompt += `\n\n${pack.ocrHints}`;
+  if (pack?.nonProductLineNames?.length) {
+    prompt += `\n\nAlso treat these as non-product lines: skip them but include their sum in "total": ${pack.nonProductLineNames.join(", ")}.`;
   }
 
   const raw = await chatCompletion(
@@ -184,16 +242,16 @@ export async function extractInvoice(
       json: { name: "invoice_extraction", schema: ocrResponseSchema },
     },
   );
-  const parsed = ocrResponseSchema.parse(parseModelJson(raw));
+  const parsed = ocrResponseSchema.parse(applyCurrencyAliases(parseModelJson(raw), pack?.currencyAliases));
   if (parsed.error)
-    return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, unreadable: true };
+    return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, printedFxRate: null, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).
   if (parsed.kind === "other" || parsed.confidence < 0.3)
-    return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, notDocument: true };
+    return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, printedFxRate: null, notDocument: true };
   return sanitize(parsed, knownIngredients, restaurantName);
 }
 
-function mockExtraction(): OcrResult {
+function mockExtraction(baseCurrency: Currency): OcrResult {
   const pool: [string, LineItem["unit"], number, LineItem["category"], LineItem["subcategory"]][] = [
     ["Roma Tomatoes", "lb", 2.15, "produce", "vegetables"],
     ["Chicken Breast", "lb", 3.4, "poultry", "chicken"],
@@ -221,5 +279,9 @@ function mockExtraction(): OcrResult {
     lineItems,
     total: +lineItems.reduce((s, l) => s + l.total, 0).toFixed(2),
     confidence: 1,
+    // The offline mock is a same-currency document: the foreign-document
+    // path is exercised by tests and, later, by country packs' fixtures.
+    currency: baseCurrency,
+    printedFxRate: null,
   };
 }

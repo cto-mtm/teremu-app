@@ -7,6 +7,7 @@ import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { apiFetch } from '../lib/api'
+import { COUNTRY_CODES, countryName, timezoneOptions } from '../lib/regions'
 import { billingUrlSchema, healthSchema, membersResponseSchema } from '../lib/schemas'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
@@ -65,11 +66,13 @@ async function togglePlan(): Promise<void> {
   if (res.ok) await auth.reloadProfile()
 }
 
-// ── Currency (owner only, restaurant-level) ─────────────────────
-// Display only: amounts are stored as plain numbers, so switching
-// relabels them, it never converts. Saves on change, like the unit toggle.
+// ── Base currency (owner only, restaurant-level) ────────────────
+// The restaurant's "UTC" (docs/multi-currency.md): every aggregated
+// amount is in it, so the API locks it once any invoice is approved.
+// Saves on change, like the unit toggle.
 const currencyBusy = ref(false)
 const currencySaved = ref(false)
+const currencyLocked = computed(() => auth.profile?.currencyLocked ?? false)
 const currencyName = (code: Currency) =>
   new Intl.DisplayNames([locale.value], { type: 'currency' }).of(code) ?? code
 
@@ -86,9 +89,50 @@ async function saveCurrency(event: Event): Promise<void> {
   } else {
     // The select already shows the new choice — put it back to what's saved.
     ;(event.target as HTMLSelectElement).value = auth.profile?.currency ?? DEFAULT_CURRENCY
-    alert(t('common.action.saveFailed'))
+    alert(res.error.includes('currency_locked') ? t('settings.currency.locked') : t('common.action.saveFailed'))
   }
   currencyBusy.value = false
+}
+
+// ── Country & timezone (owner only) ─────────────────────────────
+// Prefilled from the device region by the auth store on first sign-in;
+// here the owner sees and corrects it. The country selects the API's
+// country pack — the app only ever renders its serialized profile.
+const countryInput = ref('')
+const timezoneInput = ref('')
+const regionBusy = ref(false)
+const regionSaved = ref(false)
+const timezones = timezoneOptions()
+const countryOptions = computed(() => {
+  const codes = new Set<string>(COUNTRY_CODES)
+  if (countryInput.value) codes.add(countryInput.value) // keep an off-list saved value selectable
+  return [...codes]
+    .map((code) => ({ code, name: countryName(code, locale.value) }))
+    .sort((a, b) => a.name.localeCompare(b.name, locale.value))
+})
+
+onMounted(() => {
+  countryInput.value = auth.profile?.country ?? ''
+  timezoneInput.value = auth.profile?.timezone ?? ''
+})
+
+async function saveRegion(): Promise<void> {
+  const rid = auth.profile?.restaurantId
+  if (!rid) return
+  const patch: Record<string, string> = {}
+  if (countryInput.value) patch.country = countryInput.value
+  if (timezoneInput.value.trim()) patch.timezone = timezoneInput.value.trim()
+  if (Object.keys(patch).length === 0) return
+  regionBusy.value = true
+  regionSaved.value = false
+  const res = await apiFetch(`/restaurants/${rid}`, { method: 'PUT', body: JSON.stringify(patch) })
+  if (res.ok) {
+    await auth.reloadProfile() // the country may have prefilled the base currency
+    regionSaved.value = true
+  } else {
+    alert(t('common.action.saveFailed'))
+  }
+  regionBusy.value = false
 }
 
 // ── Labor rate (owner only, restaurant-level) ───────────────────
@@ -299,7 +343,34 @@ async function cancelInvite(emailKey: string): Promise<void> {
       </div>
     </div>
 
-    <!-- Display currency for every amount (owner only) -->
+    <!-- Country & timezone (owner only) — device-region defaults, editable -->
+    <div v-if="isOwner" class="card space-y-3">
+      <div class="text-sm font-semibold">{{ t('settings.region.title') }}</div>
+      <p class="text-xs text-smoke">{{ t('settings.region.desc') }}</p>
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="space-y-1 text-sm">
+          <span class="text-xs text-smoke">{{ t('settings.region.country') }}</span>
+          <select v-model="countryInput" class="input w-auto" @change="regionSaved = false">
+            <option value="">—</option>
+            <option v-for="c in countryOptions" :key="c.code" :value="c.code">{{ c.name }} ({{ c.code }})</option>
+          </select>
+        </label>
+        <label class="space-y-1 text-sm">
+          <span class="text-xs text-smoke">{{ t('settings.region.timezone') }}</span>
+          <select v-if="timezones.length" v-model="timezoneInput" class="input w-auto max-w-56" @change="regionSaved = false">
+            <option value="">—</option>
+            <option v-for="tz in timezones" :key="tz" :value="tz">{{ tz }}</option>
+          </select>
+          <input v-else v-model="timezoneInput" type="text" class="input w-56" @input="regionSaved = false" />
+        </label>
+        <BaseButton variant="ghost" :disabled="regionBusy" @click="saveRegion">
+          {{ regionBusy ? t('common.action.saving') : t('common.action.save') }}
+        </BaseButton>
+        <span v-if="regionSaved" class="chip-down">{{ t('settings.region.saved') }}</span>
+      </div>
+    </div>
+
+    <!-- Base currency of every aggregated amount (owner only; locks once used) -->
     <div v-if="isOwner" class="card space-y-3">
       <div class="text-sm font-semibold">{{ t('settings.currency.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.currency.desc') }}</p>
@@ -308,12 +379,14 @@ async function cancelInvite(emailKey: string): Promise<void> {
           class="input w-auto"
           :aria-label="t('settings.currency.title')"
           :value="auth.profile?.currency ?? DEFAULT_CURRENCY"
-          :disabled="currencyBusy"
+          :disabled="currencyBusy || currencyLocked"
+          :title="currencyLocked ? t('settings.currency.locked') : undefined"
           @change="saveCurrency"
         >
           <option v-for="code in CURRENCIES" :key="code" :value="code">{{ currencyName(code) }} ({{ code }})</option>
         </select>
         <span v-if="currencySaved" class="chip-down">{{ t('common.action.saved') }}</span>
+        <span v-else-if="currencyLocked" class="text-xs text-smoke">{{ t('settings.currency.locked') }}</span>
       </div>
     </div>
 

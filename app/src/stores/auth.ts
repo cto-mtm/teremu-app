@@ -5,6 +5,7 @@ import { signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/fireba
 import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
 import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
+import { detectRegion } from '../lib/regions'
 import { setCurrency } from '../i18n'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
@@ -75,11 +76,32 @@ export const useAuthStore = defineStore('auth', () => {
       // server-side — persist whatever actually got applied so the
       // next request carries the right header.
       setActiveRid(res.data.restaurantId)
+      void prefillRegion(res.data)
     } else {
       error.value = res.error
     }
     resolveProfile?.()
     resolveProfile = null
+  }
+
+  /**
+   * Country/timezone default = the device region, written once for a
+   * location that has none — shown in Settings, editable, never asked
+   * (docs/multi-currency.md). Owner-only (the API refuses others), one
+   * attempt per location per device so a failed save can't loop.
+   */
+  async function prefillRegion(me: Me): Promise<void> {
+    if (me.role !== 'owner' || (me.country && me.timezone)) return
+    const flag = `teremu-region-prefilled:${me.restaurantId}`
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(flag)) return
+    const detected = detectRegion()
+    const patch: Record<string, string> = {}
+    if (!me.country && detected.country) patch.country = detected.country
+    if (!me.timezone && detected.timezone) patch.timezone = detected.timezone
+    if (typeof localStorage !== 'undefined') localStorage.setItem(flag, '1')
+    if (Object.keys(patch).length === 0) return
+    const res = await apiFetch(`/restaurants/${me.restaurantId}`, { method: 'PUT', body: JSON.stringify(patch) })
+    if (res.ok) await loadProfile()
   }
 
   function whenReady(): Promise<void> {

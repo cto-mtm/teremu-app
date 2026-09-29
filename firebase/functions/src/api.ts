@@ -2,7 +2,7 @@ import { onRequest, type Request } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
 import { createHash } from "node:crypto";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import type { Response } from "express";
 import { ZodError } from "zod";
@@ -54,8 +54,12 @@ import {
   deleteRevenue,
   processInvoiceImage,
   recordRevenue,
+  RequestError,
+  resolveFx,
   updateRevenue,
 } from "./pipeline.js";
+import { toBaseTotal } from "./fx/convert.js";
+import { packFor, profileOf } from "./countries/index.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -82,6 +86,35 @@ const json = (res: Response, status: number, body: unknown) =>
 const forbidden = (res: Response) => json(res, 403, { error: "forbidden" });
 
 const withId = (d: FirebaseFirestore.QueryDocumentSnapshot) => ({ id: d.id, ...d.data() });
+
+/**
+ * Invoice wire shape — view shaping is SERVER-side (docs/multi-currency.md):
+ * canonical amounts (`total`, line `unitPrice`/`total`) are BASE whenever
+ * `fx` is present and the printed figures move under `printed`; before a
+ * rate exists there is nothing to swap, so canonical = printed and
+ * `currency` tells Triage what to format with. The base figures are
+ * COPIED from what approval wrote — never recomputed here.
+ */
+function serializeInvoice(id: string, doc: InvoiceDoc) {
+  if (!doc.fx) return { id, ...doc };
+  const { baseTotal, lineItems, ...rest } = doc;
+  return {
+    id,
+    ...rest,
+    total: baseTotal ?? doc.total,
+    lineItems: lineItems.map(({ baseUnitPrice, baseTotal: lineBase, ...l }) => ({
+      ...l,
+      unitPrice: baseUnitPrice ?? l.unitPrice,
+      total: lineBase ?? l.total,
+    })),
+    printed: {
+      total: doc.total,
+      lineItems: lineItems.map((l) => ({ unitPrice: l.unitPrice, total: l.total })),
+    },
+  };
+}
+const invoiceView = (d: FirebaseFirestore.DocumentSnapshot) =>
+  serializeInvoice(d.id, d.data() as InvoiceDoc);
 
 async function route(req: Request, res: Response): Promise<unknown> {
   const db = getFirestore();
@@ -139,6 +172,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
         };
       })
     );
+    // The base currency locks once any invoice is approved (Principle 3
+    // in docs/multi-currency.md) — one bounded read so Settings can say so.
+    const anyApproved = await col("invoices").where("status", "==", "approved").limit(1).get();
     return json(res, 200, {
       restaurantId: rid,
       role: member.role,
@@ -148,6 +184,14 @@ async function route(req: Request, res: Response): Promise<unknown> {
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
       laborRatePerHour: planInfo.laborRatePerHour,
       currency: planInfo.currency,
+      currencyLocked: !anyApproved.empty,
+      country: planInfo.country,
+      timezone: planInfo.timezone,
+      fxDefaultSource: planInfo.fxDefaultSource,
+      fxOptIns: planInfo.fxOptIns,
+      // Data-only view of the country pack: the client renders from this
+      // and carries no per-country code (docs/multi-currency.md).
+      countryProfile: profileOf(packFor(planInfo.country)),
       locations,
     });
   }
@@ -163,7 +207,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         .orderBy("createdAt", "desc")
         .limit(500)
         .get();
-      return json(res, 200, snap.docs.map(withId));
+      return json(res, 200, snap.docs.map(invoiceView));
     }
     if (m === "POST" && seg.length === 1) {
       if (!can(member, "scan")) return forbidden(res);
@@ -228,7 +272,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (!can(member, "triage")) return forbidden(res);
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
-        return json(res, 200, { id: snap.id, ...snap.data() });
+        return json(res, 200, invoiceView(snap));
       }
       if (m === "GET" && action === "image") {
         if (!can(member, "triage")) return forbidden(res);
@@ -286,26 +330,35 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (!inv.pagesPending) return json(res, 400, { error: "invoice has no pending pages" });
         await ref.update({ pagesPending: false });
         await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
-        const fresh = await ref.get();
-        return json(res, 200, { id, ...fresh.data() });
+        return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "PUT" && action === "approve") {
         if (!can(member, "triage", "edit")) return forbidden(res);
         const body = approveInvoiceSchema.parse(req.body);
         const updated = await approveInvoice(
           rid, id, body.vendorName, body.invoiceDate, body.lineItems, body.docType ?? "invoice",
+          // Base comes from the restaurant doc (planInfo), never the body.
+          { base: planInfo.currency, currency: body.currency, fx: body.fx, uid: member.uid },
         );
-        return json(res, 200, { id, ...updated });
+        return json(res, 200, serializeInvoice(id, updated));
       }
       if (m === "PUT" && action === "expense") {
         if (!can(member, "triage", "edit")) return forbidden(res);
         // Non-food bill: record a tagged expense, archive the invoice.
-        const { tag } = approveAsExpenseSchema.parse(req.body);
+        const body = approveAsExpenseSchema.parse(req.body);
+        const tag = body.tag;
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
         const inv = snap.data() as InvoiceDoc;
-        const amount =
+        const printedTotal =
           inv.total ?? +inv.lineItems.reduce((s, l) => s + l.total, 0).toFixed(2);
+        // A bill always carries money, so the priced-lines test is the
+        // total itself: foreign + a total ⇒ the reviewer's rate is required.
+        const fx = resolveFx(
+          { base: planInfo.currency, currency: body.currency, fx: body.fx, uid: member.uid },
+          printedTotal > 0 ? [{ name: "total", qty: 1, unit: "each", unitPrice: printedTotal, total: printedTotal }] : [],
+        );
+        const amount = fx ? toBaseTotal(printedTotal, fx.rate) : printedTotal;
         const expense: ExpenseDoc = {
           date: inv.invoiceDate ?? new Date().toISOString().slice(0, 10),
           amount,
@@ -319,12 +372,13 @@ async function route(req: Request, res: Response): Promise<unknown> {
         await ref.update({
           status: "approved",
           expenseTag: tag.trim(),
+          currency: body.currency ?? planInfo.currency,
+          ...(fx ? { fx, baseTotal: amount } : { fx: FieldValue.delete(), baseTotal: FieldValue.delete() }),
           warnings: [],
           error: null,
           approvedAt: Date.now(),
         });
-        const fresh = await ref.get();
-        return json(res, 200, { id, ...fresh.data() });
+        return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "PUT" && action === "reconcile") {
         if (!can(member, "triage", "edit")) return forbidden(res);
@@ -337,8 +391,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         if (body.invoiceId !== undefined) patch.reconInvoiceId = body.invoiceId;
         if (body.handled !== undefined) patch.reconHandled = body.handled;
         await ref.update(patch);
-        const fresh = await ref.get();
-        return json(res, 200, { id, ...fresh.data() });
+        return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "PUT" && action === "discard") {
         if (!can(member, "triage", "edit")) return forbidden(res);
@@ -359,8 +412,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           // Back to where it was: OCR either failed or produced a draft.
           await ref.update({ status: inv.error ? "failed" : "needs_review" });
         }
-        const fresh = await ref.get();
-        return json(res, 200, { id, ...fresh.data() });
+        return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "POST" && action === "reprocess") {
         if (!can(member, "triage", "edit")) return forbidden(res);
@@ -369,14 +421,19 @@ async function route(req: Request, res: Response): Promise<unknown> {
         const inv = snap.data() as InvoiceDoc;
         // A multi-page capture abandoned mid-upload retries with the
         // pages it has — clearing pagesPending unsticks it for good.
+        // A fresh read may see a different currency, so every money
+        // decision derived from the old one is cleared with it.
         await ref.update({
           status: "processing",
           error: null,
+          currency: FieldValue.delete(),
+          printedFxRate: FieldValue.delete(),
+          fx: FieldValue.delete(),
+          baseTotal: FieldValue.delete(),
           ...(inv.pagesPending ? { pagesPending: false } : {}),
         });
         await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
-        const fresh = await ref.get();
-        return json(res, 200, { id, ...fresh.data() });
+        return json(res, 200, invoiceView(await ref.get()));
       }
     }
   }
@@ -720,7 +777,29 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) patch.name = body.name.trim();
       if (body.laborRatePerHour !== undefined) patch.laborRatePerHour = body.laborRatePerHour;
-      if (body.currency !== undefined) patch.currency = body.currency;
+      if (body.currency !== undefined && body.currency !== planInfo.currency) {
+        // Base currency is the restaurant's UTC: every approved amount is
+        // in it, so it cannot move once one exists (a migration, later).
+        const approved = await col("invoices").where("status", "==", "approved").limit(1).get();
+        if (!approved.empty) return json(res, 409, { error: "currency_locked" });
+        patch.currency = body.currency;
+      }
+      if (body.country !== undefined) {
+        patch.country = body.country;
+        // A restaurant that never chose a base currency adopts its
+        // country's default (Spain → EUR) — only while nothing is
+        // approved and only when the doc really has no explicit choice.
+        if (body.currency === undefined) {
+          const raw = await db.collection("restaurants").doc(rid).get();
+          if (raw.get("currency") === undefined) {
+            const approved = await col("invoices").where("status", "==", "approved").limit(1).get();
+            if (approved.empty) patch.currency = packFor(body.country).defaultCurrency;
+          }
+        }
+      }
+      if (body.timezone !== undefined) patch.timezone = body.timezone;
+      if (body.fxDefaultSource !== undefined) patch.fxDefaultSource = body.fxDefaultSource;
+      if (body.fxOptIns !== undefined) patch.fxOptIns = body.fxOptIns;
       if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
       await db.collection("restaurants").doc(rid).set(patch, { merge: true });
       return json(res, 200, { ok: true, ...patch });
@@ -879,6 +958,10 @@ export const api = onRequest(
     } catch (err) {
       if (err instanceof ZodError) {
         json(res, 400, { error: z.flattenError(err) });
+        return;
+      }
+      if (err instanceof RequestError) {
+        json(res, err.status, { error: err.code });
         return;
       }
       logger.error("Unhandled API error", err);

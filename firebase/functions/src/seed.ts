@@ -1,4 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { convertInvoice } from "./fx/convert.js";
 import {
   normalizeName,
   type Category,
@@ -180,6 +181,34 @@ export async function seedDemoData(rid: string): Promise<{
     };
     batch.set(ref, doc);
   }
+
+  // A foreign-currency import approved with a frozen rate (docs/
+  // multi-currency.md): printed figures kept, base* written next to them
+  // — the demo shows the currency chip, the rate line and the toggle.
+  // Base stays the demo restaurant's default (USD); the document is EUR.
+  const eurRate = 0.92; // EUR per 1 USD (document units per ONE base unit)
+  const eurLines = [li(oil, "Olive Oil", "L", 12, 10.3, "dry"), li(rice, "Arborio Rice", "kg", 10, 5.4, "dry")];
+  // Same converter approval uses — the seed never does rate math itself.
+  const converted = convertInvoice(eurLines, eurRate);
+  const imported: InvoiceDoc = {
+    status: "approved",
+    docType: "invoice",
+    vendorName: "Oleum Mediterráneo S.L.",
+    invoiceDate: iso(13),
+    imagePath: "",
+    currency: "EUR",
+    printedFxRate: null,
+    fx: { rate: eurRate, source: "manual", asOf: iso(13), pickedBy: "seed" },
+    lineItems: converted.lineItems,
+    total: +eurLines.reduce((s, l) => s + l.total, 0).toFixed(2),
+    baseTotal: converted.baseTotal,
+    warnings: [],
+    expenseTag: null,
+    error: null,
+    createdAt: now - 13 * DAY,
+    approvedAt: now - 13 * DAY,
+  };
+  batch.set(col("invoices").doc(), imported);
 
   // One invoice in Triage with a validation warning: the Parmesan line's
   // qty × price ≠ total (flagged + line_math → amber banner, coral ring).

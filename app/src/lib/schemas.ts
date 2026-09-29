@@ -4,6 +4,7 @@ import {
   currencySchema,
   DEFAULT_CURRENCY,
   docTypeSchema,
+  fxSourceSchema,
   invoiceStatusSchema,
   permsSchema,
   subcategorySchema,
@@ -43,6 +44,15 @@ export const lineItemSchema = z.object({
   packUnit: unitSchema.nullable().optional(),
 })
 
+/** The frozen rate that took a foreign document to base (document units
+ * per ONE base unit — see docs/multi-currency.md). Read-only on the app. */
+export const fxDecisionSchema = z.object({
+  rate: z.number(),
+  source: fxSourceSchema,
+  asOf: z.string(),
+  pickedBy: z.string().optional(),
+})
+
 export const invoiceSchema = z.object({
   id: z.string(),
   status: invoiceStatusSchema,
@@ -55,6 +65,22 @@ export const invoiceSchema = z.object({
   // imagePath). pagesPending = the capture is still uploading pages.
   imagePaths: z.array(z.string()).optional(),
   pagesPending: z.boolean().optional(),
+  // ── Money (docs/multi-currency.md — "it's timezones") ─────────────
+  // The server shapes the wire: `total` and the line amounts are BASE
+  // whenever `fx` is present (the printed figures then sit under
+  // `printed`), otherwise they are in `currency` (absent = base). So every
+  // store, page and domain function consumes ONE single-currency shape;
+  // only Triage (pre-approval documents) formats with `currency`.
+  currency: currencySchema.optional().catch(undefined),
+  printedFxRate: z.number().nullable().optional().catch(null),
+  fx: fxDecisionSchema.optional().catch(undefined),
+  printed: z
+    .object({
+      total: z.number().nullable(),
+      lineItems: z.array(z.object({ unitPrice: z.number(), total: z.number() })),
+    })
+    .optional()
+    .catch(undefined),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Server validation codes ("total_mismatch", "line_math"). Optional so
@@ -198,6 +224,17 @@ export const locationSchema = z.object({
   interval: z.enum(['month', 'year']).nullable(),
 })
 
+/** Data-only view of the restaurant's country pack (docs/multi-currency.md):
+ * the app renders Settings/Triage from this and has no per-country code. */
+export const countryProfileSchema = z.object({
+  code: z.string(),
+  defaultCurrency: currencySchema,
+  sources: z.array(z.object({ id: fxSourceSchema, legalLabelKey: z.string().optional() })),
+  defaultSource: fxSourceSchema,
+  optInSources: z.array(fxSourceSchema),
+  pulseCards: z.array(z.object({ id: z.string(), titleKey: z.string() })),
+})
+
 /** GET /me — resolves (and on first sign-in bootstraps) membership for
  * the active location (X-Restaurant-Id, validated server-side). */
 export const meSchema = z.object({
@@ -210,8 +247,16 @@ export const meSchema = z.object({
   // Kitchen labor per hour (restaurant setting, in its currency) — feeds
   // prep-time plate costing. Optional so older API responses still validate.
   laborRatePerHour: z.number().nullable().optional(),
-  // Display currency of every amount; a pre-currency API reads as default.
+  // BASE currency of every aggregated amount; a pre-currency API reads as default.
   currency: currencySchema.catch(DEFAULT_CURRENCY),
+  // True once any invoice is approved — Settings locks the base currency.
+  currencyLocked: z.boolean().optional().catch(false),
+  // Country pack selector + rate preferences (docs/multi-currency.md).
+  country: z.string().nullable().optional().catch(null),
+  timezone: z.string().nullable().optional().catch(null),
+  fxDefaultSource: fxSourceSchema.nullable().optional().catch(null),
+  fxOptIns: z.array(fxSourceSchema).optional().catch([]),
+  countryProfile: countryProfileSchema.optional().catch(undefined),
   locations: z.array(locationSchema),
 })
 

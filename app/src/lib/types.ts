@@ -5,8 +5,11 @@
 import type { z } from 'zod'
 import type {
   categorySchema,
+  countryProfileSchema,
+  currencySchema,
   docTypeSchema,
   expenseSchema,
+  fxDecisionSchema,
   locationSchema,
   meSchema,
   vendorContactSchema,
@@ -43,6 +46,14 @@ export type PermArea = keyof Perms
 export type Me = z.infer<typeof meSchema>
 export type Location = z.infer<typeof locationSchema>
 export type DocType = z.infer<typeof docTypeSchema>
+export type FxDecision = z.infer<typeof fxDecisionSchema>
+export type CountryProfile = z.infer<typeof countryProfileSchema>
+/** The money side of an approval body — see docs/multi-currency.md. */
+export interface ApprovalMoney {
+  currency?: Currency
+  fx?: Omit<FxDecision, 'pickedBy'>
+}
+export type Currency = z.infer<typeof currencySchema>
 export type VendorContact = z.infer<typeof vendorContactSchema>
 export type MenuScanDish = z.infer<typeof menuScanResponseSchema>['dishes'][number]
 export type RecipeDraft = z.infer<typeof recipeDraftsResponseSchema>['drafts'][number]

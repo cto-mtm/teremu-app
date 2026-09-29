@@ -216,7 +216,11 @@ onUnmounted(() => {
               {{ inv.invoiceDate ? d(new Date(inv.invoiceDate + 'T12:00:00'), 'short') : '' }}
             </div>
           </div>
-          <div class="text-sm font-semibold">{{ n(inv.total ?? 0, 'currency') }}</div>
+          <!-- Approved amounts are base; a converted document wears its printed currency as a chip -->
+          <div class="flex items-center gap-2 text-sm font-semibold">
+            <span v-if="inv.printed && inv.currency" class="chip-up">{{ inv.currency }}</span>
+            {{ n(inv.total ?? 0, 'currency') }}
+          </div>
         </RouterLink>
       </div>
     </template>

@@ -3,15 +3,32 @@ import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { extractInvoice, type OcrResult } from "./ocr.js";
 import { convertQty } from "./units.js";
+import { convertInvoice, hasPricedLines } from "./fx/convert.js";
+import { packFor } from "./countries/index.js";
 import {
+  currencySchema,
+  DEFAULT_CURRENCY,
   ingredientDocSchema,
   menuItemDocSchema,
   normalizeName,
   pairSubcategory,
+  type Currency,
+  type FxDecision,
   type IngredientDoc,
   type InvoiceDoc,
   type LineItem,
 } from "./models.js";
+
+/** A request the pipeline refuses on business grounds (not a schema
+ * failure) — api.ts maps it to a 400 with the code as `error`. */
+export class RequestError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status = 400,
+  ) {
+    super(code);
+  }
+}
 
 // All data is namespaced per restaurant workspace: restaurants/{rid}/….
 const restCol = (rid: string, name: string) =>
@@ -67,9 +84,10 @@ export function validateArithmetic(
 
 type OcrPatch =
   | { status: "failed"; error: "not_a_document" | "unreadable" }
-  | (Pick<InvoiceDoc, "docType" | "vendorName" | "invoiceDate" | "lineItems" | "total" | "warnings"> & {
+  | (Pick<InvoiceDoc, "docType" | "vendorName" | "invoiceDate" | "lineItems" | "total" | "warnings" | "printedFxRate"> & {
       status: "needs_review";
       error: null;
+      currency?: Currency;
     });
 
 /**
@@ -81,11 +99,17 @@ export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
   if (result.notDocument) return { status: "failed", error: "not_a_document" };
   if (result.unreadable || result.lineItems.length === 0) return { status: "failed", error: "unreadable" };
   const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
+  // The model looked and could not tell → the reviewer must confirm the
+  // currency (Triage highlights the header). A reply that simply did not
+  // report one (older cassettes) is the base currency, no ceremony.
+  if (result.currency === null) warnings.push("currency_assumed");
   return {
     status: "needs_review",
     docType: result.docType,
     vendorName: result.vendor,
     invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
+    ...(result.currency ? { currency: result.currency } : {}),
+    printedFxRate: result.printedFxRate ?? null,
     lineItems,
     total: result.total,
     warnings,
@@ -125,11 +149,16 @@ export async function processInvoiceImage(
       .map((d) => (d.data() as IngredientDoc).name)
       .filter(Boolean);
     const restaurantName = (restaurantSnap.get("name") as string | undefined) ?? null;
-    const result = await extractInvoice(
-      buffers.map((b) => b.toString("base64")),
-      catalog,
+    // The extraction knows the restaurant's base currency (a prior) and
+    // its country pack (hints, aliases, local tax lines) — never more.
+    const baseCurrency = currencySchema.catch(DEFAULT_CURRENCY).parse(restaurantSnap.get("currency"));
+    const pack = packFor((restaurantSnap.get("country") as string | undefined) ?? null);
+    const result = await extractInvoice(buffers.map((b) => b.toString("base64")), {
+      knownIngredients: catalog,
       restaurantName,
-    );
+      baseCurrency,
+      pack,
+    });
 
     const patch = invoicePatchFromOcr(result);
     await ref.update(patch);
@@ -153,11 +182,44 @@ export async function processInvoiceImage(
   }
 }
 
+/** The money side of an approval — see docs/multi-currency.md. */
+export interface ApprovalMoney {
+  /** The restaurant's base currency (read server-side, never from the client). */
+  base: Currency;
+  /** Document currency as confirmed by the reviewer; absent = base. */
+  currency?: Currency;
+  /** The reviewer's rate decision; required iff the document is foreign AND priced. */
+  fx?: Omit<FxDecision, "pickedBy">;
+  /** Who approved — stamped onto `fx.pickedBy`. */
+  uid: string;
+}
+
+/**
+ * Decide whether a document needs a rate, and which. Pure, so the rule
+ * ("foreign + priced ⇒ fx required; same-currency ⇒ fx forbidden") is
+ * testable without Firestore. Returns the decision to freeze, or null
+ * for a same-currency (or unpriced foreign) document.
+ */
+export function resolveFx(money: ApprovalMoney, lineItems: LineItem[]): FxDecision | null {
+  const currency = money.currency ?? money.base;
+  const foreign = currency !== money.base;
+  if (!foreign) {
+    if (money.fx) throw new RequestError("fx_not_applicable");
+    return null;
+  }
+  if (!hasPricedLines(lineItems)) return null; // nothing to convert
+  if (!money.fx) throw new RequestError("fx_required");
+  return { ...money.fx, pickedBy: money.uid };
+}
+
 /**
  * Approve a reviewed invoice in one atomic batch:
  * - match/create the user's ingredients by normalized name
  * - roll prices (prev <- last, last <- new) for vendor-change alerts
  * - add purchased qty to the Theoretical Pantry
+ * - if the document is in a foreign currency, freeze the rate and write
+ *   the base amounts next to the printed ones (fx/convert.ts) — the
+ *   pantry roll only ever sees base numbers
  */
 export async function approveInvoice(
   rid: string,
@@ -165,7 +227,8 @@ export async function approveInvoice(
   vendorName: string | null,
   invoiceDate: string | null,
   lineItems: LineItem[],
-  docType: "invoice" | "delivery_note" = "invoice"
+  docType: "invoice" | "delivery_note" = "invoice",
+  money: ApprovalMoney,
 ): Promise<InvoiceDoc> {
   const db = getFirestore();
   const now = Date.now();
@@ -174,6 +237,8 @@ export async function approveInvoice(
   // the matching factura carries the money and the stock — applying
   // both would double-count everything.
   const applyEffects = docType !== "delivery_note";
+  const fx = resolveFx(money, lineItems);
+  const currency = money.currency ?? money.base;
 
   const ingredientsSnap = await ingredients.get();
   const byKey = new Map<string, { id: string; data: IngredientDoc }>();
@@ -186,15 +251,20 @@ export async function approveInvoice(
   const batch = db.batch();
   const resolved: LineItem[] = [];
 
-  for (const raw of lineItems) {
-    // Strip validation flags — approved numbers are human-verified —
-    // and normalize the pairing so data AT REST upholds the invariant
-    // (approve bodies come from client edits; lineItemSchema deliberately
-    // doesn't refine the pairing, a crossed pair degrades to null here).
-    const { flagged: _flagged, ...stripped } = raw;
+  // Base amounts are computed ONCE, here, by fx/convert.ts — any base
+  // figures the client sent are discarded first (never trusted).
+  const cleaned = lineItems.map(({ flagged: _flagged, baseUnitPrice: _bu, baseTotal: _bt, ...rest }) => rest);
+  const priced = fx ? convertInvoice(cleaned, fx.rate).lineItems : cleaned;
+
+  for (const raw of priced) {
+    // Validation flags were stripped above — approved numbers are
+    // human-verified — and the pairing is normalized so data AT REST
+    // upholds the invariant (approve bodies come from client edits;
+    // lineItemSchema deliberately doesn't refine the pairing, a crossed
+    // pair degrades to null here).
     const li: LineItem = {
-      ...stripped,
-      subcategory: pairSubcategory(stripped.category ?? "other", stripped.subcategory),
+      ...raw,
+      subcategory: pairSubcategory(raw.category ?? "other", raw.subcategory),
     };
     const key = normalizeName(li.name);
     if (!key) {
@@ -204,7 +274,9 @@ export async function approveInvoice(
     const existing = byKey.get(key);
     // Container lines with known pack contents convert to their contents
     // first (case → kg); then re-base to the stock unit if it differs.
-    const terms = contentTerms(li);
+    // Stock math runs on BASE money: for a foreign document that is the
+    // converted unit price, for a same-currency one the printed price.
+    const terms = contentTerms(fx ? { ...li, unitPrice: li.baseUnitPrice ?? li.unitPrice } : li);
     if (existing) {
       resolved.push({ ...li, ingredientId: existing.id });
       if (!applyEffects) continue;
@@ -268,6 +340,11 @@ export async function approveInvoice(
     invoiceDate,
     lineItems: resolved,
     total,
+    currency,
+    // Same write as the base line amounts — fx and base* are one fact.
+    ...(fx
+      ? { fx, baseTotal: convertInvoice(resolved, fx.rate).baseTotal }
+      : { fx: FieldValue.delete(), baseTotal: FieldValue.delete() }),
     warnings: [],
     approvedAt: now,
     error: null,

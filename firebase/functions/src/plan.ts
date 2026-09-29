@@ -1,5 +1,13 @@
 import { getFirestore } from "firebase-admin/firestore";
-import { currencySchema, DEFAULT_CURRENCY, type Currency } from "./models.js";
+import {
+  countryCodeSchema,
+  currencySchema,
+  DEFAULT_CURRENCY,
+  fxSourceSchema,
+  timezoneSchema,
+  type Currency,
+  type FxSource,
+} from "./models.js";
 
 /**
  * Freemium plan limits (see docs/business-model.md §3). The plan lives
@@ -41,8 +49,13 @@ export interface PlanInfo {
   /** Kitchen labor per hour (restaurant setting) — null = not set.
    * Piggybacks on this read because every request already makes it. */
   laborRatePerHour: number | null;
-  /** Display currency (restaurant setting), default when unset — same read. */
+  /** BASE currency (docs/multi-currency.md), default when unset — same read. */
   currency: Currency;
+  /** Country pack selector + rate preferences — same read. */
+  country: string | null;
+  timezone: string | null;
+  fxDefaultSource: FxSource | null;
+  fxOptIns: FxSource[];
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -57,6 +70,10 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     scanCount,
     laborRatePerHour: typeof rate === "number" ? rate : null,
     currency: currencySchema.catch(DEFAULT_CURRENCY).parse(snap.get("currency")),
+    country: countryCodeSchema.nullable().catch(null).parse(snap.get("country") ?? null),
+    timezone: timezoneSchema.nullable().catch(null).parse(snap.get("timezone") ?? null),
+    fxDefaultSource: fxSourceSchema.nullable().catch(null).parse(snap.get("fxDefaultSource") ?? null),
+    fxOptIns: fxSourceSchema.array().catch([]).parse(snap.get("fxOptIns") ?? []),
   };
 }
 

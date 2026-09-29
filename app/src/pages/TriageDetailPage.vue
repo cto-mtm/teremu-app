@@ -7,13 +7,21 @@ import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
 import { fetchBlobUrl } from '../lib/api'
-import type { LineItem, Unit } from '../lib/types'
+import { previewBase } from '../lib/money'
+import { CURRENCIES, DEFAULT_CURRENCY } from '../lib/schemas'
+import type { ApprovalMoney, Currency, FxDecision, LineItem, Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 
 /**
  * Side-by-side review: the receipt image next to the AI transcription.
  * Tap any field to fix an OCR misread, then approve the whole invoice
  * in one action. HERO TARGET of the Triage-card transition.
+ *
+ * Money (docs/multi-currency.md): this is the ONE screen that works on
+ * a document's PRINTED amounts in its own currency — before approval no
+ * rate exists. A foreign document gets a rate picker (printed on the
+ * document, or manual); the server converts and freezes. Once approved,
+ * the wire amounts are base and the printed figures sit under `printed`.
  */
 const { t, n, d } = useI18n()
 const route = useRoute()
@@ -42,6 +50,48 @@ const lines = ref<LineItem[]>([])
 const busy = ref(false)
 const retrying = ref(false)
 
+// ── Currency & rate (the document's, while it is being reviewed) ─────
+const base = computed<Currency>(() => auth.profile?.currency ?? DEFAULT_CURRENCY)
+const docCurrency = ref<Currency>(DEFAULT_CURRENCY)
+const foreign = computed(() => docCurrency.value !== base.value)
+const priced = computed(() => lines.value.some((l) => l.unitPrice > 0 || l.total > 0))
+const needsRate = computed(() => foreign.value && priced.value)
+type RateSource = Extract<FxDecision['source'], 'printed' | 'manual'>
+const rateSource = ref<RateSource>('manual')
+const rateInput = ref('')
+const rate = computed(() => {
+  const v = Number(String(rateInput.value).replace(',', '.'))
+  return Number.isFinite(v) && v > 0 ? v : 0
+})
+function pickRate(source: RateSource): void {
+  rateSource.value = source
+  if (source === 'printed' && invoice.value?.printedFxRate) rateInput.value = String(invoice.value.printedFxRate)
+}
+/** The reviewer's decision as the API wants it (absent when not needed). */
+const money = computed<ApprovalMoney>(() => ({
+  currency: docCurrency.value,
+  ...(needsRate.value && rate.value > 0
+    ? { fx: { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } }
+    : {}),
+}))
+
+/** Amounts formatted in a given currency — the document's while editing,
+ * base once approved (the wire is base then). */
+const fmt = (value: number, currency: Currency) => n(value, { key: 'currency', currency })
+const canonicalCurrency = computed<Currency>(() =>
+  readonly.value ? (invoice.value?.fx ? base.value : (invoice.value?.currency ?? base.value)) : docCurrency.value,
+)
+// Read-only toggle: flip a converted document between base and printed.
+const showPrinted = ref(false)
+function shownLine(i: number, line: LineItem): { unitPrice: number; total: number; currency: Currency } {
+  const inv = invoice.value
+  if (showPrinted.value && inv?.printed && inv.currency) {
+    const p = inv.printed.lineItems[i]
+    if (p) return { unitPrice: p.unitPrice, total: p.total, currency: inv.currency }
+  }
+  return { unitPrice: line.unitPrice, total: line.total, currency: canonicalCurrency.value }
+}
+
 // ── Approve as (non-food) expense ───────────────────────────────
 const kitchen = useKitchenStore()
 const showExpenseForm = ref(false)
@@ -49,8 +99,15 @@ const expenseTag = ref('')
 const expenseBusy = ref(false)
 
 async function confirmAsExpense(): Promise<void> {
+  if (foreign.value && rate.value <= 0) {
+    alert(t('triage.detail.fx.required'))
+    return
+  }
   expenseBusy.value = true
-  const ok = await store.approveAsExpense(invoiceId.value, expenseTag.value.trim())
+  const ok = await store.approveAsExpense(invoiceId.value, expenseTag.value.trim(), {
+    currency: docCurrency.value,
+    ...(foreign.value ? { fx: money.value.fx ?? { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } } : {}),
+  })
   expenseBusy.value = false
   if (ok) {
     void kitchen.refresh() // the new expense entry
@@ -81,20 +138,34 @@ onUnmounted(() => {
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
 })
 
+/** Load the editor from the document (first load and after a re-run). */
+function populate(): void {
+  const inv = invoice.value
+  if (!inv) return
+  vendorName.value = inv.vendorName ?? ''
+  invoiceDate.value = inv.invoiceDate ?? ''
+  docType.value = inv.docType ?? 'invoice'
+  lines.value = inv.lineItems.map((l) => ({ ...l }))
+  docCurrency.value = inv.currency ?? base.value
+  // The printed rate is what the vendor actually charged — preselected.
+  if (inv.printedFxRate) pickRate('printed')
+  else {
+    rateSource.value = 'manual'
+    rateInput.value = ''
+  }
+}
+
 watch(
   invoice,
   (inv) => {
-    if (inv && lines.value.length === 0) {
-      vendorName.value = inv.vendorName ?? ''
-      invoiceDate.value = inv.invoiceDate ?? ''
-      docType.value = inv.docType ?? 'invoice'
-      lines.value = inv.lineItems.map((l) => ({ ...l }))
-    }
+    if (inv && lines.value.length === 0) populate()
   },
   { immediate: true },
 )
 
 const total = computed(() => lines.value.reduce((s, l) => s + (Number(l.total) || 0), 0))
+// Preview only — the server recomputes every base figure from the rate.
+const baseTotalPreview = computed(() => (needsRate.value ? previewBase(total.value, rate.value) : null))
 
 function recalc(line: LineItem): void {
   line.total = +(line.qty * line.unitPrice).toFixed(2)
@@ -136,12 +207,7 @@ async function retry(): Promise<void> {
     alert(t('triage.failedProcessing'))
     return
   }
-  const inv = invoice.value
-  if (inv) {
-    vendorName.value = inv.vendorName ?? ''
-    invoiceDate.value = inv.invoiceDate ?? ''
-    lines.value = inv.lineItems.map((l) => ({ ...l }))
-  }
+  populate()
 }
 
 /** Dismiss the scan without approving it — junk, duplicate, wrong page. */
@@ -152,6 +218,10 @@ async function dismiss(): Promise<void> {
 }
 
 async function approve(): Promise<void> {
+  if (needsRate.value && rate.value <= 0) {
+    alert(t('triage.detail.fx.required'))
+    return
+  }
   busy.value = true
   const ok = await store.approve(
     invoiceId.value,
@@ -159,6 +229,7 @@ async function approve(): Promise<void> {
     invoiceDate.value || null,
     lines.value.filter((l) => l.name.trim()),
     docType.value,
+    money.value,
   )
   busy.value = false
   if (ok) void router.push('/triage')
@@ -189,12 +260,39 @@ async function approve(): Promise<void> {
             · {{ d(new Date(invoice.invoiceDate + 'T12:00:00'), 'short') }}
           </span>
           <span v-if="invoice.expenseTag" class="chip-up">{{ invoice.expenseTag }}</span>
+          <span v-if="invoice.printed && invoice.currency" class="chip-up">{{ invoice.currency }}</span>
         </div>
       </div>
       <div class="text-right">
         <div class="text-xs text-smoke">{{ t('triage.detail.total') }}</div>
-        <div class="font-bold">{{ n(total, 'currency') }}</div>
+        <div class="font-bold">
+          {{ readonly ? fmt(invoice.total ?? 0, canonicalCurrency) : fmt(total, docCurrency) }}
+        </div>
+        <div v-if="!readonly && baseTotalPreview != null" class="text-xs text-smoke">
+          {{ t('triage.detail.fx.baseTotal', { total: fmt(baseTotalPreview ?? 0, base), base }) }}
+        </div>
       </div>
+    </div>
+
+    <!-- The frozen rate of a converted document, and the printed ↔ base toggle -->
+    <div
+      v-if="readonly && invoice.fx && invoice.currency"
+      class="card flex flex-wrap items-center justify-between gap-2 p-3 text-xs text-smoke"
+    >
+      <span>
+        {{
+          t('triage.detail.fx.rateLine', {
+            doc: invoice.currency,
+            rate: n(invoice.fx.rate),
+            base,
+            source: t('triage.detail.fx.source.' + invoice.fx.source),
+            date: d(new Date(invoice.fx.asOf + 'T12:00:00'), 'short'),
+          })
+        }}
+      </span>
+      <button class="font-semibold text-ink hover:text-ember-700" @click="showPrinted = !showPrinted">
+        {{ showPrinted ? t('triage.detail.fx.showBase', { base }) : t('triage.detail.fx.showPrinted') }}
+      </button>
     </div>
 
     <div
@@ -241,7 +339,7 @@ async function approve(): Promise<void> {
     >
       <p v-for="w in invoice.warnings" :key="w" class="flex items-start gap-2 text-ember-700">
         <span class="mt-0.5 shrink-0">⚠</span>
-        <span>{{ t('triage.detail.warn.' + w) }}</span>
+        <span>{{ t('triage.detail.warn.' + w, { base }) }}</span>
       </p>
     </div>
 
@@ -298,10 +396,13 @@ async function approve(): Promise<void> {
           <div class="min-w-0">
             <div class="truncate text-sm font-medium">{{ line.name }}</div>
             <div class="text-xs text-smoke">
-              {{ n(line.qty) }} {{ t('common.unit.' + line.unit) }} × {{ n(line.unitPrice, 'currency') }}
+              {{ n(line.qty) }} {{ t('common.unit.' + line.unit) }} ×
+              {{ fmt(shownLine(i, line).unitPrice, shownLine(i, line).currency) }}
             </div>
           </div>
-          <div class="shrink-0 text-sm font-semibold">{{ n(line.total, 'currency') }}</div>
+          <div class="shrink-0 text-sm font-semibold">
+            {{ fmt(shownLine(i, line).total, shownLine(i, line).currency) }}
+          </div>
         </div>
         <div v-if="invoice.lineItems.length === 0" class="px-4 py-8 text-center text-xs text-smoke">
           {{ t('triage.detail.noImage') }}
@@ -336,6 +437,52 @@ async function approve(): Promise<void> {
             <p v-if="docType === 'delivery_note'" class="text-[11px] text-smoke">
               {{ t('triage.detail.docTypeHint') }}
             </p>
+          </div>
+          <!-- Document currency — OCR's read, confirmable here. Base is the
+               restaurant's; a different choice opens the rate picker. -->
+          <label v-if="canEdit" class="flex items-center gap-2 text-sm">
+            <span class="text-xs text-smoke">{{ t('triage.detail.currency') }}</span>
+            <select v-model="docCurrency" class="input w-auto px-2 py-1 text-xs" :aria-label="t('triage.detail.currency')">
+              <option v-for="code in CURRENCIES" :key="code" :value="code">{{ code }}</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- Rate picker: only for a priced document in a foreign currency -->
+        <div v-if="canEdit && needsRate" class="card space-y-2 border-ember-100 bg-ember-50 p-3 text-sm">
+          <div class="text-xs font-semibold text-ember-700">{{ t('triage.detail.fx.title') }}</div>
+          <p class="text-[11px] text-smoke">{{ t('triage.detail.fx.hint', { doc: docCurrency, base }) }}</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-semibold">
+              <button
+                v-if="invoice.printedFxRate"
+                class="px-3 py-1.5"
+                :class="rateSource === 'printed' ? 'bg-ink text-white' : 'bg-white text-smoke hover:bg-gray-50'"
+                @click="pickRate('printed')"
+              >
+                {{ t('triage.detail.fx.printed') }} · {{ n(invoice.printedFxRate) }}
+              </button>
+              <button
+                class="px-3 py-1.5"
+                :class="rateSource === 'manual' ? 'bg-ink text-white' : 'bg-white text-smoke hover:bg-gray-50'"
+                @click="pickRate('manual')"
+              >
+                {{ t('triage.detail.fx.manual') }}
+              </button>
+            </div>
+            <label class="flex items-center gap-2 text-xs">
+              <input
+                v-model="rateInput"
+                type="number"
+                inputmode="decimal"
+                step="0.0001"
+                min="0"
+                class="input w-32"
+                :aria-label="t('triage.detail.fx.rateLabel', { doc: docCurrency, base })"
+                @input="rateSource = 'manual'"
+              />
+              <span class="text-smoke">{{ t('triage.detail.fx.rateLabel', { doc: docCurrency, base }) }}</span>
+            </label>
           </div>
         </div>
 
@@ -377,11 +524,11 @@ async function approve(): Promise<void> {
               inputmode="decimal"
               step="0.01"
               class="input"
-              :aria-label="t('triage.detail.unitPrice')"
+              :aria-label="t('triage.detail.unitPrice') + ' (' + docCurrency + ')'"
               @input="recalc(line)"
             />
             <div class="flex items-center justify-end pr-1 text-sm font-semibold">
-              {{ n(line.total, 'currency') }}
+              {{ fmt(line.total, docCurrency) }}
             </div>
           </div>
         </div>
@@ -427,8 +574,19 @@ async function approve(): Promise<void> {
     </div>
 
     <div v-if="canEdit && !readonly" class="sticky bottom-6 pt-2">
-      <BaseButton variant="herb" class="w-full py-3.5 text-base" :disabled="busy || lines.length === 0" @click="approve">
-        {{ busy ? t('triage.detail.approving') : t('triage.detail.approve', { total: n(total, 'currency') }) }}
+      <BaseButton
+        variant="herb"
+        class="w-full py-3.5 text-base"
+        :disabled="busy || lines.length === 0 || (needsRate && rate <= 0)"
+        @click="approve"
+      >
+        {{
+          busy
+            ? t('triage.detail.approving')
+            : t('triage.detail.approve', {
+                total: baseTotalPreview != null ? fmt(baseTotalPreview, base) : fmt(total, docCurrency),
+              })
+        }}
       </BaseButton>
     </div>
   </div>

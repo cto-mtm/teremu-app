@@ -4,7 +4,7 @@ import { apiFetch, apiUpload, writeEpoch } from '../lib/api'
 import { compressReceipt } from '../lib/compress'
 import { replaceById } from '../lib/collections'
 import { invoiceListSchema, invoiceSchema } from '../lib/schemas'
-import type { Invoice, LineItem } from '../lib/types'
+import type { ApprovalMoney, Invoice, LineItem } from '../lib/types'
 
 export const useInvoicesStore = defineStore('invoices', () => {
   const invoices = ref<Invoice[]>([])
@@ -136,16 +136,23 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return res.ok
   }
 
+  /**
+   * Approve with the reviewed lines. `money` carries the document currency
+   * and, for a foreign document, the reviewer's rate decision — the server
+   * converts to base and ships base back as the canonical amounts
+   * (docs/multi-currency.md); the client never sends base figures.
+   */
   async function approve(
     id: string,
     vendorName: string | null,
     invoiceDate: string | null,
     lineItems: LineItem[],
     docType: 'invoice' | 'delivery_note' = 'invoice',
+    money: ApprovalMoney = {},
   ): Promise<boolean> {
     const res = await apiFetch<Invoice>(
       `/invoices/${id}/approve`,
-      { method: 'PUT', body: JSON.stringify({ vendorName, invoiceDate, lineItems, docType }) },
+      { method: 'PUT', body: JSON.stringify({ vendorName, invoiceDate, lineItems, docType, ...money }) },
       invoiceSchema,
     )
     if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
@@ -153,11 +160,12 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return res.ok
   }
 
-  /** Divert a non-food bill into a tagged expense (archives the invoice). */
-  async function approveAsExpense(id: string, tag: string): Promise<boolean> {
+  /** Divert a non-food bill into a tagged expense (archives the invoice).
+   * Same money rule as approve: a foreign bill needs its rate. */
+  async function approveAsExpense(id: string, tag: string, money: ApprovalMoney = {}): Promise<boolean> {
     const res = await apiFetch<Invoice>(
       `/invoices/${id}/expense`,
-      { method: 'PUT', body: JSON.stringify({ tag }) },
+      { method: 'PUT', body: JSON.stringify({ tag, ...money }) },
       invoiceSchema,
     )
     if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)

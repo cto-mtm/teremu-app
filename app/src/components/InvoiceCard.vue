@@ -3,11 +3,21 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { armHero, heroStyle } from '../composables/useHero'
 import { RouterLink } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+import { DEFAULT_CURRENCY } from '../lib/schemas'
 import type { Invoice } from '../lib/types'
 
 const props = defineProps<{ invoice: Invoice; canDismiss?: boolean }>()
 const emit = defineEmits<{ dismiss: [id: string] }>()
 const { t, n, d } = useI18n()
+const auth = useAuthStore()
+
+// A pending document's amounts are PRINTED, in its own currency (no rate
+// exists before approval) — the one place outside Triage detail that
+// formats with the document currency (docs/multi-currency.md).
+const docCurrency = computed(
+  () => props.invoice.currency ?? auth.profile?.currency ?? DEFAULT_CURRENCY,
+)
 
 // Processing normally resolves in seconds; past 90s assume the trigger
 // hiccuped and open the escape hatch (detail page has a retry).
@@ -67,7 +77,7 @@ const clickable = computed(
           {{
             t('triage.itemsSummary', {
               n: invoice.lineItems.length,
-              total: n(invoice.total ?? 0, 'currency'),
+              total: n(invoice.total ?? 0, { key: 'currency', currency: docCurrency }),
               date: invoice.invoiceDate ? d(new Date(invoice.invoiceDate + 'T12:00:00'), 'short') : '',
             })
           }}

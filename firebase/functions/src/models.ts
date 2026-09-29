@@ -1,12 +1,15 @@
 import { z } from "zod";
 import {
   categorySchema,
+  countryCodeSchema,
   currencySchema,
   docTypeSchema,
+  fxSourceSchema,
   invoiceStatusSchema,
   isSubcategoryOf,
   permsSchema,
   subcategorySchema,
+  timezoneSchema,
   unitSchema,
   type Perms,
 } from "@teremu/shared";
@@ -47,8 +50,23 @@ export const lineItemSchema = z.object({
   // purchases convert into stock math at approval.
   packQty: z.number().positive().nullable().optional(),
   packUnit: unitSchema.nullable().optional(),
+  // Base-currency figures, written ONCE at approval by fx/convert.ts when
+  // the document's currency differs from the restaurant's base. Absent =
+  // the printed figures already are base (docs/multi-currency.md).
+  baseUnitPrice: z.number().min(0).optional(),
+  baseTotal: z.number().min(0).optional(),
 });
 export type LineItem = z.infer<typeof lineItemSchema>;
+
+/** The frozen rate that took a foreign document to base. Convention in
+ * fx/types.ts: document-currency units per ONE base unit. */
+export const fxDecisionSchema = z.object({
+  rate: z.number().positive(),
+  source: fxSourceSchema,
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  pickedBy: z.string(),
+});
+export type FxDecision = z.infer<typeof fxDecisionSchema>;
 
 export const recipeLineSchema = z.object({
   // Exactly one of these: a raw ingredient, or another menu item used as
@@ -89,9 +107,21 @@ export const invoiceDocSchema = z.object({
   // holds (double-tap / client retry), and /pages rejects re-adding a
   // page this capture already has. Absent on pre-hash documents.
   imageHashes: z.array(z.string()).optional(),
+  // ── Money (docs/multi-currency.md — "it's timezones") ─────────────
+  // `total` and the line amounts are the PRINTED figures, in `currency`,
+  // never rewritten. Absent currency = the restaurant's base.
+  currency: currencySchema.optional(),
+  // The exchange rate the document itself prints ("Tasa BCV 36,52"),
+  // read by OCR; Triage offers it as the first rate candidate.
+  printedFxRate: z.number().positive().nullable().optional(),
+  // Present iff currency !== base: the reviewer's rate decision, frozen
+  // at approval, and the base total derived from it in the same write.
+  fx: fxDecisionSchema.optional(),
+  baseTotal: z.number().min(0).optional(),
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
-  // Validation-stage warning codes: "total_mismatch", "line_math".
+  // Validation-stage warning codes: "total_mismatch", "line_math",
+  // "currency_assumed" (OCR could not read a currency; base assumed).
   // Cleared on approval (the human reviewed the numbers).
   warnings: z.array(z.string()),
   // Set when the bill was approved AS AN EXPENSE (non-food): the invoice
@@ -148,6 +178,14 @@ export const approveInvoiceSchema = z.object({
   // reconciliation-only records: no price roll, no pantry, no spend.
   docType: docTypeSchema.optional(),
   lineItems: z.array(lineItemSchema).min(1),
+  // Document currency (reviewer-confirmed). Absent = base.
+  currency: currencySchema.optional(),
+  // Required iff the document is priced in a currency other than the
+  // restaurant's base (the server decides — it reads base itself and
+  // stamps pickedBy); rejected on a same-currency document. Base
+  // amounts are recomputed server-side from this, never trusted from
+  // the client.
+  fx: fxDecisionSchema.omit({ pickedBy: true }).optional(),
 });
 
 /** POST /menu-items and PUT /menu-items/:id — same shape as the doc. */
@@ -224,6 +262,10 @@ export type ExpenseDoc = z.infer<typeof expenseDocSchema>;
  * `expenseTag` set and excluded from all food math. */
 export const approveAsExpenseSchema = z.object({
   tag: z.string().min(1).max(40),
+  // Same money rule as approve: a foreign bill needs the reviewer's rate
+  // so the expense lands in base (docs/multi-currency.md).
+  currency: currencySchema.optional(),
+  fx: fxDecisionSchema.omit({ pickedBy: true }).optional(),
 });
 
 // ── Membership & granular permissions ───────────────────────────────
@@ -275,8 +317,18 @@ export const restaurantDocSchema = z.object({
   // Kitchen labor per hour, in the restaurant's currency — feeds prep-time
   // plate costing in the app. Absent/null = labor costing off.
   laborRatePerHour: z.number().min(0).nullable().optional(),
-  // Display currency for every amount (see shared vocab). Absent = default.
+  // BASE currency (docs/multi-currency.md): every aggregated amount is in
+  // it; foreign documents are converted into it once, at approval.
+  // Locked once any invoice is approved. Absent = default.
   currency: currencySchema.optional(),
+  // ISO 3166-1 alpha-2 — selects the country pack (countries/). Prefilled
+  // from the device region by the app, shown, editable, never asked.
+  country: countryCodeSchema.optional(),
+  timezone: timezoneSchema.optional(),
+  // Owner overrides for the pack's rate sources (only meaningful when the
+  // pack offers more than one / has opt-ins). Empty for the world.
+  fxDefaultSource: fxSourceSchema.optional(),
+  fxOptIns: z.array(fxSourceSchema).optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
@@ -288,11 +340,17 @@ export const restaurantProfileSchema = z.object({
 });
 
 /** PUT /restaurants/:rid — partial profile update (rename, the labor
- * rate that feeds prep-time plate costing, and/or the display currency). */
+ * rate that feeds prep-time plate costing, the base currency — refused
+ * with 409 once any invoice is approved — country/timezone, and the
+ * rate-source preferences). */
 export const updateRestaurantSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   laborRatePerHour: z.number().min(0).max(500).nullable().optional(),
   currency: currencySchema.optional(),
+  country: countryCodeSchema.optional(),
+  timezone: timezoneSchema.optional(),
+  fxDefaultSource: fxSourceSchema.optional(),
+  fxOptIns: z.array(fxSourceSchema).max(8).optional(),
 });
 
 /** POST /members — invite by email with explicit perms. */
