@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
-import { DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
+import { DEFAULT_CURRENCY, DEFAULT_LOCALE, LOCALES, type Currency } from '@teremu/shared'
 
 // Per-feature modules, each exporting { es, en } with en typed against es.
 import common from './locales/configs/common'
@@ -19,7 +19,7 @@ import settings from './locales/pages/settings'
 import pricing from './locales/pages/pricing'
 import notfound from './locales/pages/notfound'
 
-export const SUPPORTED_LOCALES = ['es', 'en'] as const
+export const SUPPORTED_LOCALES = LOCALES
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
 
 const messages = {
@@ -94,7 +94,7 @@ const stored =
   typeof localStorage !== 'undefined' ? localStorage.getItem('teremu-locale') : null
 const initialLocale: SupportedLocale = SUPPORTED_LOCALES.includes(stored as SupportedLocale)
   ? (stored as SupportedLocale)
-  : 'es'
+  : DEFAULT_LOCALE
 
 export const i18n = createI18n({
   legacy: false, // Composition API mode: useI18n() + t(), never $t
@@ -104,6 +104,23 @@ export const i18n = createI18n({
   datetimeFormats,
   numberFormats,
 })
+
+/** Current UI language, typed (i18n.global.locale is a plain string). */
+export function currentLocale(): SupportedLocale {
+  return i18n.global.locale.value as SupportedLocale
+}
+
+/**
+ * Switch the UI language on this device. The one place that does it:
+ * the i18n instance, the localStorage first-paint guess, and <html lang>.
+ * Persisting it to the profile (users/{uid}.locale) is the auth store's
+ * job — see saveLocale / syncLocale in stores/auth.ts.
+ */
+export function setLocale(next: SupportedLocale): void {
+  i18n.global.locale.value = next
+  if (typeof localStorage !== 'undefined') localStorage.setItem('teremu-locale', next)
+  if (typeof document !== 'undefined') document.documentElement.lang = next
+}
 
 const currency = ref<Currency>(DEFAULT_CURRENCY)
 

@@ -7,6 +7,7 @@ import {
   fxSourceSchema,
   invoiceStatusSchema,
   isSubcategoryOf,
+  localeSchema,
   permsSchema,
   subcategorySchema,
   timezoneSchema,
@@ -357,6 +358,13 @@ export const updateRestaurantSchema = z.object({
 export const inviteSchema = z.object({
   email: z.string().email().max(120),
   perms: permsSchema,
+});
+
+/** PUT /me/locale — the caller's UI language, stored on users/{uid}.locale
+ * (per person, not per location). Emails they trigger use it, and so will
+ * scheduled mail addressed to them. */
+export const updateLocaleSchema = z.object({
+  locale: localeSchema,
 });
 
 /** PUT /members/:uid — adjust a member's perms. */

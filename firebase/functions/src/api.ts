@@ -15,11 +15,13 @@ import {
   assistantSchema,
   countSchema,
   createIngredientSchema,
+  DEFAULT_LOCALE,
   DEFAULT_RESTAURANT_NAME,
   discardSchema,
   draftRecipesSchema,
   expenseSchema,
   inviteSchema,
+  localeSchema,
   memberDocSchema,
   menuItemSchema,
   normalizeName,
@@ -30,16 +32,18 @@ import {
   revenueSchema,
   updateRestaurantSchema,
   updateIngredientSchema,
+  updateLocaleSchema,
   updateMemberSchema,
   vendorContactSchema,
   type ExpenseDoc,
   type InvoiceDoc,
+  type Locale,
   type MemberDoc,
   type MembershipDoc,
 } from "./models.js";
 import { askAssistant } from "./assistant.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
-import { orderEmail, inviteEmail, sendMail } from "./mail.js";
+import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
 import { consumeScan, getPlanInfo, planOf } from "./plan.js";
 import {
   billingConfigured,
@@ -139,6 +143,13 @@ async function route(req: Request, res: Response): Promise<unknown> {
   if (!member) return json(res, 401, { error: "unauthenticated" });
   const rid = member.rid;
   const col = (name: string) => db.collection("restaurants").doc(rid).collection(name);
+  const restaurantName = async (): Promise<string> =>
+    ((await db.collection("restaurants").doc(rid).get()).get("name") as string | undefined) ??
+    DEFAULT_RESTAURANT_NAME;
+  // The caller's UI language, stored per person on users/{uid} — emails
+  // they trigger are written in it. Unset (never synced yet) → default.
+  const userLocale = async (): Promise<Locale> =>
+    localeSchema.catch(DEFAULT_LOCALE).parse((await db.doc(`users/${member.uid}`).get()).get("locale"));
   // Freemium gates: one plan read per request, enforced server-side.
   const planInfo = (rid === headerRid && (await speculativePlan)) || (await getPlanInfo(rid));
   // The tier a paywalled action would need — null when already on the
@@ -155,7 +166,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
     // Multi-location switcher data: every restaurant this uid belongs
     // to, with the bits needed to render + pick one. One extra doc read
     // per location — negligible for realistic membership counts.
-    const membershipsSnap = await db.collection(`users/${member.uid}/memberships`).get();
+    const [membershipsSnap, userSnap] = await Promise.all([
+      db.collection(`users/${member.uid}/memberships`).get(),
+      db.doc(`users/${member.uid}`).get(),
+    ]);
     const locations = await Promise.all(
       membershipsSnap.docs.map(async (m2) => {
         const restSnap = await db.collection("restaurants").doc(m2.id).get();
@@ -180,6 +194,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       role: member.role,
       perms: member.perms,
       email: member.email,
+      // Per person, not per location. null until the app first syncs it —
+      // the client then saves its current language (see stores/auth.ts).
+      locale: localeSchema.nullable().catch(null).parse(userSnap.get("locale") ?? null),
       plan: planInfo.plan,
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
       laborRatePerHour: planInfo.laborRatePerHour,
@@ -194,6 +211,13 @@ async function route(req: Request, res: Response): Promise<unknown> {
       countryProfile: profileOf(packFor(planInfo.country)),
       locations,
     });
+  }
+
+  // ── the caller's UI language (per person, any location) ───────
+  if (m === "PUT" && head === "me" && id === "locale" && seg.length === 2) {
+    const body = updateLocaleSchema.parse(req.body);
+    await db.doc(`users/${member.uid}`).set({ locale: body.locale }, { merge: true });
+    return json(res, 200, { ok: true });
   }
 
   // ── invoices ──────────────────────────────────────────────────
@@ -698,16 +722,31 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // person to the same location overwrites in place rather than
       // creating a duplicate; a second location gets its own doc.
       const key = emailKey(body.email);
-      await db.collection("invites").doc(`${key}_${rid}`).set({
+      const inviteId = `${key}_${rid}`;
+      const toEmail = body.email.trim();
+      const createdAt = Date.now();
+      await db.collection("invites").doc(inviteId).set({
         emailKey: key,
         restaurantId: rid,
-        email: body.email.trim(),
+        email: toEmail,
         perms: body.perms,
-        createdAt: Date.now(),
+        createdAt,
       });
-      // Fire-and-forget: the invite exists either way (attaching happens
-      // on sign-in, not via the email link).
-      await sendMail(inviteEmail(body.email.trim(), member.email));
+      // Best-effort: the invite exists either way (attaching happens on
+      // sign-in, not via the email link), so a mail failure is only
+      // logged. Keyed per invite write, so re-inviting resends.
+      if (await consumeMailQuota(rid)) {
+        const [locale, name] = await Promise.all([userLocale(), restaurantName()]);
+        await sendMail({
+          ...inviteEmail({ locale, toEmail, inviterEmail: member.email, restaurantName: name }),
+          to: toEmail,
+          replyTo: member.email,
+          kind: "staff-invite",
+          idempotencyKey: `invite-${mailKeyHash(inviteId)}-${createdAt}`,
+        });
+      } else {
+        logger.warn("invite mail skipped: restaurant daily mail cap", { rid });
+      }
       return json(res, 201, { ok: true });
     }
     if (m === "PUT" && id && seg.length === 2) {
@@ -861,7 +900,25 @@ async function route(req: Request, res: Response): Promise<unknown> {
     const contact = await col("vendorContacts").doc(body.vendorKey).get();
     const email = contact.get("email") as string | null | undefined;
     if (!email) return json(res, 400, { error: "no email on file for this vendor" });
-    await sendMail(orderEmail(email, body.vendorName, member.email, body.lines, body.note));
+    if (!(await consumeMailQuota(rid))) {
+      return json(res, 429, { error: "daily email limit reached for this restaurant" });
+    }
+    const [name, locale] = await Promise.all([restaurantName(), userLocale()]);
+    const order = {
+      ...orderEmail({ locale, vendorName: body.vendorName, restaurantName: name, replyToEmail: member.email, lines: body.lines, note: body.note }),
+      to: email,
+      fromName: senderName(name),
+      replyTo: member.email,
+    };
+    // Sending IS the action here, so unlike invites a mail failure is
+    // reported. The key covers the full content plus a 10-minute window:
+    // a double-tap or retry dedupes, a deliberate resend later goes out.
+    const sent = await sendMail({
+      ...order,
+      kind: "supplier-order",
+      idempotencyKey: `order-${mailKeyHash(rid, JSON.stringify(order))}-${Math.floor(Date.now() / 600_000)}`,
+    });
+    if (!mailAccepted(sent)) return json(res, 502, { error: "the order email could not be sent" });
     return json(res, 201, { ok: true });
   }
 

@@ -57,7 +57,7 @@ Full recipe in [`docs/animations.md`](docs/animations.md). Summary: give the sou
 
 ## How to add a translated string / a new locale
 
-See [`docs/i18n.md`](docs/i18n.md). Strings live in per-feature TS modules under `app/src/i18n/locales/` with `es` as source of truth and `en` typed `typeof es` — missing keys are compile errors. New locale: add it to every module, `SUPPORTED_LOCALES`, and the `messages`/`datetimeFormats` blocks in `i18n/index.ts`.
+See [`docs/i18n.md`](docs/i18n.md). Strings live in per-feature TS modules under `app/src/i18n/locales/` with `es` as source of truth and `en` typed `typeof es` — missing keys are compile errors. New locale: add it to every module, `LOCALES` in `shared/src/vocab.ts`, the `messages`/`datetimeFormats` blocks in `i18n/index.ts`, and the email copy in `firebase/functions/src/mail.ts`.
 
 ## How to add an API endpoint
 

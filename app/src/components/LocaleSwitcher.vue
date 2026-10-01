@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n'
+import { useAuthStore } from '../stores/auth'
 
 const { locale } = useI18n({ useScope: 'global' })
+const auth = useAuthStore()
 
+// Applies on this device and, signed in, saves it to the profile so it
+// follows the person (and their emails). Signed out (LoginPage), the
+// choice is applied now and saved on sign-in.
 function setLocale(next: SupportedLocale): void {
-  locale.value = next
-  localStorage.setItem('teremu-locale', next)
-  document.documentElement.lang = next
+  auth.chooseLocale(next)
 }
 </script>
 

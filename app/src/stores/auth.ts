@@ -6,7 +6,7 @@ import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
 import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
 import { detectRegion } from '../lib/regions'
-import { setCurrency } from '../i18n'
+import { currentLocale, setCurrency, setLocale, type SupportedLocale } from '../i18n'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 }
@@ -76,6 +76,7 @@ export const useAuthStore = defineStore('auth', () => {
       // server-side — persist whatever actually got applied so the
       // next request carries the right header.
       setActiveRid(res.data.restaurantId)
+      syncLocale(res.data)
       void prefillRegion(res.data)
     } else {
       error.value = res.error
@@ -127,6 +128,41 @@ export const useAuthStore = defineStore('auth', () => {
     return RANK[p.perms[area] as PermLevel] >= RANK[level]
   }
 
+  // ── UI language: per person, stored on the profile ──────────────
+  // localStorage is only this device's first-paint guess; the profile
+  // (users/{uid}.locale) is the source of truth, and what the API uses to
+  // write the emails this person triggers.
+
+  // A language picked while signed out (LoginPage) is the newest choice,
+  // so it beats the stored one at the next sign-in. In-memory is enough:
+  // sign-in is a popup, the page never reloads in between.
+  let localeChosenSignedOut = false
+
+  /** The language switcher: apply now, persist when signed in. */
+  function chooseLocale(next: SupportedLocale): void {
+    setLocale(next)
+    if (user.value) void saveLocale(next)
+    else localeChosenSignedOut = true
+  }
+
+  async function saveLocale(next: SupportedLocale): Promise<void> {
+    const res = await apiFetch('/me/locale', { method: 'PUT', body: JSON.stringify({ locale: next }) })
+    if (res.ok && profile.value) profile.value = { ...profile.value, locale: next }
+  }
+
+  /** After /me: the stored language wins — unless none is stored yet
+   * (first sync after this shipped) or one was just picked on the login
+   * page; then this device's current language is saved instead. */
+  function syncLocale(me: Me): void {
+    const current = currentLocale()
+    if (me.locale && !localeChosenSignedOut) {
+      if (me.locale !== current) setLocale(me.locale)
+    } else if (me.locale !== current) {
+      void saveLocale(current)
+    }
+    localeChosenSignedOut = false
+  }
+
   async function signIn(): Promise<void> {
     busy.value = true
     error.value = null
@@ -146,5 +182,18 @@ export const useAuthStore = defineStore('auth', () => {
     await fbSignOut()
   }
 
-  return { user, ready, profile, error, busy, whenReady, whenProfile, reloadProfile, can, signIn, signOut }
+  return {
+    user,
+    ready,
+    profile,
+    error,
+    busy,
+    whenReady,
+    whenProfile,
+    reloadProfile,
+    can,
+    chooseLocale,
+    signIn,
+    signOut,
+  }
 })

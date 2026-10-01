@@ -6,6 +6,7 @@ import {
   docTypeSchema,
   fxSourceSchema,
   invoiceStatusSchema,
+  localeSchema,
   permsSchema,
   subcategorySchema,
   unitSchema,
@@ -242,6 +243,8 @@ export const meSchema = z.object({
   role: z.enum(['owner', 'member']),
   perms: permsSchema,
   email: z.string(),
+  // The person's UI language (users/{uid}.locale); null until first synced.
+  locale: localeSchema.nullable().optional().catch(null),
   plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
   // Kitchen labor per hour (restaurant setting, in its currency) — feeds

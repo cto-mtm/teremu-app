@@ -36,6 +36,14 @@ export const currencySchema = z.enum(CURRENCIES);
 export type Currency = z.infer<typeof currencySchema>;
 export const DEFAULT_CURRENCY: Currency = "USD";
 
+// UI languages. The app renders in one of these; each person's choice is
+// stored on users/{uid}.locale, and the API writes the emails that person
+// triggers (invites, supplier orders) in it.
+export const LOCALES = ["es", "en"] as const;
+export const localeSchema = z.enum(LOCALES);
+export type Locale = z.infer<typeof localeSchema>;
+export const DEFAULT_LOCALE: Locale = "es";
+
 // Where the rate that took a foreign document to base came from. A closed
 // list both packages validate against; the *behaviour* behind a source
 // lives in the API (`fx/` for the generic ones, `countries/<cc>/` for the

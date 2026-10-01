@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 /**
  * Functions build — bundle to a self-contained artifact.
  *
- * Runtime `dependencies` (firebase-admin, firebase-functions, stripe,
- * zod) are marked EXTERNAL so Firebase installs them in the Cloud
+ * Runtime `dependencies` (firebase-admin, firebase-functions,
+ * google-auth-library, stripe, zod) are marked EXTERNAL so Firebase installs them in the Cloud
  * Function environment. Everything else — `@teremu/shared` above all —
  * is inlined straight into lib/index.js, so the cloud runtime never has
  * to resolve the unpublished workspace package.

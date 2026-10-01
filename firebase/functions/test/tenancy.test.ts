@@ -5,6 +5,7 @@ import {
   get,
   makeOwner,
   makeUserToken,
+  post,
   put,
   seedInvite,
   seedInvoice,
@@ -76,6 +77,19 @@ describe("tenancy & permissions", () => {
     expect(body.role).toBe("member");
     expect(body.restaurantId).toBe(owner.rid);
     expect(body.perms).toEqual(NO_FINANCE_PERMS);
+  });
+
+  it("stores the UI language per person: null until set, then on /me at every location", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    expect((await get("/me", owner.token)).body.locale).toBeNull();
+
+    expect((await put("/me/locale", owner.token, { locale: "en" })).status).toBe(200);
+    expect((await put("/me/locale", owner.token, { locale: "fr" })).status).toBe(400);
+
+    // A second location: same person, same language.
+    const created = await post<{ rid: string }>("/restaurants", owner.token, { name: "Second" });
+    expect((await get("/me", owner.token)).body.locale).toBe("en");
+    expect((await get("/me", owner.token, created.body.rid)).body.locale).toBe("en");
   });
 
   it("returns 403 for a member without finance perms on GET /revenue", async () => {
