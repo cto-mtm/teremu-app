@@ -23,6 +23,7 @@ const atMaxTier = computed(() => auth.profile?.plan === 'max')
 
 const video = ref<HTMLVideoElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+const pdfInput = ref<HTMLInputElement | null>(null)
 const cameraOk = ref<boolean | null>(null)
 const count = ref(0)
 const flash = ref(0)
@@ -277,7 +278,8 @@ function snap(): void {
 }
 
 function onFiles(event: Event): void {
-  const files = (event.target as HTMLInputElement).files
+  const input = event.target as HTMLInputElement
+  const files = input.files
   if (!files || files.length === 0) return
   const picked = Array.from(files)
   const pdfs = picked.filter(isPdf)
@@ -297,7 +299,7 @@ function onFiles(event: Event): void {
     images.forEach((f) => void send(f))
   }
   pdfs.forEach(enqueuePdf)
-  if (fileInput.value) fileInput.value.value = ''
+  input.value = '' // let the same file be re-picked
 }
 </script>
 
@@ -320,16 +322,18 @@ function onFiles(event: Event): void {
         style="background: radial-gradient(140% 100% at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.45) 100%)"
       />
 
-      <!-- Receipt framing guide: four corner brackets, portrait aspect -->
+      <!-- Receipt framing guide: four corner brackets spanning the viewfinder
+           between the top chrome and the bottom hint — long invoices need
+           the whole screen, not a centred box. -->
       <div
         v-if="cameraOk"
-        class="pointer-events-none absolute top-1/2 left-1/2 aspect-[3/4] w-[72%] max-w-sm -translate-x-1/2 -translate-y-1/2"
+        class="pointer-events-none absolute inset-x-4 top-[calc(env(safe-area-inset-top)+4.5rem)] bottom-20"
         aria-hidden="true"
       >
-        <span class="absolute top-0 left-0 h-7 w-7 rounded-tl-xl border-t-[3px] border-l-[3px] border-white/90" />
-        <span class="absolute top-0 right-0 h-7 w-7 rounded-tr-xl border-t-[3px] border-r-[3px] border-white/90" />
-        <span class="absolute bottom-0 left-0 h-7 w-7 rounded-bl-xl border-b-[3px] border-l-[3px] border-white/90" />
-        <span class="absolute right-0 bottom-0 h-7 w-7 rounded-br-xl border-r-[3px] border-b-[3px] border-white/90" />
+        <span class="absolute top-0 left-0 h-9 w-9 rounded-tl-xl border-t-[3px] border-l-[3px] border-white/90" />
+        <span class="absolute top-0 right-0 h-9 w-9 rounded-tr-xl border-t-[3px] border-r-[3px] border-white/90" />
+        <span class="absolute bottom-0 left-0 h-9 w-9 rounded-bl-xl border-b-[3px] border-l-[3px] border-white/90" />
+        <span class="absolute right-0 bottom-0 h-9 w-9 rounded-br-xl border-r-[3px] border-b-[3px] border-white/90" />
       </div>
 
       <!-- Camera unavailable fallback -->
@@ -339,7 +343,10 @@ function onFiles(event: Event): void {
       >
         <img :src="logoWhite" alt="" aria-hidden="true" class="h-14 w-14 opacity-80" />
         <p>{{ t('scan.cameraUnavailable') }}</p>
-        <button class="btn-primary" @click="fileInput?.click()">{{ t('scan.choosePhotos') }}</button>
+        <div class="flex flex-wrap justify-center gap-2">
+          <button class="btn-primary" @click="fileInput?.click()">{{ t('scan.choosePhotos') }}</button>
+          <button class="btn-primary" @click="pdfInput?.click()">{{ t('scan.choosePdf') }}</button>
+        </div>
       </div>
 
       <!-- Top chrome: glass pills over the viewfinder -->
@@ -351,13 +358,16 @@ function onFiles(event: Event): void {
         >
           ✕
         </button>
-        <div class="flex items-center gap-2 rounded-full bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md">
+        <!-- Status pill: only once there is something to report — an empty
+             scanner is just the camera. -->
+        <div
+          v-if="count > 0 || uploading > 0 || (multiPage && store.multipageCount > 0)"
+          class="flex items-center gap-2 rounded-full bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md"
+        >
           {{
             multiPage && store.multipageCount > 0
               ? t('scan.pageCount', { n: store.multipageCount })
-              : count > 0
-                ? t('scan.captured', { n: count })
-                : t('scan.title')
+              : t('scan.captured', { n: count })
           }}
           <span
             v-if="uploading > 0"
@@ -389,6 +399,17 @@ function onFiles(event: Event): void {
               <rect x="3" y="3" width="18" height="18" rx="3" />
               <circle cx="9" cy="9" r="1.8" />
               <path d="M21 15l-5-5-8 8" />
+            </svg>
+          </button>
+          <button
+            class="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md"
+            :aria-label="t('scan.addPdf')"
+            @click="pdfInput?.click()"
+          >
+            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <text x="12" y="17.5" text-anchor="middle" font-size="6.5" font-weight="800" fill="currentColor" stroke="none">PDF</text>
             </svg>
           </button>
         </div>
@@ -537,16 +558,12 @@ function onFiles(event: Event): void {
     </div>
 
     <!-- No `capture` attribute on purpose: with it, iOS and Android skip
-         the picker and open the camera, which the shutter already covers.
-         Without it the OS offers the photo library and Files (PDFs). -->
-    <input
-      ref="fileInput"
-      type="file"
-      accept="image/*,application/pdf,.pdf"
-      multiple
-      hidden
-      @change="onFiles"
-    />
+         the picker and open the camera, which the shutter already covers. -->
+    <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles" />
+    <!-- Separate PDF picker: Android labels the picker intent with the FIRST
+         accept type, and an `image/*` intent is routed to the Photo Picker,
+         which hides PDFs. A PDF-only input lands in the Files picker. -->
+    <input ref="pdfInput" type="file" accept="application/pdf,.pdf" multiple hidden @change="onFiles" />
   </div>
 </template>
 

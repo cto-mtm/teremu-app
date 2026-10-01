@@ -34,7 +34,7 @@ export async function scanReceipt(page: Page, testInfo: TestInfo): Promise<void>
   // rejected upload (quota, duplicate bytes) would otherwise surface much
   // later as "the invoice never appeared in Triage".
   const upload = page.waitForResponse((r) => /\/api\/invoices$/.test(r.url()) && r.request().method() === 'POST')
-  await page.locator('input[type="file"]').setInputFiles(sample)
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles(sample)
   expect((await upload).status(), 'POST /invoices accepted the upload').toBe(201)
 
   // .last(): the last-capture thumbnail carries the same accessible name

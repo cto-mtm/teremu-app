@@ -58,7 +58,7 @@ test.describe('Scan → triage → approve', () => {
     // re-sending the same file produces the same bytes.
     await page.goto('/scan')
     await expect(page.getByRole('button', { name: 'Capturar factura' })).toBeVisible()
-    await page.locator('input[type="file"]').setInputFiles(SAMPLE_RECEIPT[testInfo.project.name])
+    await page.locator('input[type="file"][accept="image/*"]').setInputFiles(SAMPLE_RECEIPT[testInfo.project.name])
 
     await expect(page.getByRole('alert')).toContainText('Esta imagen ya fue escaneada')
     // The capture counter rolled back, so the review pill stays at "Listo"

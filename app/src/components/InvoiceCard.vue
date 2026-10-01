@@ -26,6 +26,16 @@ const stale = computed(
   () => props.invoice.status === 'processing' && Date.now() - props.invoice.createdAt > STALE_MS,
 )
 
+// "Reading…" only while OCR is actually running. A failed scan is a neutral
+// "Scan" — "Invoice" over "this doesn't look like an invoice" contradicts
+// itself. The title is a paired hero, so this mirrors the detail page.
+const title = computed(() => {
+  if (props.invoice.vendorName) return props.invoice.vendorName
+  if (props.invoice.status === 'processing') return t('triage.reading')
+  if (props.invoice.status === 'failed') return t('triage.detail.scanFallback')
+  return t('triage.detail.invoiceFallback')
+})
+
 // Computed so the card becomes tappable the moment OCR finishes — or
 // the moment a stuck invoice needs rescuing.
 const clickable = computed(
@@ -65,7 +75,7 @@ const clickable = computed(
         class="truncate font-semibold"
         :style="heroStyle('invoice', invoice.id, '-title')"
       >
-        {{ invoice.vendorName ?? t('triage.reading') }}
+        {{ title }}
       </div>
       <div class="text-xs text-smoke">
         <template v-if="invoice.status === 'processing'">

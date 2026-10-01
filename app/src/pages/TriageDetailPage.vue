@@ -251,7 +251,10 @@ async function approve(): Promise<void> {
           class="truncate text-lg leading-tight font-bold"
           :style="{ viewTransitionName: 'invoice-title-' + invoice.id }"
         >
-          {{ vendorName || t('triage.detail.invoiceFallback') }}
+          {{
+            vendorName ||
+            (invoice.status === 'failed' ? t('triage.detail.scanFallback') : t('triage.detail.invoiceFallback'))
+          }}
         </h1>
         <div v-if="readonly" class="mt-1 flex flex-wrap items-center gap-2 text-xs text-smoke">
           <span class="chip-down">{{ t('common.status.approved') }}</span>

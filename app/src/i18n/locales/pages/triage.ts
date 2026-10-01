@@ -36,6 +36,7 @@ const es = {
   detail: {
     total: 'Total',
     invoiceFallback: 'Factura',
+    scanFallback: 'Escaneo',
     vendor: 'Proveedor',
     date: 'Fecha',
     itemName: 'Nombre del artículo',
@@ -130,6 +131,7 @@ const en: typeof es = {
   detail: {
     total: 'Total',
     invoiceFallback: 'Invoice',
+    scanFallback: 'Scan',
     vendor: 'Vendor',
     date: 'Date',
     itemName: 'Item name',

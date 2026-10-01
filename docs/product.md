@@ -30,7 +30,7 @@ Everything else in the product hangs off this loop.
 
 ### 1 · The Scanner
 
-Continuous capture built for speed: framing guides, a confirmation flash, and a live thumbnail of the last shot — the camera never blocks between photos, uploads and AI run behind the scenes. An on-device quality gate (~5 ms) catches blurry or dark shots *before* they upload and asks "retake or use anyway?". Photos are compressed on-device (single JPEG encode, ≤1600 px, raw binary upload — no base64) so a 12 MP photo travels as ~300 KB. Gallery upload works as a fallback when there's no camera. Upload failures surface as a transient chip with an error haptic — never a blocking dialog mid-batch.
+Continuous capture built for speed: framing guides, a confirmation flash, and a live thumbnail of the last shot — the camera never blocks between photos, uploads and AI run behind the scenes. An on-device quality gate (~5 ms) catches blurry or dark shots *before* they upload and asks "retake or use anyway?". Photos are compressed on-device (single JPEG encode, ≤1600 px, raw binary upload — no base64) so a 12 MP photo travels as ~300 KB. Two pickers sit at the top of the viewfinder — a photo from the gallery, or a PDF invoice (rasterized on device, one invoice per PDF, up to 8 pages); with no camera they become the screen's main buttons. Upload failures surface as a transient chip with an error haptic — never a blocking dialog mid-batch.
 
 ### 2 · The AI pipeline (what happens to each photo)
 

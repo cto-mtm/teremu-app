@@ -236,7 +236,8 @@ onUnmounted(() => {
           class="card flex items-center justify-between py-3 opacity-70"
         >
           <div class="min-w-0">
-            <div class="truncate text-sm font-medium">{{ inv.vendorName ?? t('triage.detail.invoiceFallback') }}</div>
+            <!-- A dismissed scan is mostly junk (failed OCR) — neutral "Scan", not "Invoice" -->
+            <div class="truncate text-sm font-medium">{{ inv.vendorName || t('triage.detail.scanFallback') }}</div>
             <div class="text-xs text-smoke">{{ d(new Date(inv.createdAt), 'short') }}</div>
           </div>
           <button
