@@ -44,7 +44,7 @@ import {
 import { askAssistant } from "./assistant.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
-import { consumeScan, getPlanInfo, planOf } from "./plan.js";
+import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, planOf } from "./plan.js";
 import {
   billingConfigured,
   cancelSubscription,
@@ -79,6 +79,9 @@ const DAY_MS = 86_400_000;
 // Multi-page invoice cap: pages after the first are quota-free, so this
 // is the cost guard (each page is one more image into the OCR call).
 const MAX_INVOICE_PAGES = 8;
+// Re-inviting the same person resends the email at most this often; the
+// daily caps in consumeMailQuota (mail.ts) bound everything else.
+const INVITE_RESEND_COOLDOWN_MS = 3_600_000;
 const windowDays = (req: Request, fallback: number): number => {
   const n = Number(req.query.days);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 3650) : fallback;
@@ -723,9 +726,17 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // creating a duplicate; a second location gets its own doc.
       const key = emailKey(body.email);
       const inviteId = `${key}_${rid}`;
+      const inviteRef = db.collection("invites").doc(inviteId);
       const toEmail = body.email.trim();
       const createdAt = Date.now();
-      await db.collection("invites").doc(inviteId).set({
+      // Re-inviting resends the email, but at most once per cooldown —
+      // inside it the invite (e.g. new perms) still updates, silently.
+      // The timestamp lives under the restaurant, not on the invite, so
+      // cancelling and re-inviting can't reset it.
+      const inviteMailRef = col("inviteMail").doc(key);
+      const lastMailedAt = (await inviteMailRef.get()).get("mailedAt") as number | undefined;
+      const cooledDown = !lastMailedAt || createdAt - lastMailedAt >= INVITE_RESEND_COOLDOWN_MS;
+      await inviteRef.set({
         emailKey: key,
         restaurantId: rid,
         email: toEmail,
@@ -734,18 +745,21 @@ async function route(req: Request, res: Response): Promise<unknown> {
       });
       // Best-effort: the invite exists either way (attaching happens on
       // sign-in, not via the email link), so a mail failure is only
-      // logged. Keyed per invite write, so re-inviting resends.
-      if (await consumeMailQuota(rid)) {
+      // logged. Keyed per invite write, so a re-invite past the cooldown
+      // resends. The cooldown starts only once the mailer took the
+      // message, so a failed send can be retried straight away.
+      const quota = cooledDown ? await consumeMailQuota(rid, member.uid, toEmail, "staff-invite") : null;
+      if (quota && !quota.ok) logger.warn("invite mail skipped: daily mail cap", { rid, limit: quota.limit });
+      if (quota?.ok) {
         const [locale, name] = await Promise.all([userLocale(), restaurantName()]);
-        await sendMail({
+        const sent = await sendMail({
           ...inviteEmail({ locale, toEmail, inviterEmail: member.email, restaurantName: name }),
           to: toEmail,
           replyTo: member.email,
           kind: "staff-invite",
           idempotencyKey: `invite-${mailKeyHash(inviteId)}-${createdAt}`,
         });
-      } else {
-        logger.warn("invite mail skipped: restaurant daily mail cap", { rid });
+        if (mailAccepted(sent)) await inviteMailRef.set({ mailedAt: createdAt });
       }
       return json(res, 201, { ok: true });
     }
@@ -778,6 +792,14 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // Any signed-in caller can spin up a new location — they become
       // its owner. Not scoped to the active rid; free plan to start.
       const body = restaurantProfileSchema.parse(req.body);
+      // Free locations per owner are capped (plan.ts) — each one brings
+      // its own scan and mail allowance. Not transactional: a burst of
+      // parallel creates could overshoot by a few, which the per-user
+      // mail cap still bounds. Single-field query (no composite index);
+      // the plan filter runs here — an owner has a handful of locations.
+      const owned = await db.collection("restaurants").where("ownerUid", "==", member.uid).select("plan").get();
+      const ownedFree = owned.docs.filter((d) => planOf(d.get("plan")) === "free").length;
+      if (ownedFree >= MAX_FREE_LOCATIONS_PER_OWNER) return paywall("location_limit");
       const restRef = db.collection("restaurants").doc();
       const addedAt = Date.now();
       const newMember: MemberDoc = {
@@ -900,8 +922,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
     const contact = await col("vendorContacts").doc(body.vendorKey).get();
     const email = contact.get("email") as string | null | undefined;
     if (!email) return json(res, 400, { error: "no email on file for this vendor" });
-    if (!(await consumeMailQuota(rid))) {
-      return json(res, 429, { error: "daily email limit reached for this restaurant" });
+    const quota = await consumeMailQuota(rid, member.uid, email, "supplier-order");
+    if (!quota.ok) {
+      return json(res, 429, { error: "mail_limit", limit: quota.limit });
     }
     const [name, locale] = await Promise.all([restaurantName(), userLocale()]);
     const order = {

@@ -3,6 +3,7 @@ import { GoogleAuth } from "google-auth-library";
 import { getFirestore } from "firebase-admin/firestore";
 import type { Locale, Unit } from "@teremu/shared";
 import { logger } from "firebase-functions/v2";
+import { PLAN_LIMITS, planOf } from "./plan.js";
 
 /**
  * Email via mtmcya-mailer (docs/mtmcya-mailer.md): one authenticated
@@ -90,23 +91,55 @@ export function mailAccepted(result: SendMailResult): boolean {
 }
 
 /**
- * Per-restaurant daily send cap (UTC day). The mailer's quota is per
- * *project* — shared by every restaurant — and anyone with a Google
- * account can create one, so without this a single tenant could burn
- * the whole day's allowance (and the shared SES reputation) for all.
- * Returns false when the cap is hit; the caller must not send.
+ * Daily send caps (UTC day), all checked and consumed in one transaction.
+ * The mailer's quota is per *project* — shared by every restaurant — and
+ * anyone with a Google account can create one, so without these a single
+ * tenant could burn the whole day's allowance (and the shared SES
+ * reputation) for all, or flood one inbox.
+ *  - restaurant: one location can't hog the project quota. Set by plan
+ *    (PLAN_LIMITS.mailsPerDay) — free is low, so throwaway accounts
+ *    are worth little; free locations per owner are capped too.
+ *  - user: summed over every location the sender belongs to, so
+ *    several locations (or memberships) don't multiply the above.
+ *  - recipient, split by kind so one can't starve the other:
+ *    - invites: project-wide per address, so no number of accounts or
+ *      locations can flood one inbox with invites.
+ *    - orders: per (restaurant, supplier) pair. A shared counter would
+ *      let one tenant (or plain popularity) lock every other restaurant
+ *      out of ordering from that supplier — and the email IS the order.
+ *    Keyed by a hash; no plaintext address is stored.
+ * The caller must not send unless the result is ok.
  */
-export const MAIL_DAILY_CAP_PER_RESTAURANT = 50;
+export const MAIL_DAILY_CAP_PER_USER = 100;
+export const MAIL_DAILY_CAP_INVITES_PER_RECIPIENT = 5;
+export const MAIL_DAILY_CAP_ORDERS_PER_SUPPLIER = 10;
 
-export async function consumeMailQuota(rid: string): Promise<boolean> {
-  const ref = getFirestore().collection("restaurants").doc(rid);
+export type MailQuotaResult = { ok: true } | { ok: false; limit: "restaurant" | "user" | "recipient" };
+
+export async function consumeMailQuota(rid: string, uid: string, to: string, kind: MailKind): Promise<MailQuotaResult> {
+  const db = getFirestore();
+  const address = to.trim().toLowerCase();
+  const recipient =
+    kind === "staff-invite"
+      ? { id: `invite-${mailKeyHash(address)}`, cap: MAIL_DAILY_CAP_INVITES_PER_RECIPIENT }
+      : { id: `order-${mailKeyHash(rid, address)}`, cap: MAIL_DAILY_CAP_ORDERS_PER_SUPPLIER };
+  const counters = [
+    { limit: "restaurant", ref: db.collection("restaurants").doc(rid) },
+    { limit: "user", ref: db.collection("users").doc(uid) },
+    { limit: "recipient", ref: db.collection("mailRecipients").doc(recipient.id) },
+  ] as const;
   const day = new Date().toISOString().slice(0, 10);
-  return getFirestore().runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const count = snap.get("mailDay") === day ? ((snap.get("mailCount") as number | undefined) ?? 0) : 0;
-    if (count >= MAIL_DAILY_CAP_PER_RESTAURANT) return false;
-    tx.update(ref, { mailDay: day, mailCount: count + 1 });
-    return true;
+  return db.runTransaction(async (tx): Promise<MailQuotaResult> => {
+    const snaps = await Promise.all(counters.map((c) => tx.get(c.ref)));
+    const caps = [PLAN_LIMITS[planOf(snaps[0].get("plan"))].mailsPerDay, MAIL_DAILY_CAP_PER_USER, recipient.cap];
+    const counts = snaps.map((snap) =>
+      snap.get("mailDay") === day ? ((snap.get("mailCount") as number | undefined) ?? 0) : 0,
+    );
+    for (let i = 0; i < counters.length; i++) {
+      if (counts[i] >= caps[i]) return { ok: false, limit: counters[i].limit };
+    }
+    counters.forEach((c, i) => tx.set(c.ref, { mailDay: day, mailCount: counts[i] + 1 }, { merge: true }));
+    return { ok: true };
   });
 }
 

@@ -28,13 +28,19 @@ export interface PlanLimits {
   historyDays: number; // list-query window cap
   expenseTags: number; // distinct expense tags
   assistant: boolean;
+  mailsPerDay: number; // invites + supplier orders per UTC day (abuse cap, see mail.ts)
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistant: false },
-  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistant: true },
-  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistant: true },
+  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistant: false, mailsPerDay: 10 },
+  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistant: true, mailsPerDay: 50 },
+  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistant: true, mailsPerDay: 100 },
 };
+
+/** Free locations one person may own. Creating a location costs nothing,
+ *  so without this every per-location cap (scans, mail) multiplies. Paid
+ *  locations don't count — they're not free to farm. */
+export const MAX_FREE_LOCATIONS_PER_OWNER = 3;
 
 /** The plan a restaurant doc's raw `plan` value maps to (unknown → free). */
 export const planOf = (value: unknown): Plan =>

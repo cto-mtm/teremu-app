@@ -5,6 +5,7 @@ const es = {
   create: 'Crear',
   creating: 'Creando…',
   failed: 'No se pudo crear la ubicación.',
+  limit: 'Has llegado al máximo de ubicaciones gratuitas. Mejora una de tus ubicaciones a Pro para añadir más.',
   yearly: 'anual',
 }
 
@@ -16,6 +17,7 @@ const en: typeof es = {
   create: 'Create',
   creating: 'Creating…',
   failed: 'Could not create the location.',
+  limit: "You've reached the maximum number of free locations. Upgrade one of your locations to Pro to add more.",
   yearly: 'yr',
 }
 

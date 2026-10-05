@@ -38,6 +38,8 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | Email alerts & weekly digest | — | ✓ | ✓ | ✓ |
 | Vendor directory & spend analytics | Basic (top 3 vendors) | Full | Full | Full, per location |
 | Expense tags (non-food) | 3 tags | Unlimited | Unlimited | Unlimited |
+| Emails sent (invites + supplier orders) | 10/day | 50/day | 100/day | Per location; abuse cap, not a selling point |
+| Free locations per owner | 3 | — | — | Paid locations don't count |
 | Data export (CSV) | — | ✓ | ✓ | ✓ |
 | POS integration *(roadmap)* | — | ✓ | ✓ | ✓ |
 | Support | Community | Priority (48 h) | Priority (48 h) | Dedicated |

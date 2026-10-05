@@ -55,6 +55,7 @@ const es = {
     sendEmail: 'Pedir por correo',
     orderSent: 'Enviado ✓',
     orderFailed: 'No se pudo enviar el pedido.',
+    orderLimit: 'Has alcanzado el límite diario de correos. Inténtalo mañana o envía el pedido por WhatsApp.',
     noContact: 'Añade correo o WhatsApp en la página del proveedor para pedir directo.',
   },
 }
@@ -117,6 +118,7 @@ const en: typeof es = {
     sendEmail: 'Order by email',
     orderSent: 'Sent ✓',
     orderFailed: 'Could not send the order.',
+    orderLimit: "You've hit today's email limit. Try again tomorrow or send the order by WhatsApp.",
     noContact: 'Add an email or WhatsApp on the vendor page to order directly.',
   },
 }

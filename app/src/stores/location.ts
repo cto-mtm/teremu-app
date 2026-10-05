@@ -47,16 +47,17 @@ export const useLocationStore = defineStore('location', () => {
     }
   }
 
-  /** Create a new location (caller becomes its owner) and switch to it. */
-  async function addLocation(name: string): Promise<boolean> {
+  /** Create a new location (caller becomes its owner) and switch to it.
+   * 'limit' = the caller already owns the maximum free locations. */
+  async function addLocation(name: string): Promise<'ok' | 'limit' | 'error'> {
     const res = await apiFetch<Location>(
       '/restaurants',
       { method: 'POST', body: JSON.stringify({ name }) },
       createdRestaurantSchema,
     )
-    if (!res.ok) return false
+    if (!res.ok) return res.error.includes('location_limit') ? 'limit' : 'error'
     await switchLocation(res.data.rid)
-    return true
+    return 'ok'
   }
 
   /** Rename the active location (owner only). */

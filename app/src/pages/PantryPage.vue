@@ -133,7 +133,7 @@ async function emailOrder(vendorName: string, rows: GroceryRow[]): Promise<void>
     sentVendor.value = vendorName
     setTimeout(() => (sentVendor.value = null), 2500)
   } else {
-    alert(t('pantry.grocery.orderFailed'))
+    alert(kitchen.error?.includes('mail_limit') ? t('pantry.grocery.orderLimit') : t('pantry.grocery.orderFailed'))
   }
 }
 

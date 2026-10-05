@@ -17,7 +17,7 @@ const open = ref(false)
 const adding = ref(false)
 const newName = ref('')
 const busy = ref(false)
-const failed = ref(false)
+const failed = ref<'limit' | 'error' | null>(null)
 
 const locations = computed(() => auth.profile?.locations ?? [])
 const active = computed(
@@ -50,7 +50,7 @@ async function select(rid: string): Promise<void> {
 function startAdd(): void {
   adding.value = true
   newName.value = ''
-  failed.value = false
+  failed.value = null
 }
 
 function closeAdd(): void {
@@ -61,14 +61,14 @@ async function createLocation(): Promise<void> {
   const name = newName.value.trim()
   if (!name || busy.value) return
   busy.value = true
-  failed.value = false
-  const ok = await location.addLocation(name)
+  failed.value = null
+  const result = await location.addLocation(name)
   busy.value = false
-  if (ok) {
+  if (result === 'ok') {
     open.value = false
     closeAdd()
   } else {
-    failed.value = true
+    failed.value = result
   }
 }
 </script>
@@ -143,7 +143,7 @@ async function createLocation(): Promise<void> {
           <span class="text-base leading-none">+</span>
           <span>{{ t('locations.add') }}</span>
         </button>
-        <p v-if="failed" class="px-2 pt-1 text-[11px] text-coral-600">{{ t('locations.failed') }}</p>
+        <p v-if="failed" class="px-2 pt-1 text-[11px] text-coral-600">{{ failed === 'limit' ? t('locations.limit') : t('locations.failed') }}</p>
       </div>
     </div>
   </div>
