@@ -23,6 +23,12 @@ import { getAppHelp } from "./code/appHelp.js";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Firestore prefix-range upper bound: the highest code point (U+F8FF).
+// A range [key, key + PREFIX_END) matches every value that starts with
+// `key` (`nameKey` '>=' key AND '<' key+PREFIX_END). Written as a named
+// constant because the raw character is invisible in editors/diffs.
+const PREFIX_END = '\uf8ff';
+
 const IngredientRow = z.object({
   id: z.string().meta(card({ label: "Ver", entity: "ingredient" })),
   name: z.string().meta(card({ label: "Ingrediente" })),
@@ -136,7 +142,7 @@ export const tools: ToolRow[] = [
       .object({ text: z.string().min(2).max(60).describe("Beginning of the ingredient name, e.g. 'tomate'") })
       .transform(({ text }) => {
         const key = normalizeName(text);
-        return { text, key, keyEnd: `${key}` };
+        return { text, key, keyEnd: key + PREFIX_END };
       }),
     query: {
       collection: "restaurants/{tenant}/ingredients",
