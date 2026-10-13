@@ -4,10 +4,10 @@ import { ingredientDocSchema, menuItemDocSchema, type IngredientDoc, type MenuIt
 
 /**
  * Shared plumbing for the assistant's `code` tools (dishCost, priceChange,
- * invoiceLines). One place for: the tenant document ref, the bounded
- * collection load + schema-parse into a Map, and the scalar coercers the
- * `query` tools also use. Keeps every code tool reading the same shapes
- * the same way — a field rename lands here once.
+ * invoiceLines, vendors, counts). One place for: the tenant document ref,
+ * the bounded collection load + schema-parse into a Map, and the scalar
+ * coercers the `query` tools also use. Keeps every code tool reading the
+ * same shapes the same way — a field rename lands here once.
  */
 
 /** Well above any real menu/pantry; keeps a single read bounded. */
