@@ -26,6 +26,11 @@ export interface AssistantPrincipal {
   timezone: string;
   /** `<area>:<read|write>` strings from the member's perms, or `['*']` for owners. */
   permissions: string[];
+  /** Ready-made fact strings (resolved in api.ts where planInfo already lives,
+   *  so the manifest stays declarative and no extra Firestore read is made). */
+  planLabel: string;
+  scansLabel: string;
+  assistantLabel: string;
 }
 
 export const manifest = {
@@ -35,7 +40,12 @@ export const manifest = {
   plan: { from: "principal.plan" },
   locale: { from: "principal.locale", default: "es" },
   timezone: { from: "principal.timezone", default: "Europe/Madrid" },
-  facts: { "Restaurant base currency (all amounts)": "principal.currency" },
+  facts: {
+    "Restaurant base currency (all amounts)": "principal.currency",
+    "Current plan": "principal.planLabel",
+    "Invoice scans this month": "principal.scansLabel",
+    "Assistant questions this plan allows": "principal.assistantLabel",
+  },
   conversation: { path: "restaurants/{tenant}/assistantConversations", ttlDays: 7, window: 30 },
   // Monthly turn counter on the restaurant doc, next to plan/scanCount.
   // free: 0 keeps the assistant Pro+ (the modal shows the upgrade notice).

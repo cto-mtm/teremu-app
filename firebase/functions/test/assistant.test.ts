@@ -152,6 +152,97 @@ describe("assistant", () => {
     expect(t.toolCalls[0]?.toolName).toBe("openScanner");
   });
 
+  it("ranks dishes by highest margin when asked for the most profitable", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const tomato = await seedIngredient(owner.rid, { name: "Tomate", nameKey: "tomate", unit: "kg", lastUnitPrice: 2, prevUnitPrice: 2 });
+    // Cheap dish → high margin; pricey recipe → low margin.
+    await seedMenuItem(owner.rid, { name: "Rentable", price: 10, targetMarginPct: 70, recipe: [{ ingredientId: tomato.id, qty: 0.5 }] });
+    await seedMenuItem(owner.rid, { name: "Flojo", price: 10, targetMarginPct: 70, recipe: [{ ingredientId: tomato.id, qty: 4 }] });
+
+    const t = await turn(owner.token, owner.rid, "¿Cuáles son mis platos más rentables?");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["getDishCosts"]);
+    const rows = t.toolOutputs[0] as Array<{ name: string; marginPct: number | null }>;
+    // Highest margin first: 0.5 kg (90 %) before 4 kg (20 %).
+    expect(rows.map((r) => r.name)).toEqual(["Rentable", "Flojo"]);
+    expect(rows[0]?.marginPct).toBe(90);
+  });
+
+  it("lists pantry ingredients whose price rose since a date, biggest move first", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const now = Date.now();
+    const recent = now - 5 * 86_400_000; // within the last 30 days
+    const old = now - 90 * 86_400_000; // before the window
+    // +50 % last week, +100 % last week, a drop, and an old rise (filtered out).
+    await seedIngredient(owner.rid, { name: "Aceite", nameKey: "aceite", lastUnitPrice: 3, prevUnitPrice: 2, lastPriceAt: recent });
+    await seedIngredient(owner.rid, { name: "Harina", nameKey: "harina", lastUnitPrice: 2, prevUnitPrice: 1, lastPriceAt: recent });
+    await seedIngredient(owner.rid, { name: "Leche", nameKey: "leche", lastUnitPrice: 1, prevUnitPrice: 2, lastPriceAt: recent });
+    await seedIngredient(owner.rid, { name: "Sal", nameKey: "sal", lastUnitPrice: 5, prevUnitPrice: 1, lastPriceAt: old });
+
+    const t = await turn(owner.token, owner.rid, "¿Qué ingredientes han subido de precio este mes?");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls[0]?.toolName).toBe("getPriceChanges");
+    const rows = t.toolOutputs[0] as Array<{ name: string; changePct: number | null }>;
+    // Only recent rises; Harina (+100 %) before Aceite (+50 %); Leche (down) and Sal (old) excluded.
+    expect(rows.map((r) => r.name)).toEqual(["Harina", "Aceite"]);
+    expect(rows[0]?.changePct).toBe(100);
+  });
+
+  it("aggregates approved invoices into vendors by spend, excluding expense bills", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "Makro", total: 100, invoiceDate: "2026-10-01" });
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "Makro", total: 150, invoiceDate: "2026-10-10" });
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "Pescados Paco", total: 80, invoiceDate: "2026-10-05" });
+    // A non-food expense bill (rent) must NOT count as a vendor.
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "Casero", total: 900, expenseTag: "alquiler", invoiceDate: "2026-10-01" });
+    // A still-pending invoice must NOT count either.
+    await seedInvoice(owner.rid, { status: "needs_review", vendorName: "Makro", total: 999 });
+
+    const t = await turn(owner.token, owner.rid, "¿Quiénes son mis proveedores?");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls[0]?.toolName).toBe("getVendors");
+    const rows = t.toolOutputs[0] as Array<{ name: string; spend: number; deliveries: number; lastOrder: string | null }>;
+    expect(rows.map((r) => r.name)).toEqual(["Makro", "Pescados Paco"]); // by spend; Casero (expense) excluded
+    expect(rows[0]).toMatchObject({ spend: 250, deliveries: 2, lastOrder: "2026-10-10" });
+  });
+
+  it("reports how much data the restaurant has (approved vs pending invoices)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "A", total: 1 });
+    await seedInvoice(owner.rid, { status: "approved", vendorName: "B", total: 1 });
+    await seedInvoice(owner.rid, { status: "needs_review", vendorName: "C", total: 1 });
+    await seedIngredient(owner.rid, { name: "Sal", nameKey: "sal" });
+    await seedMenuItem(owner.rid, { name: "Tapa", active: true });
+
+    const t = await turn(owner.token, owner.rid, "¿Cuanto llevo registrado?");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls[0]?.toolName).toBe("getCounts");
+    const row = (t.toolOutputs[0] as Array<Record<string, number>>)[0];
+    expect(row).toMatchObject({ approvedInvoices: 2, pendingInvoices: 1, dishes: 1, ingredients: 1 });
+  });
+
+  it("answers app-help questions via getAppHelp, even for a member with no data access", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    // A member with EVERY area denied and no scan — only the baseline app:read.
+    const uid = `norole-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "none", menu: "none", pantry: "none", finance: "none", vendors: "none", integrations: "none", scan: false });
+    const token = await makeUserToken({ uid, email: `${uid}@test.local` });
+
+    const t = await turn(token, owner.rid, "Que puedes hacer en esta app?");
+    expect(t.status).toBe(200);
+    expect(t.errors).toEqual([]);
+    expect(t.toolCalls[0]?.toolName).toBe("getAppHelp");
+    const rows = t.toolOutputs[0] as Array<{ topic: string; where: string }>;
+    // The static overview comes back regardless of data permissions.
+    expect(rows.map((r) => r.topic)).toContain("Triage");
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+  });
+
   it("rejects requests without a bearer token", async () => {
     const res = await fetch(`${ASSISTANT}/conversation`, { headers: { "X-Assistant-Version": "0" } });
     expect(res.status).toBe(401);

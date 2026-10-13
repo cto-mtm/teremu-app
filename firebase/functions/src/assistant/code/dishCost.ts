@@ -1,48 +1,29 @@
-import { getFirestore } from "firebase-admin/firestore";
 import type { AssistantContext } from "@mtmcya/assistant";
 import { marginPct, normalizeName, plateCost } from "@teremu/shared";
-import { ingredientDocSchema, menuItemDocSchema } from "../../models.js";
 import type { DishCostRowT } from "../tools.js";
+import { laborRate, loadIngredients, loadMenuItems, round1, round2 } from "./shared.js";
 
 /**
- * The assistant's one `code` tool. Dish cost is not stored anywhere: it
- * is recipe × live ingredient prices (+ sub-recipes, + prep labor), the
+ * The assistant's dish-cost `code` tool. Dish cost is not stored anywhere:
+ * it is recipe × live ingredient prices (+ sub-recipes, + prep labor), the
  * same `plateCost()` from @teremu/shared the menu page runs, so a margin
  * quoted in chat equals the one on the ficha de plato. A `query` row
- * cannot express a join, hence code. Scoped by `ctx.tenantId`; the
- * engine validates the output against `DishCostRow` and caps its size.
+ * cannot express a join, hence code. Scoped by `ctx.tenantId` (via the
+ * shared loaders); the engine validates the output against `DishCostRow`
+ * and caps its size.
  */
 export interface DishCostInput {
   name?: string | undefined;
-  order: "lowestMargin" | "name";
+  order: "lowestMargin" | "highestMargin" | "name";
   limit: number;
 }
 
-const MAX_DOCS = 500; // well above any real menu/pantry; keeps one read bounded
-
 export async function dishCosts(input: DishCostInput, ctx: AssistantContext): Promise<DishCostRowT[]> {
-  const db = getFirestore();
-  const rest = db.collection("restaurants").doc(ctx.tenantId);
-  const [restSnap, menuSnap, ingSnap] = await Promise.all([
-    rest.get(),
-    rest.collection("menuItems").limit(MAX_DOCS).get(),
-    rest.collection("ingredients").limit(MAX_DOCS).get(),
+  const [menuItems, ingredients, laborRatePerHour] = await Promise.all([
+    loadMenuItems(ctx),
+    loadIngredients(ctx),
+    laborRate(ctx),
   ]);
-  const rate = restSnap.get("laborRatePerHour");
-  const laborRatePerHour = typeof rate === "number" ? rate : 0;
-
-  const ingredients = new Map(
-    ingSnap.docs.flatMap((d) => {
-      const p = ingredientDocSchema.safeParse(d.data());
-      return p.success ? [[d.id, p.data] as const] : [];
-    }),
-  );
-  const menuItems = new Map(
-    menuSnap.docs.flatMap((d) => {
-      const p = menuItemDocSchema.safeParse(d.data());
-      return p.success ? [[d.id, { id: d.id, ...p.data }] as const] : [];
-    }),
-  );
 
   const needle = input.name ? normalizeName(input.name) : "";
   const rows: DishCostRowT[] = [];
@@ -63,13 +44,18 @@ export async function dishCosts(input: DishCostInput, ctx: AssistantContext): Pr
     });
   }
 
-  rows.sort((a, b) =>
-    input.order === "name"
-      ? a.name.localeCompare(b.name)
-      : (a.marginPct ?? Number.POSITIVE_INFINITY) - (b.marginPct ?? Number.POSITIVE_INFINITY),
-  );
+  rows.sort(byOrder(input.order));
   return rows.slice(0, input.limit);
 }
 
-const round2 = (n: number): number => Math.round(n * 100) / 100;
-const round1 = (n: number | null): number | null => (n === null ? null : Math.round(n * 10) / 10);
+/** Comparator for the requested order. A null margin (no price) always sorts
+ *  last, whether the user asked for the lowest or the highest. */
+function byOrder(order: DishCostInput["order"]): (a: DishCostRowT, b: DishCostRowT) => number {
+  if (order === "name") return (a, b) => a.name.localeCompare(b.name);
+  const sign = order === "highestMargin" ? -1 : 1;
+  return (a, b) => {
+    if (a.marginPct === null) return 1;
+    if (b.marginPct === null) return -1;
+    return sign * (a.marginPct - b.marginPct);
+  };
+}

@@ -2,6 +2,11 @@ import { z } from "zod";
 import { card, type ToolRow } from "@mtmcya/assistant";
 import { normalizeName } from "@teremu/shared";
 import { dishCosts } from "./code/dishCost.js";
+import { priceChanges } from "./code/priceChange.js";
+import { invoiceLines } from "./code/invoiceLines.js";
+import { vendors } from "./code/vendors.js";
+import { getCounts } from "./code/counts.js";
+import { getAppHelp } from "./code/appHelp.js";
 
 /**
  * The assistant's capabilities, as data. Each row is a `query` the engine
@@ -40,6 +45,60 @@ export const DishCostRow = z.object({
   incomplete: z.boolean().meta(card({ hidden: true })),
 });
 export type DishCostRowT = z.infer<typeof DishCostRow>;
+
+/** A pantry ingredient whose rolling price moved (getPriceChanges). Shares
+ *  IngredientRow's shape; adds the move and when it landed. */
+export const PriceChangeRow = z.object({
+  id: z.string().meta(card({ label: "Ver", entity: "ingredient" })),
+  name: z.string().meta(card({ label: "Ingrediente" })),
+  unit: z.string().meta(card({ label: "Unidad" })),
+  price: z.number().meta(card({ label: "Precio", format: "money" })),
+  prevPrice: z.number().meta(card({ label: "Anterior", format: "money" })),
+  changePct: z.number().nullable().meta(card({ label: "Variación %", format: "number" })),
+  vendor: z.string().nullable().meta(card({ label: "Proveedor" })),
+  changedAt: z.number().meta(card({ label: "Fecha", format: "date" })),
+});
+export type PriceChangeRowT = z.infer<typeof PriceChangeRow>;
+
+/** One line of an approved invoice (getInvoiceLineItems). Money is base
+ *  currency (unit price derived from baseUnitPrice when present). */
+export const InvoiceLineRow = z.object({
+  name: z.string().meta(card({ label: "Concepto" })),
+  qty: z.number().meta(card({ label: "Cantidad", format: "number" })),
+  unit: z.string().meta(card({ label: "Unidad" })),
+  unitPrice: z.number().meta(card({ label: "Precio ud.", format: "money" })),
+  total: z.number().meta(card({ label: "Total", format: "money" })),
+});
+export type InvoiceLineRowT = z.infer<typeof InvoiceLineRow>;
+
+/** A vendor derived from approved invoices (getVendors), with optional contact. */
+export const VendorRow = z.object({
+  key: z.string().meta(card({ label: "Ver", entity: "vendor" })),
+  name: z.string().meta(card({ label: "Proveedor" })),
+  spend: z.number().meta(card({ label: "Gasto total", format: "money" })),
+  deliveries: z.number().meta(card({ label: "Entregas", format: "number" })),
+  lastOrder: z.string().nullable().meta(card({ label: "Último pedido", format: "date" })),
+  email: z.string().nullable().meta(card({ label: "Email" })),
+  phone: z.string().nullable().meta(card({ label: "Teléfono" })),
+});
+export type VendorRowT = z.infer<typeof VendorRow>;
+
+/** How much data the restaurant has (getCounts): one row of totals. */
+export const CountsRow = z.object({
+  approvedInvoices: z.number().meta(card({ label: "Facturas aprobadas", format: "number" })),
+  pendingInvoices: z.number().meta(card({ label: "En triage", format: "number" })),
+  dishes: z.number().meta(card({ label: "Platos activos", format: "number" })),
+  ingredients: z.number().meta(card({ label: "Ingredientes", format: "number" })),
+});
+export type CountsRowT = z.infer<typeof CountsRow>;
+
+/** One product-help topic (getAppHelp): what a screen/feature does and where. */
+export const AppHelpRow = z.object({
+  topic: z.string().meta(card({ label: "Función" })),
+  does: z.string().meta(card({ label: "Qué hace" })),
+  where: z.string().meta(card({ label: "Dónde", format: "badge" })),
+});
+export type AppHelpRowT = z.infer<typeof AppHelpRow>;
 
 const InvoiceRow = z.object({
   id: z.string().meta(card({ label: "Ver", entity: "invoice" })),
@@ -101,12 +160,27 @@ export const tools: ToolRow[] = [
   },
   {
     kind: "code",
+    name: "getPriceChanges",
+    description:
+      "Pantry ingredients whose price moved since a date: up, down or either, biggest move first. Use for 'what got more expensive this month' and vendor price-hike questions.",
+    permission: "pantry:read",
+    input: z.object({
+      from: z.string().regex(DATE).describe("Only changes on/after this date, YYYY-MM-DD"),
+      direction: z.enum(["up", "down", "any"]).default("any"),
+      limit: z.number().int().min(1).max(20).default(10),
+    }),
+    output: z.array(PriceChangeRow),
+    execute: priceChanges,
+  },
+  {
+    kind: "code",
     name: "getDishCosts",
-    description: "Plate cost and margin of menu dishes (escandallo): by dish name, or the dishes with the lowest margin. The only source of dish cost.",
+    description:
+      "Plate cost and margin of menu dishes (escandallo): by dish name, or ranked by margin (lowest = least profitable, highest = most profitable). The only source of dish cost.",
     permission: "menu:read",
     input: z.object({
       name: z.string().min(2).max(80).optional().describe("Part of a dish name; omit for a ranking"),
-      order: z.enum(["lowestMargin", "name"]).default("lowestMargin"),
+      order: z.enum(["lowestMargin", "highestMargin", "name"]).default("lowestMargin"),
       limit: z.number().int().min(1).max(20).default(10),
     }),
     output: z.array(DishCostRow),
@@ -133,6 +207,51 @@ export const tools: ToolRow[] = [
       }),
     },
     output: z.array(InvoiceRow),
+  },
+  {
+    kind: "code",
+    name: "getInvoiceLineItems",
+    description:
+      "The line items of one approved invoice (its id from getRecentInvoices): what was bought, quantity and base-currency unit price and total. Use to answer 'what was on that invoice' or an ingredient's price on a specific bill.",
+    permission: "triage:read",
+    input: z.object({ id: z.string().describe("Invoice id from getRecentInvoices") }),
+    output: z.array(InvoiceLineRow),
+    execute: invoiceLines,
+  },
+  {
+    kind: "code",
+    name: "getVendors",
+    description:
+      "Vendors (proveedores) derived from approved invoices: total spend, number of deliveries, last order date and contact. By vendor name, or the top vendors by spend. Excludes non-food expense bills.",
+    permission: "vendors:read",
+    input: z.object({
+      name: z.string().min(2).max(80).optional().describe("Part of a vendor name; omit for the top vendors"),
+      limit: z.number().int().min(1).max(20).default(10),
+    }),
+    output: z.array(VendorRow),
+    execute: vendors,
+  },
+  {
+    kind: "code",
+    name: "getCounts",
+    description:
+      "How much data this restaurant has: approved invoices scanned so far, invoices waiting in triage, active dishes, ingredients. Use for 'how many invoices have I seen', 'how many are pending'.",
+    permission: "triage:read",
+    input: z.object({}),
+    output: z.array(CountsRow),
+    execute: getCounts,
+  },
+  {
+    kind: "code",
+    name: "getAppHelp",
+    description:
+      "How Teremu itself works: what a screen or feature does and where to find it. Use for 'what can you do', 'how does X work', 'where do I …', and plan/billing/account questions. Static product help, not restaurant data.",
+    permission: "app:read",
+    input: z.object({
+      topic: z.string().min(2).max(60).optional().describe("A screen or feature name (e.g. 'triage', 'plan'); omit for an overview"),
+    }),
+    output: z.array(AppHelpRow),
+    execute: getAppHelp,
   },
   {
     kind: "query",
@@ -195,5 +314,13 @@ export const tools: ToolRow[] = [
     permission: "pantry:read",
     input: z.object({ id: z.string().describe("Ingredient id from searchIngredients") }),
     route: "/pantry/{id}",
+  },
+  {
+    kind: "handoff",
+    name: "openVendor",
+    description: "Open a vendor's page (proveedor): their invoices, ingredients supplied, and contact.",
+    permission: "vendors:read",
+    input: z.object({ id: z.string().describe("Vendor key from getVendors") }),
+    route: "/vendors/{id}",
   },
 ];

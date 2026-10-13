@@ -120,12 +120,20 @@ const withId = (d: FirebaseFirestore.QueryDocumentSnapshot) => ({ id: d.id, ...d
 /** Member perms → the assistant's `<area>:<read|write>` strings. Owners get everything. */
 function permissionList(m: Member): string[] {
   if (m.role === "owner") return ["*"];
-  return Object.entries(m.perms).flatMap(([area, level]) => {
-    if (area === "scan") return level ? ["scan:write"] : [];
-    if (level === "edit") return [`${area}:read`, `${area}:write`];
-    if (level === "read") return [`${area}:read`];
-    return [];
-  });
+  // `app:read` is the baseline every signed-in member holds: it gates only
+  // the assistant's own help/capabilities tool (no restaurant data), so a
+  // member with every area set to "none" can still ask what the app does.
+  const perms = ["app:read"];
+  for (const [area, level] of Object.entries(m.perms)) {
+    if (area === "scan") {
+      if (level) perms.push("scan:write");
+    } else if (level === "edit") {
+      perms.push(`${area}:read`, `${area}:write`);
+    } else if (level === "read") {
+      perms.push(`${area}:read`);
+    }
+  }
+  return perms;
 }
 
 function serializeInvoice(id: string, doc: InvoiceDoc) {
@@ -986,6 +994,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
   // (restaurants/{rid}.aiUsage, free = 0 turns) — no cooldown, no paywall
   // code here; the modal renders the upgrade notice on quota_exceeded.
   if (head === "assistant") {
+    const scansLeft = Math.max(0, planInfo.limits.scans - planInfo.scanCount);
     const principal: AssistantPrincipal = {
       uid: member.uid,
       restaurantId: rid,
@@ -995,6 +1004,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
       locale: await userLocale(),
       timezone: planInfo.timezone ?? "Europe/Madrid",
       permissions: permissionList(member),
+      // Pre-resolved facts (manifest.facts reads these by path) so plan /
+      // scans-left / "do I have the assistant" are answered from context
+      // with no tool call and no extra read — planInfo is already loaded.
+      planLabel: planInfo.plan,
+      scansLabel: `${planInfo.scanCount} used of ${planInfo.limits.scans} this month (${scansLeft} left); upgrade for more`,
+      assistantLabel: planInfo.limits.assistant ? "included on this plan" : "not on this plan (upgrade to Pro)",
     };
     await toNodeHandler(assistant.fetch, () => principal)(req, res);
     return;
