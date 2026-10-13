@@ -166,10 +166,6 @@ export const vendorContactSchema = z.object({
 })
 export const vendorContactListSchema = z.array(vendorContactSchema)
 
-export const assistantResponseSchema = z.object({
-  answer: z.string(),
-})
-
 /** POST /billing/checkout | /billing/portal — Stripe-hosted URL to redirect to. */
 export const billingUrlSchema = z.object({
   url: z.string().url(),

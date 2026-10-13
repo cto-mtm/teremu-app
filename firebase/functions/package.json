@@ -2,6 +2,7 @@
   "name": "teremu-functions",
   "description": "Cloud Functions API for Teremu — invoices, OCR, pantry, margins",
   "private": true,
+  "type": "module",
   "engines": {
     "node": "22"
   },
@@ -19,10 +20,12 @@
     "test:real": "vitest run --config vitest.real.config.ts"
   },
   "dependencies": {
+    "@ai-sdk/google-vertex": "^5.0.111",
+    "ai": "^7.0.139",
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^7.3.2",
     "google-auth-library": "^10.9.1",
     "stripe": "^17.5.0",
-    "zod": "^4.1.13"
+    "zod": "^4.6.7"
   }
 }

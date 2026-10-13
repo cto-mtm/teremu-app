@@ -90,21 +90,26 @@ describe("freemium paywalls", () => {
     expect(body.error).toBe("member_limit");
   });
 
-  it("gates the assistant behind Pro, then enforces a 10s cooldown once unlocked", async () => {
+  it("gates the assistant behind Pro through its monthly quota (free = 0 turns, no cooldown)", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    // The assistant is the shared @mtmcya/assistant; a turn is a streamed
+    // POST /assistant/conversation/turn (test/assistant.test.ts covers the
+    // tools). The old per-member 10 s cooldown is gone: the quota is
+    // turns per month per restaurant plus a daily per-person cap.
+    const ask = (text: string) => post("/assistant/conversation/turn", owner.token, { message: { text } });
 
-    const blocked = await post("/assistant", owner.token, { question: "How much flour do I have?" });
-    expect(blocked.status).toBe(402);
-    expect(blocked.body.error).toBe("assistant_pro");
+    const blocked = await ask("hola");
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error).toBe("quota_exceeded");
 
     await setPlan(owner.rid, "pro");
 
-    const first = await post("/assistant", owner.token, { question: "How much flour do I have?" });
+    const first = await ask("hola");
     expect(first.status).toBe(200);
-    expect(typeof first.body.answer).toBe("string");
+    expect(String(first.body)).toContain("text-delta"); // a UI message stream, not JSON
 
-    const second = await post("/assistant", owner.token, { question: "And the tomatoes?" });
-    expect(second.status).toBe(429);
+    const second = await ask("hola");
+    expect(second.status).toBe(200);
   });
 
   it("caps history windowing by plan and reflects scan usage on GET /me", async () => {

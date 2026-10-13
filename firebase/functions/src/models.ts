@@ -425,22 +425,6 @@ export const discardSchema = z.object({
   discarded: z.boolean().default(true),
 });
 
-/** POST /assistant — Q&A over the member's visible data. The client may
- * send the session's recent turns for conversational follow-ups; nothing
- * is stored server-side and the data snapshot is rebuilt every call. */
-export const assistantSchema = z.object({
-  question: z.string().min(3).max(400),
-  history: z
-    .array(
-      z.object({
-        role: z.enum(["user", "assistant"]),
-        content: z.string().max(2000),
-      }),
-    )
-    .max(12)
-    .optional(),
-});
-
 /** POST /menu/draft-recipes — batch AI recipe drafts for the menu-scan
  * wizard. Quota-free (menu setup is onboarding, not a metered scan). */
 export const draftRecipesSchema = z.object({

@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import AssistantSheet from './AssistantSheet.vue'
+import { AssistantModal, useAssistant } from '@mtmcya/assistant/vue'
 import BootLoader from './BootLoader.vue'
 import LocationSwitcher from './LocationSwitcher.vue'
 import MobileLauncher from './MobileLauncher.vue'
@@ -28,9 +28,12 @@ const bare = computed(() => route.name === 'scan' || route.name === 'login')
 const navOpen = ref(false)
 watch(() => route.path, () => (navOpen.value = false))
 
-// Stateless AI assistant, available to every member (context filtered
-// server-side by their perms).
-const assistantOpen = ref(false)
+// The shared assistant (@mtmcya/assistant): opened from the sidebar
+// entry; the server scopes every tool by the member's perms. It keeps one
+// conversation per person PER LOCATION, so a location switch resets the
+// client state (and the keyed modal below remounts its transcript).
+const assistant = useAssistant()
+watch(() => authStore.profile?.restaurantId, () => void assistant.reset())
 
 // Mobile launcher (full-screen hub). Auto-opens ONCE per app session on
 // phones — the "land on the menu, then dive into pages" flow — then
@@ -208,7 +211,7 @@ watch(
         <button
           class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink md:py-2.5"
           :aria-label="t('assistant.open')"
-          @click="assistantOpen = true"
+          @click="assistant.open()"
         >
           <NavIcon name="assistant" class="h-5 w-5 shrink-0" />
           <span>{{ t('assistant.title') }}</span>
@@ -249,11 +252,7 @@ watch(
     <!-- Keyed on the active location: it reasons over one restaurant's
          data, so switching locations must remount it (fresh transcript)
          rather than carry the old one across (see multi-location-plan.md). -->
-    <AssistantSheet
-      v-if="authStore.user"
-      :key="authStore.profile?.restaurantId"
-      v-model="assistantOpen"
-    />
+    <AssistantModal v-if="authStore.user" :key="authStore.profile?.restaurantId" />
 
     <!-- Mobile launcher: full-screen hub + its bottom-right FAB. Both
          phone-only (md:hidden); desktop uses the sidebar. Hidden on bare

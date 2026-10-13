@@ -1,6 +1,6 @@
 # LLM provider
 
-Every AI call in the API (invoice OCR, menu scan, recipe drafts, assistant) goes through **one client**: `firebase/functions/src/llm.ts`. It speaks the OpenAI `chat/completions` dialect, which every provider we care about exposes, so **the provider is config, not code**.
+Every AI call in the API (invoice OCR, menu scan, recipe drafts) goes through **one client**: `firebase/functions/src/llm.ts` — with one deliberate exception, the **assistant**, which is the shared MTM package (see § Assistant at the end). It speaks the OpenAI `chat/completions` dialect, which every provider we care about exposes, so **the provider is config, not code**.
 
 ## Configuration
 
@@ -89,3 +89,19 @@ Two fallbacks behind that, because "the provider honors it" is not guaranteed:
 - Gemini's OpenAI compatibility layer is officially **beta**: unknown params are *silently ignored*, and Gemini-specific features (thinking budgets etc.) need `extra_body`. Our payloads only use core params, so exposure is minimal.
 - Google retires Gemini versions aggressively. When actually flipping the switch, re-check the model table above and update the preset default in `llm.ts` if 3.1 has aged out.
 - Model ids in this doc are the bare ids used by the OpenAI-compat endpoint (no `models/` prefix).
+
+## Assistant (@mtmcya/assistant)
+
+Since 2026-10-13 the chat assistant is **not** an `llm.ts` call. It is the MTM-wide package `@mtmcya/assistant` (repo `mtmcya-app-assistant`, shared with dirumed and pasdiu), which runs the tool loop on **Vertex AI Gemini 3.x** through the Vercel AI SDK with Application Default Credentials — no API key, no OpenAI-compatible endpoint. The old one-shot snapshot (`assistant.ts`, 300 ingredients + 200 dishes + 40 invoices stuffed into one prompt) is gone; the model now calls tools.
+
+What lives in this repo is **data**, under `firebase/functions/src/assistant/`: `manifest.ts` (tenant = the active restaurant, permissions computed from the member's perms, plan quota, prompt, routes), `prompt.md` (domain instructions), `tools.ts` (the rows: `searchIngredients`, `getRecentInvoices`, `getRevenue`, `getExpenses` as declarative Firestore queries; `openScanner` / `openTriage` / `openDish` / `openIngredient` as handoffs) and `code/dishCost.ts` (the one `code` tool — plate cost is not stored, it is `plateCost()` from `@teremu/shared`). The mount is one branch in `api.ts` behind `requireMember`; the frontend is the package's modal mounted in `AppShell.vue` with `app/src/assistant/theme.css` mapping the brand tokens.
+
+| Variable | Where | Meaning |
+| --- | --- | --- |
+| `GOOGLE_VERTEX_PROJECT` | `functions/.env` | GCP project whose Vertex AI API is enabled and whose Functions service account has `roles/aiplatform.user`. |
+| `GOOGLE_VERTEX_LOCATION` | `functions/.env` | `global` — Gemini 3.x ids 404 on regional endpoints. |
+| `TEREMU_TEST_MOCKS` | test script | Swaps in the scripted model (`src/assistant/script.ts`); the engine refuses a mock on Cloud Run outside the emulator. |
+
+Cost and quota: the package's monthly counter lives on `restaurants/{rid}.aiUsage` (free 0, pro 300, max 1000 turns/month, 60 per person per day — `manifest.ts`), replacing the old 10 s per-member cooldown; every turn is logged to `ai_usage` with `estimatedCostMicros`. Measured in the package on 2026-10-13: a two-step Flash-Lite turn is ≈ $0.0005. Model ids and prices are tables in the package (`src/server/engine/models.ts`), never here. Locally the emulator needs `gcloud auth application-default login`; the integration suite never calls Vertex.
+
+Runbook and pitfalls: `../mtmcya-app-assistant/docs/integrations/teremu.md` and `agent/skills/assistant-integrate/SKILL.md`.

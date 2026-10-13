@@ -1,0 +1,22 @@
+/*
+ * Brand mapping for the shared assistant (@mtmcya/assistant). The
+ * package styles itself with `--assistant-*` variables only; this file
+ * is the entire styling work — point them at Teremu's @theme tokens in
+ * assets/css/main.css (the package's base.css is imported in main.ts).
+ */
+:root {
+  --assistant-accent: var(--color-ember);
+  --assistant-accent-contrast: #ffffff;
+  --assistant-accent-soft: var(--color-ember-50);
+  --assistant-text: var(--color-ink);
+  --assistant-text-muted: var(--color-smoke);
+  --assistant-surface: #ffffff;
+  --assistant-surface-muted: var(--color-cream);
+  --assistant-border: var(--color-ember-100);
+  --assistant-font: var(--font-sans);
+  --assistant-font-heading: var(--font-display);
+  --assistant-radius: 1rem;
+  --assistant-radius-sm: 0.75rem;
+  /* Above the sidebar/nav (z-40) and the mobile FAB (z-55). */
+  --assistant-z: 60;
+}

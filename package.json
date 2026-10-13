@@ -39,10 +39,12 @@
     "real:golden": "node scripts/real-samples/import-golden.mjs",
     "real:eval": "npm run build:shared && tsx scripts/real-samples/eval-ocr.ts",
     "real:seed": "npm run build:shared && tsx scripts/real-samples/seed-account.ts",
-    "test:real": "npm run build:shared && node scripts/real-samples/test-real.mjs"
+    "test:real": "npm run build:shared && node scripts/real-samples/test-real.mjs",
+    "assistant:dev": "cross-env ASSISTANT_LOCAL=1 npm run dev --workspace teremu-app"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.9",
+    "cross-env": "^10.1.0",
     "esbuild": "^0.28.1",
     "exceljs": "^4.4.0",
     "pdfjs-dist": "^6.3.289",

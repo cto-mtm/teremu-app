@@ -41,7 +41,7 @@ export function handleCors(req: Request, res: Response): boolean {
   }
   if (req.method === "OPTIONS") {
     res.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Restaurant-Id");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Restaurant-Id, X-Assistant-Version");
     res.set("Access-Control-Max-Age", "3600");
     res.status(204).send("");
     return true;

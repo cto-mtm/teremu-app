@@ -3,7 +3,7 @@
 
 import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RevenueEntry, Unit } from './types'
 import { convertQty } from './units'
-import { normalizeName, pairSubcategory, SUBCATEGORIES } from '@teremu/shared'
+import { normalizeName, pairSubcategory, plateCost, prepLaborCost, qtyInStockUnit, SUBCATEGORIES } from '@teremu/shared'
 
 export { normalizeName }
 
@@ -167,55 +167,12 @@ export function realtimeSpend(
   }
 }
 
-/** Recipe qty expressed in the ingredient's stock unit (price basis). */
-function qtyInStockUnit(line: { qty: number; unit?: Unit }, ing: Ingredient): number {
-  if (!line.unit) return line.qty // legacy: qty already in stock units
-  return convertQty(line.qty, line.unit, ing.unit) ?? line.qty
-}
-
-/** Labor cost of one plate's prep time at the restaurant's rate. */
-const prepLaborCost = (item: MenuItem, laborRatePerHour: number): number =>
-  ((item.prepMinutes ?? 0) / 60) * laborRatePerHour
-
 /**
- * Current plate cost of a dish from live (rolling) ingredient prices,
- * plus prep-time labor when the restaurant has a labor rate set
- * (cost = foodCost + laborCost). Sub-recipe lines ("side of rice"
- * inside "salmon with rice") expand recursively — their prep time
- * counts too — cycle-guarded per branch, depth-capped.
+ * Plate costing lives in @teremu/shared (shared/src/cost.ts) so the API's
+ * assistant quotes the same number this UI shows. Re-exported under the
+ * historical name for the call sites below and in the pages.
  */
-export function plateCost(
-  item: MenuItem,
-  ingredients: Map<string, Ingredient>,
-  menuItems: Map<string, MenuItem> = new Map(),
-  laborRatePerHour = 0,
-  path: Set<string> = new Set([item.id]),
-): { cost: number; foodCost: number; laborCost: number; missing: boolean } {
-  let foodCost = 0
-  let laborCost = prepLaborCost(item, laborRatePerHour)
-  let missing = false
-  for (const line of item.recipe) {
-    if (line.subItemId) {
-      const sub = menuItems.get(line.subItemId)
-      if (!sub || path.has(sub.id) || path.size > 4) {
-        missing = true
-        continue
-      }
-      const rec = plateCost(sub, ingredients, menuItems, laborRatePerHour, new Set([...path, sub.id]))
-      foodCost += rec.foodCost * line.qty
-      laborCost += rec.laborCost * line.qty
-      missing = missing || rec.missing
-      continue
-    }
-    const ing = line.ingredientId ? ingredients.get(line.ingredientId) : undefined
-    if (!ing || ing.lastUnitPrice == null) {
-      missing = true
-      continue
-    }
-    foodCost += ing.lastUnitPrice * qtyInStockUnit(line, ing)
-  }
-  return { cost: foodCost + laborCost, foodCost, laborCost, missing }
-}
+export { plateCost } from '@teremu/shared'
 
 export function actualMarginPct(
   item: MenuItem,

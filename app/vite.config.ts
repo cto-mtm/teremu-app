@@ -1,6 +1,14 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv, type UserConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
+import { assistantLocal } from '../../mtmcya-app-assistant/src/local'
+
+// @mtmcya/assistant (the shared AI assistant) is a SOURCE package. Until
+// its first tag is installed from git it is consumed from the sibling
+// checkout in local mode: alias, vue/zod dedupe, fs.allow and the
+// pre-bundling exclusion all come from the package's own helper.
+const ASSISTANT_ROOT = fileURLToPath(new URL('../../mtmcya-app-assistant', import.meta.url))
 
 export default defineConfig(({ mode }): UserConfig => {
   // Remote dev over Tailscale (`npm run dev:remote`): the tailnet
@@ -10,6 +18,7 @@ export default defineConfig(({ mode }): UserConfig => {
   const remoteHost = env.TAILSCALE_HOST || process.env.TAILSCALE_HOST
 
   return {
+    ...assistantLocal.vite({ enabled: true, root: ASSISTANT_ROOT }),
     // Type-only cast: npm satisfies the plugins' vite peer dep with the
     // vite 8 that vitest hoists to the repo root, while this workspace
     // runs vite 7 — same runtime behavior, disjoint .d.ts identities.

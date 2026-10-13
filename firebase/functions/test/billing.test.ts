@@ -72,8 +72,13 @@ describe("billing", () => {
   it("PUT /billing/plan (emulator switch) flips the plan and GET /me + paywalls follow", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
 
-    const before = await post("/assistant", owner.token, { question: "How much flour do I have?" });
-    expect(before.status).toBe(402); // free plan: assistant paywalled
+    // The assistant (@mtmcya/assistant) gates by plan through its monthly
+    // quota: free = 0 turns → 429 quota_exceeded; the modal shows the
+    // upgrade notice. A turn goes to /assistant/conversation/turn.
+    const ask = () => post("/assistant/conversation/turn", owner.token, { message: { text: "hola" } });
+    const before = await ask();
+    expect(before.status).toBe(429); // free plan: no assistant turns
+    expect(before.body.error).toBe("quota_exceeded");
 
     const flip = await put("/billing/plan", owner.token, { plan: "pro" });
     expect(flip.status).toBe(200);
@@ -82,8 +87,8 @@ describe("billing", () => {
     const me = await get<{ plan: string }>("/me", owner.token);
     expect(me.body.plan).toBe("pro");
 
-    const after = await post("/assistant", owner.token, { question: "How much flour do I have?" });
-    expect(after.status).toBe(200); // paywall lifted now that the plan is pro
+    const after = await ask();
+    expect(after.status).toBe(200); // quota lifted now that the plan is pro (streamed answer)
   });
 
   it("a validly-signed Stripe webhook flips restaurants/{rid}.plan without any real Stripe network call", async () => {

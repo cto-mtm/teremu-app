@@ -12,7 +12,7 @@ import { can, emailKey, requireMember, type Member } from "./tenancy.js";
 import {
   approveAsExpenseSchema,
   approveInvoiceSchema,
-  assistantSchema,
+  completePosOAuthSchema,
   countSchema,
   createIngredientSchema,
   DEFAULT_LOCALE,
@@ -30,7 +30,6 @@ import {
   posLinkActionSchema,
   posProviderSchema,
   reconcileSchema,
-  completePosOAuthSchema,
   restaurantProfileSchema,
   revenueSchema,
   selectPosLocationSchema,
@@ -45,7 +44,8 @@ import {
   type MemberDoc,
   type MembershipDoc,
 } from "./models.js";
-import { askAssistant } from "./assistant.js";
+import { toNodeHandler } from "@mtmcya/assistant/node";
+import { assistant, type AssistantPrincipal } from "./assistant/manifest.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
 import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, planOf } from "./plan.js";
@@ -117,6 +117,17 @@ const withId = (d: FirebaseFirestore.QueryDocumentSnapshot) => ({ id: d.id, ...d
  * `currency` tells Triage what to format with. The base figures are
  * COPIED from what approval wrote — never recomputed here.
  */
+/** Member perms → the assistant's `<area>:<read|write>` strings. Owners get everything. */
+function permissionList(m: Member): string[] {
+  if (m.role === "owner") return ["*"];
+  return Object.entries(m.perms).flatMap(([area, level]) => {
+    if (area === "scan") return level ? ["scan:write"] : [];
+    if (level === "edit") return [`${area}:read`, `${area}:write`];
+    if (level === "read") return [`${area}:read`];
+    return [];
+  });
+}
+
 function serializeInvoice(id: string, doc: InvoiceDoc) {
   if (!doc.fx) return { id, ...doc };
   const { baseTotal, lineItems, ...rest } = doc;
@@ -967,6 +978,28 @@ async function route(req: Request, res: Response): Promise<unknown> {
     return json(res, 201, { ok: true });
   }
 
+  // ── assistant: the shared MTM assistant (@mtmcya/assistant) ──────
+  // Mounted behind the member check above; the package verifies nothing
+  // itself, it reads identity, tenant and permissions from this principal.
+  // Routes under /assistant/* (GET|DELETE conversation, POST turn) stream
+  // straight through. The plan gate is the package's monthly quota
+  // (restaurants/{rid}.aiUsage, free = 0 turns) — no cooldown, no paywall
+  // code here; the modal renders the upgrade notice on quota_exceeded.
+  if (head === "assistant") {
+    const principal: AssistantPrincipal = {
+      uid: member.uid,
+      restaurantId: rid,
+      role: member.role,
+      plan: planInfo.plan,
+      currency: planInfo.currency,
+      locale: await userLocale(),
+      timezone: planInfo.timezone ?? "Europe/Madrid",
+      permissions: permissionList(member),
+    };
+    await toNodeHandler(assistant.fetch, () => principal)(req, res);
+    return;
+  }
+
   // ── POS integrations (docs/pos.md) ─────────────────────────────
   // Provider-generic: every route takes :provider and the engine never
   // branches on it. Reading and disconnecting stay open on any plan — a
@@ -1018,22 +1051,6 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // req.path is not URL-decoded; link ids may carry an escaped "/".
       return json(res, 200, await updateLink(rid, p, decodeURIComponent(sub), body));
     }
-  }
-
-  // ── assistant: stateless Q&A over perm-filtered data (Pro) ────
-  if (head === "assistant" && m === "POST" && seg.length === 1) {
-    if (!planInfo.limits.assistant) return paywall("assistant_pro");
-    const { question, history } = assistantSchema.parse(req.body);
-    // Cost guard: paid inference behind a per-member 10s cooldown.
-    const memberRef = col("members").doc(member.uid);
-    const memberSnap = await memberRef.get();
-    const lastAskAt = (memberSnap.get("lastAskAt") as number | undefined) ?? 0;
-    if (Date.now() - lastAskAt < 10_000) {
-      return json(res, 429, { error: "one question every 10 seconds" });
-    }
-    await memberRef.update({ lastAskAt: Date.now() });
-    const answer = await askAssistant(rid, member, question, history ?? [], planInfo.currency);
-    return json(res, 200, { answer });
   }
 
   if (head === "invites" && m === "DELETE" && id && seg.length === 2) {
@@ -1111,6 +1128,13 @@ export const api = onRequest(
     try {
       await route(req, res);
     } catch (err) {
+      // A streamed route (the assistant) may fail after its headers went
+      // out; a second write would only raise ERR_HTTP_HEADERS_SENT.
+      if (res.headersSent) {
+        logger.error("API error after headers sent", err);
+        res.end();
+        return;
+      }
       if (err instanceof ZodError) {
         json(res, 400, { error: z.flattenError(err) });
         return;

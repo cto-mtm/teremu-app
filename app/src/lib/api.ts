@@ -37,6 +37,9 @@ const BASE_URL =
     ? EMULATOR_URL
     : 'https://us-east1-teremu-app.cloudfunctions.net/api')
 
+/** For the one client that does not go through apiFetch: the assistant's streaming transport. */
+export const API_BASE_URL = BASE_URL
+
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 // ── Internal shared request handler ─────────────────────────────────

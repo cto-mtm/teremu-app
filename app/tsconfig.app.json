@@ -6,7 +6,11 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "preserve",
     "jsxImportSource": "vue",
     "resolveJsonModule": true,
@@ -17,7 +21,20 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@mtmcya/assistant": [
+        "../../mtmcya-app-assistant/src/contracts/index.ts"
+      ],
+      "@mtmcya/assistant/*": [
+        "../../mtmcya-app-assistant/src/*"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "../../mtmcya-app-assistant/src/**/*.ts",
+    "../../mtmcya-app-assistant/src/**/*.vue"
+  ]
 }
