@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { currencySymbol } from '../i18n'
 import { apiFetch, apiUpload } from '../lib/api'
@@ -22,6 +22,30 @@ const { t, n } = useI18n()
 const kitchen = useKitchenStore()
 const open = defineModel<boolean>({ required: true })
 
+// Other sources of dishes (a POS catalog — see PosLinksPage) skip the
+// photo: they open the wizard straight at "pick" with their own list,
+// and get back which dish each of their entries became.
+const props = defineProps<{
+  seed?: { key: string; name: string; price: number | null }[]
+  title?: string
+}>()
+const emit = defineEmits<{ saved: [created: { key: string; menuItemId: string }[]] }>()
+const seeded = computed(() => (props.seed?.length ?? 0) > 0)
+
+watch(open, (isOpen) => {
+  if (!isOpen || !seeded.value) return
+  reset()
+  dishes.value = props.seed!.map((s) => ({
+    key: s.key,
+    name: s.name,
+    price: s.price != null ? String(s.price) : '',
+    section: null,
+    selected: true,
+    lines: [],
+  }))
+  step.value = 'pick'
+})
+
 type Step = 'capture' | 'pick' | 'drafts' | 'done'
 const step = ref<Step>('capture')
 const busy = ref(false)
@@ -29,6 +53,7 @@ const saving = ref(false)
 const errorMsg = ref('')
 
 interface WizardDish {
+  key?: string // the seed entry this dish came from, if any
   name: string
   price: string // editable as text
   section: string | null
@@ -183,6 +208,7 @@ async function saveAll(withRecipes: boolean): Promise<void> {
     kitchen.ingredients.map((i) => [normalizeName(i.name), i.id]),
   )
   let ok = 0
+  const createdFromSeed: { key: string; menuItemId: string }[] = []
   for (const dish of selected.value) {
     const recipe = []
     if (withRecipes) {
@@ -208,13 +234,17 @@ async function saveAll(withRecipes: boolean): Promise<void> {
       recipe,
       active: true,
     })
-    if (saved) ok += 1
+    if (saved) {
+      ok += 1
+      if (dish.key) createdFromSeed.push({ key: dish.key, menuItemId: saved.id })
+    }
     saveProgress.value += 1
   }
   busy.value = false
   saving.value = false
   savedCount.value = ok
   step.value = 'done'
+  if (createdFromSeed.length > 0) emit('saved', createdFromSeed)
 }
 </script>
 
@@ -230,7 +260,7 @@ async function saveAll(withRecipes: boolean): Promise<void> {
         @click.stop
       >
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold">{{ t('menu.scan.title') }}</h2>
+          <h2 class="text-lg font-bold">{{ title ?? t('menu.scan.title') }}</h2>
           <button class="text-xs font-medium text-smoke hover:text-ink" @click="close">
             {{ t('common.action.cancel') }}
           </button>
@@ -294,7 +324,7 @@ async function saveAll(withRecipes: boolean): Promise<void> {
               </div>
             </div>
           </div>
-          <label class="btn-ghost flex cursor-pointer items-center justify-center">
+          <label v-if="!seeded" class="btn-ghost flex cursor-pointer items-center justify-center">
             {{ busy ? t('menu.scan.reading') : t('menu.scan.addPage') }}
             <input type="file" accept="image/*" capture="environment" class="hidden" :disabled="busy" @change="onPhoto" />
           </label>

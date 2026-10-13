@@ -1,63 +1,129 @@
 # POS integrations (Square first)
 
-Status: **design record — not yet implemented.** First market: **Spain** (Square operates there; prices are IVA-inclusive). First provider: **Square**. The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` already anticipates "POS integration (Square/Toast webhook → `POST /revenue`)" as the natural next endpoint, and this doc is how that lands without wiring Square-isms into the core.
+Status: **Phases 1 (Foundation) and 2 (Catalog + marriage) implemented 2026-10-05 / 2026-10-10; Phases 3–5 are design.** Both were written in sessions that could not run the typechecks or the test suite (and had no web access for the Square checklist below). Before merging, run `npm run build --workspace @teremu/shared`, both typechecks, and `npm run test`; `test/pos.test.ts` and `test/pos-catalog.test.ts` cover them. See §Built so far. First market: **Spain** (Square operates there; prices are IVA-inclusive). First provider: **Square**. The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` already anticipates "POS integration (Square/Toast webhook → `POST /revenue`)" as the natural next endpoint, and this doc is how that lands without wiring Square-isms into the core.
 
 Read this before touching any POS/integration code. Companion docs: `architecture.md` (tenancy: restaurant = location, per-location billing), `multi-location-plan.md`, `llm.md` (the matcher's LLM assist goes through `llm.ts` like everything else).
 
+## What this commit contains (and what it does not)
+
+This commit lands **Phases 1–2 only**, and it was split out of a working tree
+that *also* held an in-progress assistant rewrite. Two consequences to know
+before you build on it:
+
+- **It is not a standalone-buildable checkpoint.** `api.ts`, `models.ts` and
+  `app/src/lib/schemas.ts` were edited by both efforts in the same regions. To
+  keep this commit free of assistant code, the POS additions here were staged
+  on top of the *old* assistant route/schemas (which the assistant work
+  removes). The repository compiles only with the still-uncommitted assistant
+  changes applied on top; this commit on its own will not typecheck. The
+  typechecks and tests referenced below should be run on the combined tree,
+  not on this commit in isolation.
+- **Committed:** the whole `firebase/functions/src/pos/` engine (types, mock +
+  Square adapters, connections, catalog/matcher, crypto, money), the
+  `GET/POST/PUT/DELETE /integrations*` routes and `posOauthCallback` + `posDaily`
+  functions, the `integrations` perm area and plan gate, the `IntegrationsCard`
+  + `PosLinksPage` UI with its i18n, the import-as-dish wizard seeding, and the
+  `pos`/`pos-catalog` tests. See §Built so far for the per-phase detail.
+- **Still missing (not in this or any commit yet):** Phases 3–5 — order
+  ingestion/projection (`revenueSource`, `posWebhook`, reconciliation, backfill,
+  the dirty-day projector with delta pantry depletion, unattributed surfacing in
+  Pulse), hardening (reauth flows, downgrade-pause, price-drift warnings,
+  modifier flagging), and the Later items. Plus the pre-deploy chores and the
+  live-Square verification checklist at the end of this doc — all unverified.
+
 ## Principles
 
-1. **One adapter boundary, like `llm.ts`.** All provider traffic lives in `firebase/functions/src/pos/<provider>.ts` behind a common interface. The sync engine, matcher, and projector never see provider HTTP, field names, or auth.
+1. **One adapter boundary, like `llm.ts`.** All provider traffic lives in `firebase/functions/src/pos/providers/<provider>.ts` behind a common interface. The engine (connections, catalog sync, matcher, order sync, projector) never sees provider HTTP, field names, auth schemes or event names — and never branches on a provider name. See §Adding a provider.
 2. **Ids, never names.** Every cross-system reference is `provider` + `externalId`. Names are display data that drifts.
 3. **Raw orders are the source of truth; everything downstream is a rebuildable projection.** Normalized orders are stored immutably (upserted only by provider version); revenue entries, dish attribution, and pantry depletion are *derived* and can be regenerated for any (restaurant, business day) at any time. This one commitment is what makes late mappings, refunds, mapping corrections, and attribution bug-fixes all the same cheap operation: mark the day dirty, rebuild it.
-4. **Money is integer minor units (cents) + currency code inside the POS layer.** Convert to the app's float euros only at the projection boundary (existing `revenueEntry` shape). Revenue for margin math is **net: gross − discounts − IVA, tips excluded entirely**.
+4. **Money is integer minor units (cents) + currency code inside the POS layer.** Convert to the app's float amounts in the restaurant's **base currency** (`docs/multi-currency.md`) only at the projection boundary (existing `revenueEntry` shape). A POS location selling in a currency other than base cannot be bound (`409 currency_mismatch`); POS revenue with its own currency and rate is a Later item there. Revenue for margin math is **net: gross − discounts − IVA, tips excluded entirely**.
 5. **Everything works offline.** No connection → deterministic mock provider (the offline-mock pattern OCR uses without `NVIDIA_API_KEY` — but deterministic, unlike OCR's randomized mock, so tests can assert on it). Webhooks get an emulator-only injection route.
 
 ## Provider abstraction
 
-`firebase/functions/src/pos/` — `types.ts` (interface + normalized types), `square.ts`, `mock.ts`, `sync.ts` (engine), `matching.ts`, `project.ts`, `webhook.ts`.
+```
+firebase/functions/src/pos/
+  types.ts            THE contract: PosAdapter, PosProviderModule, normalized types
+  index.ts            provider registry (typed against the vocab), adapter selection, secrets
+  providers/
+    square.ts         Square — the only file that knows Square
+    mock.ts           deterministic stand-in for ANY provider (offline + tests)
+  store.ts            shared persistence + credentials (refresh, needs_reauth)
+  crypto.ts           credentials at rest (AES-256-GCM key ring)
+  connections.ts      connect / locations / disconnect           (engine)
+  catalog.ts          catalog sync, link table, review queue     (engine)
+  matching.ts         pure matcher + LLM tier                    (engine)
+  money.ts            minor units → base-currency floats
+  orders.ts, project.ts, webhook.ts                              (Phase 3)
+```
+
+The adapter contract (`types.ts`; Phase 3 methods marked):
 
 ```ts
-interface PosProvider {
-  authUrl(state): string
-  exchangeCode(code): PosTokens            // + merchantId
-  refresh(tokens): PosTokens
-  revoke(tokens): void
-  listLocations(tokens): PosLocation[]     // externalId, name, timezone, currency
-  fetchCatalog(tokens, locationId): PosCatalogObject[]
-  searchOrders(tokens, locationId, window, cursor): { orders: PosOrder[], cursor }
-  fetchOrder(tokens, orderId): PosOrder
-  verifyWebhook(headers, rawBody): PosEvent | null
+interface PosAdapter {
+  connect: PosConnectFlow                    // how a merchant authorizes — see below
+  refresh?(credentials): PosCredentials      // optional: absent = never refreshes
+  revoke?(merchantId, credentials): void     // optional, best effort
+  listLocations(credentials): PosLocation[]  // externalId, name, timezone, currency, active
+  fetchCatalog(credentials, locationId): PosCatalogItem[]
+  listOrders(credentials, locationId, { since, cursor }): { orders: PosOrder[], cursor }   // Phase 3
+  fetchOrder(credentials, orderId): PosOrder                                              // Phase 3
+  parseWebhook?(headers, rawBody, url): PosEvent[] | null   // Phase 3; optional — null = bad signature
 }
+type PosConnectFlow = { kind: "oauth"; authUrl(state, redirectUri); exchangeCode(code, redirectUri): PosGrant }
+                    // a provider whose access is granted on ITS side (partner marketplace toggle,
+                    // pasted key) becomes a second `kind` — the engine dispatches on kind, never provider
+interface PosCredentials { secret: Record<string, string>; expiresAt: number | null }   // opaque to the engine
 ```
 
 Normalized types (all money in minor units):
 
-- `PosCatalogObject` — `{ externalId, kind: 'item_variation' | 'modifier', itemExternalId, name, priceMinor, currency }`
-- `PosOrder` — `{ externalId, locationExternalId, state, closedAt (UTC), version, currency, lines[], refundedMinor }`
-- `PosOrderLine` — `{ externalLineId, catalogExternalId | null, name, qty (decimal — weight-sold items exist), grossMinor, discountMinor (line share incl. prorated order-level discounts), taxMinor, netMinor, modifiers: [{ catalogExternalId, name, netMinor }] }`
+- `PosCatalogItem` — `{ externalId, groupExternalId, name, priceMinor | null, currency }` — the sellable grain a sale line points at (Square: item variation; the group is the parent item). Modifiers join as a `kind` when modifier mapping lands (Later).
+- `PosOrder` — `{ externalId, locationExternalId, state, closedAt (UTC), revision, currency, lines[], refundedMinor }`. `revision` is adapter-supplied and only ever compared for "newer": Square's integer `version`; a provider without one supplies its last-modified time.
+- `PosOrderLine` — `{ externalLineId, catalogExternalId | null, name, qty (decimal — weight-sold items exist), grossMinor, discountMinor (line share incl. prorated order-level discounts), taxMinor, netMinor, modifiers: [{ catalogExternalId, name, netMinor }] }` — the adapter does the provider's tax/discount arithmetic; the engine only ever reads net.
+- `PosEvent` — `{ type: "order_changed" | "catalog_changed" | "access_revoked", merchantId, locationExternalId?, orderId? }` — provider event names (`order.updated`, `oauth.authorization.revoked`…) never leave the adapter.
 
-Vocabulary (in `shared/src/vocab.ts`, per the schemas rule): `posProviderSchema = z.enum(["square"])` — adding Toast/Lightspeed later is a one-line enum change plus a new adapter file; `revenueSourceSchema = z.enum(["manual", "pos"])`; and a new `integrations` area in `permsSchema` (`none | read | edit` — read: see status and mappings; edit: connect, disconnect, map; owners bypass as usual).
+Vocabulary (in `shared/src/vocab.ts`, per the schemas rule): `posProviderSchema = z.enum(POS_PROVIDERS)`; `revenueSourceSchema = z.enum(["manual", "pos"])` (Phase 3, with its first user); and an `integrations` area in `permsSchema` (`none | read | edit` — read: see status and mappings; edit: connect, disconnect, map; owners bypass as usual).
+
+### Adding a provider
+
+The registry in `pos/index.ts` is `{ square } satisfies Record<PosProvider, PosProviderModule>`, so the steps are enforced by the compiler, not by memory:
+
+1. `shared/src/vocab.ts`: add the id to `POS_PROVIDERS`. (Build now fails until 2.)
+2. `pos/providers/<id>.ts`: export a `PosProviderModule` — `{ adapter, configured(), secrets }`. Its secrets are declared there with `defineSecret` and flow into `POS_SECRETS` automatically. Env config only (base URL, API version); never hardcoded in callers.
+3. `pos/index.ts`: one line in `PROVIDERS`.
+4. `app/src/i18n/locales/components/integrations.ts`: the display name under `provider.<id>` in `es` and `en`.
+5. Register the shared callback / webhook URLs in the provider's dashboard; add the provider's facts to a verify checklist here.
+
+Nothing else changes: routes take `:provider`, the Settings card and the review page render whatever `GET /integrations` lists, the mock covers every provider in tests, and data is keyed `provider + externalId` everywhere. A provider that can't do something the contract needs is the signal to extend the *contract* (a new `connect.kind`, an optional method) — never an `if (provider === …)` in the engine.
+
+**Toast, as currently understood (UNVERIFIED — check before building):** access is granted by the restaurant enabling the partner integration on Toast's side rather than a per-merchant OAuth redirect; one partner credential then reaches every restaurant that enabled it, each addressed by a restaurant GUID. That maps onto this model as a second `connect.kind` (the owner picks their Toast restaurant from the ones that granted access), `merchantId` = Toast restaurant group, location = Toast restaurant, and no `refresh`/`revoke` per merchant (the adapter refreshes its partner token internally). Webhooks and order revisions differ too — hence `parseWebhook` being optional and `revision` being adapter-defined.
 
 ## Identity & connections (merchant ≠ restaurant)
 
-OAuth tokens are per **merchant**; a merchant owns several POS **locations**; a Teremu restaurant *is* one location. So the connection is modeled at merchant level with per-restaurant references:
+Credentials are per **merchant**; a merchant owns several POS **locations**; a Teremu restaurant *is* one location. So the connection is modeled at merchant level with per-restaurant references:
 
-- `posConnections/{provider}_{merchantId}` (top level): encrypted tokens, scopes, status (`active | needs_reauth | revoked`), token expiry. One doc per merchant no matter how many restaurants attach to it — token refresh runs once per merchant, and two Teremu restaurants under one Square account never store duplicate credentials.
-- `restaurants/{rid}/integrations/{provider}` (one doc): pointer to the connection, the chosen `locationExternalId`, an **epoch** counter, sync cursors, settings (`businessDayCutoff`, default `04:00`), status, `lastSyncAt`.
+- `posConnections/{provider}_{merchantId}` (top level): sealed credentials, status (`active | needs_reauth`), expiry, `restaurantIds`, and `locations` (location → rid bindings). One doc per merchant no matter how many restaurants attach to it — refresh runs once per merchant, and two Teremu restaurants under one POS account never store duplicate credentials.
+- `restaurants/{rid}/integrations/{provider}` (one doc): pointer to the connection, the chosen `locationExternalId`, an **epoch** counter, sync cursors, settings (`businessDayCutoff`, default `04:00`), status, `catalogSyncedAt`, `lastSyncAt`.
 
 Rules that keep this honest:
 
-- **OAuth `state`** is a single-use random doc (`posOauthStates/{nonce}`, short TTL) binding `{ rid, uid }` — CSRF protection and how the callback knows who is connecting. The code exchange happens server-side (callback function), then deep-links back into the app (Capacitor: in-app browser + app scheme, not a popup).
+- **OAuth `state`** is a single-use random doc (`posOauthStates/{nonce}`, short TTL) binding `{ provider, rid, uid }`. One callback function serves every OAuth provider. **The callback never completes the connection**: a state proves which flow this is, not who is holding the browser — someone could start a flow on their own restaurant and forward the consent link to a real merchant, attaching that merchant's sales to the wrong restaurant. So the callback hands `state` + `code` back to the app, and the **signed-in** user completes it (`POST /integrations/oauth`), which is refused unless the caller is the user who started the flow. (Native: in-app browser + app scheme, not a popup — still open.)
 - **Reconnect to a *different* merchant bumps the epoch.** Catalog ids are per-merchant, so every link and cursor carries the epoch it was created under; a merchant change archives (not deletes) all links/cursors of the old epoch in one query. Same-merchant reconnect keeps the epoch — links survive.
 - **Disconnect is per restaurant**: remove the restaurant's integration doc reference and pause its sync. Revoke the merchant token only when the *last* restaurant referencing that connection disconnects. **Synced sales are retained** — they are the restaurant's own history; UI copy states this. Full purge rides the existing `DELETE /restaurants/:rid` recursive delete (posOrders/posLinks live under the rid); that handler must also drop the connection reference (and revoke if last).
-- **Revocation from the provider side** (`oauth.authorization.revoked` webhook, or a 401 on any call) flips the connection to `needs_reauth` — surfaced as a reconnect banner in Settings and a `sendMail` alert to the owner. Sync pauses; nothing errors loudly in the background forever.
-- **Token encryption**: AES-256-GCM with a key from Secret Manager (`POS_TOKEN_ENC_KEY`, `defineSecret` like Stripe's in `billing.ts`); ciphertext is prefixed with a key version so rotation is decrypt-with-old / encrypt-with-new, no big-bang. A daily scheduled job refreshes tokens expiring within 7 days.
+- **Revocation from the provider side** (an `access_revoked` event, or a `PosAuthError` from any adapter call — Square: a 401) flips the connection to `needs_reauth` — surfaced as a reconnect banner in Settings and a `sendMail` alert to the owner. Sync pauses; nothing errors loudly in the background forever. The state lives on the connection only, so one reconnect heals every restaurant on that merchant.
+- **Credential encryption**: AES-256-GCM with a key from Secret Manager (`POS_TOKEN_ENC_KEY`, `defineSecret` like Stripe's in `billing.ts`); ciphertext is prefixed with a key version so rotation is decrypt-with-old / encrypt-with-new, no big-bang. A daily job refreshes credentials expiring within 7 days (for adapters that refresh) and re-seals anything under an old key.
 
 Timezone/currency synergy: at connect time, populate `restaurants/{rid}.timezone`/`currency` from the POS location if unset (the fields `multi-location-plan.md` reserved).
 
 ## The link table (menu marriage)
 
-`restaurants/{rid}/posLinks/{provider}_{externalId}` — one doc per catalog object, keyed by id (stable across renames), fields: `provider, externalId, externalKind, epoch, externalName, externalPriceMinor, currency, menuItemId | null, status: auto | confirmed | unmapped | ignored | stale, confidence, matchedBy: exact | fuzzy | llm | manual, updatedAt`.
+`restaurants/{rid}/posLinks/{provider}_{externalId}` — one doc per catalog item, keyed by id (stable across renames), fields: `provider, epoch, externalId, groupExternalId, externalName, priceMinor | null, currency, status: unmapped | auto | confirmed | ignored, menuItemId | null, matchedBy: exact | fuzzy | llm | manual | null, candidates: [{ menuItemId, score, by }], noAuto, removedAt | null, firstSeenAt, updatedAt`.
+
+- **Mapping state and catalog presence are separate.** `status` is the mapping; `removedAt` says the item left the POS catalog (kept — past sales still point at it — and restored if it comes back). A removed item keeps its mapping.
+- **Epoch archival is a query, not a migration**: every read filters `provider == p && epoch == current` (two equalities, single-field indexes), so a different merchant's links simply stop counting the moment the epoch bumps; a sync that meets an old-epoch doc with the same id starts it fresh.
+- **`noAuto`**: set when the owner unlinks. The matcher keeps suggesting that dish but never auto-links it again — otherwise an exact-name match the owner rejected would re-link on the next sync.
+- **One write path** (`writeLinks` in `catalog.ts`): Phase 3 hooks "mapping changed → mark business days dirty" there, once.
 
 - **Grain: item variation ↔ menu item, many-to-one allowed** ("Burger — Grande" and "Burger — Normal" may share a dish, but the queue nudges toward one dish per size — different sizes have different plate costs, which is Teremu's whole point).
 - **Combos** (menú del día, burger+fries+drink as one catalog item): map to a single Teremu dish whose recipe is composed of **sub-recipe lines** (already supported by `recipeLineSchema`). No weighted one-to-many split in v1; if it's ever needed it is a projector-only change because attribution is recomputed from raw orders.
@@ -80,14 +146,14 @@ Triage-pattern UI: confirm suggestion / pick another dish / **import as new dish
 
 ### Link lifecycle
 
-- Catalog sync: rename → same id, refresh `externalName` (link survives); delete → link `stale` (kept for history); new object → enters queue; price change → "menu price drift" warning (Teremu price vs POS price), since actual charged amounts drive revenue but the drift signal helps the owner.
-- **Dangling target**: if the linked menu item is deleted/deactivated, projection sends those sales to the unattributed bucket with reason `stale_link` and flags the link back into the queue. This matters because `expandUsage` (`app/src/lib/domain.ts`) silently drops unknown `menuItemId`s — without the guard, mapped-to-deleted sales would vanish from margins without a trace.
+- Catalog sync: rename → same id, refresh `externalName` (link survives); delete → `removedAt` set (kept for history); new object → enters queue; price change → "menu price drift" warning (Teremu price vs POS price), since actual charged amounts drive revenue but the drift signal helps the owner.
+- **Dangling target**: if the linked menu item is deleted/deactivated, the matcher (which runs on every dish save) sends the link back to the queue, and projection sends any sales on it to the unattributed bucket with reason `stale_link`. This matters because `expandUsage` (`app/src/lib/domain.ts`) silently drops unknown `menuItemId`s — without the guard, mapped-to-deleted sales would vanish from margins without a trace.
 - Confirming or unlinking a mapping marks the affected business days dirty → history re-attributes automatically (see Projection).
 
 ## Order ingestion
 
-- **Webhooks are the fast path** (`order.created`/`order.updated` + revocation events): one HTTPS endpoint per provider, exposed like the Stripe webhook. Verify HMAC, then **fetch the full order from the API** rather than trusting the payload (thin-webhook best practice — also makes duplicate and out-of-order deliveries harmless), normalize, upsert.
-- **Upsert is version-guarded**: `restaurants/{rid}/posOrders/{provider}_{orderId}`, applied only if the incoming provider `version` is newer. Refunds/voids arriving days later are just another version — the order's day goes dirty and rebuilds.
+- **Webhooks are the fast path, where the provider has them**: ONE function (`posWebhook`, exposed like the Stripe webhook) routed by path `/{provider}`; the adapter's `parseWebhook` verifies the signature and returns normalized `PosEvent`s, so the engine handles `order_changed` / `catalog_changed` / `access_revoked` without knowing whose events they were. For orders, **fetch the full order from the API** rather than trusting the payload (thin-webhook best practice — also makes duplicate and out-of-order deliveries harmless), normalize, upsert. A provider without webhooks just leans on reconciliation.
+- **Upsert is revision-guarded**: `restaurants/{rid}/posOrders/{provider}_{orderId}`, applied only if the incoming `revision` is newer. Refunds/voids arriving days later are just another version — the order's day goes dirty and rebuilds.
 - **Reconciliation** (scheduled, us-east1 like everything else): per connected restaurant, `searchOrders` over a trailing window with the stored cursor — catches missed webhooks. Only `COMPLETED`-state orders count toward sales.
 - **Backfill** (initial import, default 90 days, setting-controlled): chunked and resumable — each scheduler tick processes pages for pending backfills, checkpointing the cursor on the integration doc after every page, until caught up. No single invocation ever tries to swallow a year of orders (timeout + write-cost control). Upgrade path if scheduler cadence ever feels slow: Cloud Tasks; not needed to start.
 - posOrders growth is bounded per the repo's existing stance (time-windowed reads, rollups over raising limits): daily revenue entries *are* the rollup; consider a Firestore TTL policy on `posOrders` (e.g. ~13 months) once as-of costing (below) settles what history it needs.
@@ -118,17 +184,46 @@ Integrations are a **Pro-and-up, per-location** feature (consistent with per-loc
 
 ## Dev & testing
 
-- **Mock provider** (`pos/mock.ts`): deterministic catalog + orders so connect → map → project → Pulse works fully offline in the emulators, per repo rule.
+- **Mock provider** (`pos/providers/mock.ts`): deterministic catalog + orders so connect → map → project → Pulse works fully offline in the emulators, per repo rule.
 - **Sandbox**: Square's sandbox (`connect.squareupsandbox.com`) via env config — never hardcode the base URL in callers (same rule as `llm.ts` providers).
 - **Webhook injection**: emulator-only route accepting a normalized `PosEvent` (seed.ts pattern), because real webhooks can't reach the emulator. The webhook path must be testable before production.
 - **Unit tests** (`firebase/functions/test/`): matcher normalization/tiers/ambiguity-refusal; version-guarded upsert idempotency (webhook + reconcile delivering the same order); projector determinism (same inputs → same entry) and pantry **delta** on rebuild; net-money math incl. prorated discounts and decimal qty; token encrypt/decrypt round-trip + key-version rotation; OAuth state single-use; epoch archival on merchant change; HMAC verification (valid/invalid/replayed).
 - **i18n**: all new strings in a per-feature `integrations` locale module, `es` authored first, `en` mirrored same change.
 
+## Built so far
+
+Where the code settled details the design left open (module map in §Provider abstraction).
+
+**Phase 1 — Foundation**
+
+- **Adapter selection** mirrors `llm.ts`: `TEREMU_TEST_MOCKS` → mock; provider credentials configured (`PosProviderModule.configured()`; Square: `SQUARE_APP_ID` + `SQUARE_APP_SECRET`) → that provider; emulator without them → mock; deployed without them → `501 pos_not_configured`.
+- **Routes** (all take `:provider`): `GET /integrations` (read), `GET …/locations` (read), `POST …/connect` → `{ url }` (edit, Pro+), `POST /integrations/oauth { state, code }` (the starter only), `PUT /integrations/:provider { locationExternalId }` (edit, Pro+), `DELETE /integrations/:provider` (edit, any plan — a downgraded location can still let go).
+- **OAuth round trip**: provider → `posOauthCallback` → `/settings?pos=complete&state&code` → the Settings card POSTs `/integrations/oauth` as the signed-in user → `{ result: connected|forbidden|upgrade|not_configured|invalid_state|failed, rid }`; `?pos=denied|invalid_state|failed` when the callback itself can't continue. Completion re-checks the starter's `integrations:edit` and the plan. Return origin: `APP_URL`, else the web origin that started the flow; native shells get the web app. If the flow was started on another of the user's locations, the app switches to it.
+- **Location binding**: `posConnections/{id}.locations` maps `locationExternalId → rid`, so one POS location never feeds two restaurants (`409 location_taken`). Binding adopts the location's currency as base if the restaurant never set one and has approved nothing, and fills an unset timezone.
+- **`needs_reauth` lives on the connection only**; the per-restaurant view derives it, so one reconnect heals every restaurant on that merchant.
+- **Auto-select**: a single-location merchant, or a same-merchant reconnect whose old location still exists, skips the picker.
+- **Perms**: `integrations` is `permLevelSchema.default("none")` — member docs and invites written before it existed would otherwise fail `memberDocSchema` and lock their members out.
+- **Key ring**: `POS_TOKEN_ENC_KEY = "v2:<b64>,v1:<b64>"`, first entry encrypts. Emulator/tests use a fixed dev key.
+- **Concurrency**: attaching to a new merchant releases the old connection in the same transaction; binding a location re-reads the integration inside its transaction; re-sealing is transactional so it can't overwrite a fresh refresh. A refresh that fails for a non-auth reason falls back to the still-valid credentials.
+
+**Phase 2 — Catalog + marriage**
+
+- **Sync** (`catalog.ts` `syncCatalog`): runs right after a location is bound, on "Sincronizar catálogo", and daily (`posDaily`, after credential upkeep, skipping locations whose plan lost POS). Reconciles the link table as in §Link lifecycle, then runs the matcher; LLM tier only on bind and manual runs, never daily.
+- **Re-match** (`rematch`): "Buscar coincidencias" (all tiers, no POS call), and after every `POST`/`PUT /menu-items` (cheap tiers) — so a new dish picks up its POS item immediately and a deactivated dish releases its links.
+- **Matcher** (`matching.ts`, pure): token Dice + character-bigram Dice (0.6/0.4), suggestion floor 0.55, top 3; ties within 0.02 broken by price distance. Accents are folded before `normalizeName` (which would otherwise *drop* "ó" — "jamón" → "jamn").
+- **Routes**: `GET …/links` → `{ links, dishes }` (read — dishes ride along because an integrations-only member may not read `/menu-items`); `POST …/catalog/sync`, `POST …/links/match`, `PUT …/links/:linkId { action: confirm(menuItemId) | ignore | unlink }` (edit, Pro+). Prices on the wire are base-currency floats (`money.ts`).
+- **Review page** `/integrations/:provider` (`PosLinksPage.vue`): tabs sin vincular / vinculados / ignorados / retirados, suggestion chips, any-dish picker, price-drift line, and **bulk "crear platos"** — which opens the existing `MenuScanWizard` seeded with the POS names + prices (no photo step, same AI recipe drafts), then confirms each link to the dish it created. The exact-name auto-link on dish create would catch it anyway; the explicit confirm marks it human-reviewed.
+- **Mock catalog**: a fixed EUR fixture per mock location; tests simulate POS edits by writing `posMockCatalog/{merchantId}`.
+
+Before the first deploy with this code: create the `POS_TOKEN_ENC_KEY` and `SQUARE_APP_SECRET` secrets (bound to `api` and `posDaily`, so deploy fails without them — a placeholder `SQUARE_APP_SECRET` is fine until Square is set up, as long as `SQUARE_APP_ID` stays unset). Cloud Scheduler must be enabled for `posDaily`. Add a Firestore TTL policy on `posOauthStates.expiresAt`; expired states are already refused, TTL just sweeps them.
+
+Open: native OAuth (`@capacitor/browser` + an app URL scheme; no native projects are in the repo yet); e2e specs for the Settings card and the review page; a Menu-page nudge when the queue is non-empty.
+
 ## Phased delivery
 
-1. **Foundation** — vocab (`posProviderSchema`, `integrations` perm, `revenueSource`), `pos/` skeleton with types + mock + Square auth (OAuth state, callback, token encryption, connections model), Settings connect/disconnect UI.
-2. **Catalog + marriage** — catalog sync, link table, matcher, review queue (+ import-as-dish via `draftRecipes`), drift handling.
-3. **Ingestion + projection** — webhooks (+ injection route), reconciliation, chunked backfill, dirty-day projector with delta pantry depletion, unattributed surfacing in Pulse, manual-collision guard.
+1. **Foundation** ✅ (built, unverified) — vocab (`posProviderSchema`, `integrations` perm), `pos/` skeleton with types + mock + Square auth (OAuth state, callback, credential encryption, connections model), Settings connect/disconnect UI.
+2. **Catalog + marriage** ✅ (built, unverified) — catalog sync, link table, matcher, review queue (+ import-as-dish via the menu-scan wizard / `draftRecipes`), drift display.
+3. **Ingestion + projection** — `revenueSource` + `revenueEntry.source`; adapter `listOrders` / `fetchOrder` / `parseWebhook`; the one `posWebhook` function (+ emulator injection route), reconciliation, chunked backfill, dirty-day projector with delta pantry depletion (dirty-marking hooked into `writeLinks`), unattributed surfacing in Pulse, manual-collision guard.
 4. **Hardening** — revocation/reauth flows, plan gating + pause, price-drift warnings, modifier-revenue flagging.
 5. **Later** — modifier→ingredient mapping, as-of costing, inventory push back to the POS (opt-in), next provider (Toast per architecture.md).
 
@@ -150,20 +245,22 @@ Integrations are a **Pro-and-up, per-location** feature (consistent with per-loc
 | Reconnect to different merchant | Epoch counter; links/cursors archived by epoch, never trusted across merchants |
 | Auto-match ambiguity | Active-only candidates; ambiguity always queues, never auto-links |
 | Matching only at connect | Matcher re-runs on catalog sync, dish create/rename, and on demand; idempotent, never touches confirmed/ignored |
-| Dangling links | Projection-time target validation → unattributed + `stale` requeue (guards `expandUsage`'s silent drop) |
+| Dangling links | Matcher requeues links to deleted/inactive dishes on every dish save; projection-time validation → unattributed `stale_link` (guards `expandUsage`'s silent drop) |
 | IVA-inclusive price matching | Name-first matcher; price is tiebreaker only, inclusive-vs-inclusive |
 | Backfill scale | Chunked, cursor-checkpointed, scheduler-driven; 90-day default window |
 | Business day / timezone | Projector-computed from restaurant tz + cutoff; changes rebuild |
-| OAuth hygiene | Single-use `state` docs; revocation webhook + 401 → `needs_reauth` banner + email; version guard makes webhook dupes/ordering harmless |
+| OAuth hygiene | Single-use `state` docs; revocation event / `PosAuthError` → `needs_reauth` banner + email; revision guard makes webhook dupes/ordering harmless |
+| Forwarded consent link (consent phishing) | Callback never completes; the signed-in starter completes via `POST /integrations/oauth` (caller uid must equal state uid) |
+| Owner rejects an exact auto-link | `noAuto` on unlink: suggested forever, never re-auto-linked |
 | Offline webhook dev | Emulator-only injection route + mock provider |
 | Plan gating | Pro+ per location; downgrade pauses sync, keeps data |
 | Disconnect semantics | Data retained, sync stops, token revoked on last reference; purge rides restaurant deletion |
 | Double counting vs manual | `source` field; projector owns only pos entries; manual form warns on covered dates |
-| Future POS providers | Adapter interface + provider-prefixed ids + vocab enum; core engine provider-blind |
+| Future POS providers | Registry typed against the vocab (compile error until registered); per-provider module owns its secrets; opaque credentials; `connect.kind` union for non-OAuth access; normalized events + adapter-defined order revision; provider-prefixed ids; engine and app provider-blind (§Adding a provider) |
 
-## Verify against live Square docs before Phase 1
+## Verify against live Square docs before going live
 
-(Blocked in the design session — no web access. All are adjustments, none change the architecture.)
+(Still blocked — no web access in the design, Phase 1 or Phase 2 sessions. All are adjustments inside `pos/providers/square.ts`, none change the architecture. Phases 1–2 assumed: API version `2025-01-23`; scopes `MERCHANT_PROFILE_READ ITEMS_READ ORDERS_READ`; `POST /oauth2/token` with `expires_at` ISO; `POST /oauth2/revoke` with `Authorization: Client <secret>`; `GET /v2/locations`; `GET /v2/catalog/list?types=ITEM` with nested `item_data.variations`, `present_at_all_locations` defaulting to true, and `location_overrides[].price_money`.)
 
 1. Current `Square-Version` to pin; recent breaking changes in Orders/Catalog/OAuth.
 2. Spain availability of Orders/Catalog/OAuth/webhooks and any ES-specific gaps; supported currencies (EUR).
@@ -171,4 +268,6 @@ Integrations are a **Pro-and-up, per-location** feature (consistent with per-loc
 4. OAuth token lifetime (~30 days?) and refresh semantics; PKCE requirements; whether any scope needs app review.
 5. Webhook event names, signature header/scheme, retry policy; sandbox webhook support.
 6. Rate limits / backoff guidance; SearchOrders page size limits.
-7. Whether the Node SDK is worth its bundle weight vs. plain fetch given the esbuild external-deps setup.
+7. Whether the Node SDK is worth its bundle weight vs. plain fetch given the esbuild external-deps setup. (Phases 1–2 chose plain fetch.)
+8. Catalog: the ListCatalog fields above; whether archived items still list; whether a variation can be absent where its item is present.
+9. Before a second provider: the Toast notes in §Adding a provider (access model, restaurant GUIDs, webhooks, order revision field).

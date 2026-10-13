@@ -280,6 +280,7 @@ export const OWNER_PERMS: Perms = {
   pantry: "edit",
   finance: "edit",
   vendors: "read",
+  integrations: "edit",
 };
 
 export const memberDocSchema = z.object({
@@ -366,6 +367,27 @@ export const inviteSchema = z.object({
 export const updateLocaleSchema = z.object({
   locale: localeSchema,
 });
+
+/** PUT /integrations/:provider — bind this restaurant to one POS location. */
+export const selectPosLocationSchema = z.object({
+  locationExternalId: z.string().min(1).max(128),
+});
+
+/** POST /integrations/oauth — the signed-in user finishes an OAuth flow
+ * they started (the callback hands `state` + `code` back to the app). */
+export const completePosOAuthSchema = z.object({
+  state: z.string().min(1).max(128),
+  code: z.string().min(1).max(2048),
+});
+
+/** PUT /integrations/:provider/links/:linkId — the owner's decision on
+ * one POS catalog item: link it to a dish, ignore it (water, fees), or
+ * send it back to the queue. */
+export const posLinkActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("confirm"), menuItemId: z.string().min(1).max(128) }),
+  z.object({ action: z.literal("ignore") }),
+  z.object({ action: z.literal("unlink") }),
+]);
 
 /** PUT /members/:uid — adjust a member's perms. */
 export const updateMemberSchema = z.object({

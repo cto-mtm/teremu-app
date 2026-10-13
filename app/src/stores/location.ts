@@ -14,7 +14,7 @@ import { useKitchenStore } from './kitchen'
  * these on switch, even if the new membership's perms would still
  * permit the *list* page.
  */
-const DETAIL_ROUTES = new Set(['dish-detail', 'triage-detail', 'ingredient-detail', 'vendor-detail'])
+const DETAIL_ROUTES = new Set(['dish-detail', 'triage-detail', 'ingredient-detail', 'vendor-detail', 'pos-links'])
 
 /**
  * Owns the whole multi-location transition (see docs/multi-location-plan.md,

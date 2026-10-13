@@ -14,6 +14,7 @@ import { useAuthStore } from '../stores/auth'
 import { useLocationStore } from '../stores/location'
 import type { PermArea, Perms } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
+import IntegrationsCard from '../components/IntegrationsCard.vue'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 // Settings. The health check proves the app → Cloud Function wiring end
@@ -197,7 +198,7 @@ const team = ref<MembersResponse | null>(null)
 const teamBusy = ref(false)
 
 // Leveled areas get a select; scan is a simple yes/no toggle.
-const LEVELED: Exclude<PermArea, 'scan' | 'vendors'>[] = ['triage', 'menu', 'pantry', 'finance']
+const LEVELED: Exclude<PermArea, 'scan' | 'vendors'>[] = ['triage', 'menu', 'pantry', 'finance', 'integrations']
 const DEFAULT_PERMS: Perms = {
   scan: true,
   triage: 'none',
@@ -205,6 +206,7 @@ const DEFAULT_PERMS: Perms = {
   pantry: 'none',
   finance: 'none',
   vendors: 'none',
+  integrations: 'none',
 }
 
 const inviteEmail = ref('')
@@ -414,6 +416,9 @@ async function cancelInvite(emailKey: string): Promise<void> {
         <span v-if="laborSaved" class="chip-down">{{ t('settings.labor.saved') }}</span>
       </div>
     </div>
+
+    <!-- POS connections (integrations area; owners always) -->
+    <IntegrationsCard v-if="auth.can('integrations')" />
 
     <!-- Team & granular permissions (owner only) -->
     <div v-if="isOwner" class="card space-y-4">

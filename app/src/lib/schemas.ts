@@ -175,6 +175,71 @@ export const billingUrlSchema = z.object({
   url: z.string().url(),
 })
 
+/** GET /integrations — one row per POS provider (docs/pos.md). `provider`
+ * stays a plain string so a provider newer than this app can't fail the list. */
+export const posIntegrationSchema = z.object({
+  provider: z.string(),
+  available: z.boolean().catch(false),
+  status: z
+    .enum(['not_connected', 'disconnected', 'pending_location', 'active', 'needs_reauth'])
+    .catch('not_connected'),
+  locationExternalId: z.string().nullable().catch(null),
+  locationName: z.string().nullable().catch(null),
+  connectedAt: z.number().nullable().catch(null),
+  catalogSyncedAt: z.number().nullable().catch(null),
+  // Catalog items waiting in the review queue.
+  pendingLinks: z.number().catch(0),
+})
+export const posIntegrationListSchema = z.array(posIntegrationSchema)
+
+/** POST /integrations/oauth — outcome of finishing a connect flow. */
+export const posOAuthResultSchema = z.object({
+  result: z.string(),
+  rid: z.string().optional(),
+})
+
+/** GET /integrations/:provider/links — POS catalog item ↔ dish mappings.
+ * `price` is already in the restaurant's base currency (major units). */
+export const posLinkSchema = z.object({
+  id: z.string(),
+  externalId: z.string(),
+  groupExternalId: z.string(),
+  name: z.string(),
+  price: z.number().nullable(),
+  status: z.enum(['unmapped', 'auto', 'confirmed', 'ignored']).catch('unmapped'),
+  menuItemId: z.string().nullable(),
+  matchedBy: z.enum(['exact', 'fuzzy', 'llm', 'manual']).nullable().catch(null),
+  candidates: z
+    .array(z.object({ menuItemId: z.string(), score: z.number(), by: z.string() }))
+    .catch([]),
+  removed: z.boolean().catch(false),
+})
+export const posLinksResponseSchema = z.object({
+  links: z.array(posLinkSchema),
+  // Active dishes to map onto (the page may not be able to read /menu-items).
+  dishes: z.array(z.object({ id: z.string(), name: z.string(), price: z.number() })),
+})
+
+/** POST …/catalog/sync and …/links/match — what the run left behind. */
+export const posMatchSummarySchema = z.object({
+  items: z.number(),
+  linked: z.number(),
+  pending: z.number(),
+})
+
+/** GET /integrations/:provider/locations — the merchant's POS locations. */
+export const posLocationListSchema = z.array(
+  z.object({
+    externalId: z.string(),
+    name: z.string(),
+    timezone: z.string().nullable(),
+    currency: z.string(),
+  }),
+)
+
+/** POST /integrations/:provider/connect — the provider consent URL. */
+export const posConnectSchema = z.object({ url: z.string().url() })
+
 /** POST /menu/scan — dishes extracted from a menu photo. */
 export const menuScanResponseSchema = z.object({
   dishes: z.array(

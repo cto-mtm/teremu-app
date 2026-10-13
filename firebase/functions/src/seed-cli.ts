@@ -88,6 +88,7 @@ async function seedSecondLocation(ownerUid: string, ownerEmail: string): Promise
     pantry: "read",
     finance: "none",
     vendors: "none",
+    integrations: "none",
   };
   const cookUid = `${ownerUid}-demo-cook`;
   const cookMember: MemberDoc = {

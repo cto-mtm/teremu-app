@@ -2,6 +2,7 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import { REGION } from "./region.js";
@@ -10,6 +11,10 @@ import {
   STRIPE_WEBHOOK_SECRET,
   handleWebhook,
 } from "./billing.js";
+import { POS_SECRETS } from "./pos/index.js";
+import { oauthFailureUrl, oauthReturnUrl, refreshExpiringCredentials } from "./pos/connections.js";
+import { syncAllCatalogs } from "./pos/catalog.js";
+import { getPlanInfo } from "./plan.js";
 
 initializeApp();
 
@@ -73,6 +78,39 @@ export const stripeWebhook = onRequest(
       logger.error("Stripe webhook error", err);
       res.status(400).send(err instanceof Error ? err.message : "webhook error");
     }
+  },
+);
+
+/**
+ * POS OAuth redirect target for every OAuth provider (docs/pos.md
+ * §Identity). The provider sends the browser here with `code` + our
+ * single-use `state`; this only bounces it back to Settings, where the
+ * SIGNED-IN user completes the exchange (POST /integrations/oauth) — a
+ * bare browser redirect proves nothing about who is holding the link.
+ * Register this function's URL (or POS_OAUTH_REDIRECT_URL) in each
+ * provider's dashboard. No secrets: it never touches credentials.
+ */
+export const posOauthCallback = onRequest({ region: REGION }, async (req, res) => {
+  try {
+    res.redirect(302, await oauthReturnUrl(req.query));
+  } catch (err) {
+    logger.error("POS OAuth callback failed", err);
+    res.redirect(302, oauthFailureUrl());
+  }
+});
+
+/** Daily POS upkeep, every provider: refresh credentials expiring within
+ * 7 days (re-sealing under the current key; a rejected refresh flips the
+ * connection to needs_reauth), then re-sync every bound location's
+ * catalog — skipping locations whose plan no longer includes POS. */
+export const posDaily = onSchedule(
+  { schedule: "every day 03:30", timeZone: "UTC", region: REGION, secrets: POS_SECRETS, timeoutSeconds: 540 },
+  async () => {
+    logger.info("POS credential refresh", await refreshExpiringCredentials());
+    logger.info(
+      "POS catalog sync",
+      await syncAllCatalogs(async (rid) => (await getPlanInfo(rid)).limits.integrations),
+    );
   },
 );
 

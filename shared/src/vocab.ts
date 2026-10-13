@@ -129,6 +129,12 @@ export const pairSubcategory = (
 export const docTypeSchema = z.enum(["invoice", "delivery_note"]);
 export type DocType = z.infer<typeof docTypeSchema>;
 
+// ── POS integrations (docs/pos.md) ──────────────────────────────────
+// A new provider is one entry here plus its adapter in functions/src/pos/.
+export const POS_PROVIDERS = ["square"] as const;
+export const posProviderSchema = z.enum(POS_PROVIDERS);
+export type PosProvider = z.infer<typeof posProviderSchema>;
+
 // ── Granular permissions ────────────────────────────────────────────
 // Per-area access levels instead of fixed roles. Owners bypass all
 // checks (enforced server-side). Sharing this shape means adding a new
@@ -143,5 +149,9 @@ export const permsSchema = z.object({
   pantry: permLevelSchema,
   finance: permLevelSchema, // Pulse, revenue, expenses
   vendors: z.enum(["none", "read"]), // derived data — read-only by nature
+  // POS connections + menu mappings (read: status; edit: connect/map).
+  // Defaulted because member docs and invites written before this area
+  // existed lack it — a required field would fail them closed.
+  integrations: permLevelSchema.default("none"),
 });
 export type Perms = z.infer<typeof permsSchema>;

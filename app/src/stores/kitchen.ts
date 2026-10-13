@@ -125,7 +125,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
       active: boolean
     },
     id?: string,
-  ): Promise<boolean> {
+  ): Promise<MenuItem | null> {
     const res = id
       ? await apiFetch<MenuItem>(
           `/menu-items/${id}`,
@@ -137,14 +137,14 @@ export const useKitchenStore = defineStore('kitchen', () => {
           { method: 'POST', body: JSON.stringify(item) },
           menuItemSchema,
         )
-    if (res.ok) {
-      menuItems.value = id
-        ? replaceById(menuItems.value, id, res.data)
-        : [...menuItems.value, res.data]
-    } else {
+    if (!res.ok) {
       error.value = res.error
+      return null
     }
-    return res.ok
+    menuItems.value = id
+      ? replaceById(menuItems.value, id, res.data)
+      : [...menuItems.value, res.data]
+    return res.data
   }
 
   /** Log revenue; the API depletes the Theoretical Pantry via recipes. */

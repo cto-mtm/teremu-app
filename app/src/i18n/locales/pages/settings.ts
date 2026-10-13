@@ -59,6 +59,7 @@ const es = {
       pantry: 'Despensa',
       finance: 'Finanzas',
       vendors: 'Proveedores',
+      integrations: 'Integraciones',
     },
     level: {
       none: 'Sin acceso',
@@ -134,6 +135,7 @@ const en: typeof es = {
       pantry: 'Pantry',
       finance: 'Finance',
       vendors: 'Vendors',
+      integrations: 'Integrations',
     },
     level: {
       none: 'No access',

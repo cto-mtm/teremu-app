@@ -22,6 +22,12 @@ const ALLOWED_ORIGINS = [
   "http://localhost",
 ];
 
+export const isAllowedOrigin = (origin: string | undefined): origin is string =>
+  Boolean(origin && ALLOWED_ORIGINS.includes(origin));
+
+/** The SPA's public web origin when no request origin is usable. */
+export const defaultAppOrigin = (): string => hostingOrigins[0] ?? "https://app.teremu.com";
+
 /**
  * Applies CORS headers for allow-listed origins and short-circuits
  * preflight requests. Returns true when the caller should stop

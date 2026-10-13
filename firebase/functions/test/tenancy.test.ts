@@ -24,6 +24,7 @@ const NO_FINANCE_PERMS: Perms = {
   pantry: "edit",
   finance: "none",
   vendors: "none",
+  integrations: "none",
 };
 
 const TRIAGE_READ_ONLY_PERMS: Perms = {
@@ -33,6 +34,7 @@ const TRIAGE_READ_ONLY_PERMS: Perms = {
   pantry: "none",
   finance: "none",
   vendors: "none",
+  integrations: "none",
 };
 
 describe("tenancy & permissions", () => {
@@ -58,6 +60,7 @@ describe("tenancy & permissions", () => {
       pantry: "edit",
       finance: "edit",
       vendors: "read",
+      integrations: "edit",
     });
     expect(body.usage).toEqual({ scans: 0, scanLimit: 25 });
     expect(typeof body.restaurantId).toBe("string");

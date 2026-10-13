@@ -41,6 +41,7 @@ const router = createRouter({
     { path: '/vendors', name: 'vendors', component: page(() => import('../pages/VendorsPage.vue')) },
     { path: '/vendors/:key', name: 'vendor-detail', component: page(() => import('../pages/VendorDetailPage.vue')) },
     { path: '/settings', name: 'settings', component: page(() => import('../pages/SettingsPage.vue')) },
+    { path: '/integrations/:provider', name: 'pos-links', component: page(() => import('../pages/PosLinksPage.vue')) },
     { path: '/pricing', name: 'pricing', component: page(() => import('../pages/PricingPage.vue')) },
     // Catch-all 404. Required because Firebase Hosting rewrites every URL
     // to index.html — without this, typos render an empty RouterView.
@@ -71,6 +72,7 @@ export const REQUIRED: Record<string, [PermArea, PermLevel] | null> = {
   vendors: ['vendors', 'read'],
   'vendor-detail': ['vendors', 'read'],
   settings: null,
+  'pos-links': ['integrations', 'read'],
   pricing: null,
   login: null,
   'not-found': null,

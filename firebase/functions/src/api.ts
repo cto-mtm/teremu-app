@@ -27,9 +27,13 @@ import {
   normalizeName,
   orderSchema,
   OWNER_PERMS,
+  posLinkActionSchema,
+  posProviderSchema,
   reconcileSchema,
+  completePosOAuthSchema,
   restaurantProfileSchema,
   revenueSchema,
+  selectPosLocationSchema,
   updateRestaurantSchema,
   updateIngredientSchema,
   updateLocaleSchema,
@@ -64,6 +68,17 @@ import {
 } from "./pipeline.js";
 import { toBaseTotal } from "./fx/convert.js";
 import { packFor, profileOf } from "./countries/index.js";
+import { POS_SECRETS } from "./pos/index.js";
+import {
+  completeOAuth,
+  detachRestaurant,
+  disconnect,
+  listIntegrations,
+  listLocations,
+  selectLocation,
+  startConnect,
+} from "./pos/connections.js";
+import { listLinks, rematch, rematchAfterMenuChange, syncCatalog, updateLink } from "./pos/catalog.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -537,12 +552,16 @@ async function route(req: Request, res: Response): Promise<unknown> {
       if (!can(member, "menu", "edit")) return forbidden(res);
       const body = menuItemSchema.parse(req.body);
       const ref = await col("menuItems").add(body);
+      // A new dish may be what a POS catalog item was waiting for.
+      await rematchAfterMenuChange(rid);
       return json(res, 201, { id: ref.id, ...body });
     }
     if (m === "PUT" && id && seg.length === 2) {
       if (!can(member, "menu", "edit")) return forbidden(res);
       const body = menuItemSchema.parse(req.body);
       await col("menuItems").doc(id).set(body);
+      // Renamed / deactivated dishes re-match (and release dangling links).
+      await rematchAfterMenuChange(rid);
       return json(res, 200, { id, ...body });
     }
   }
@@ -885,6 +904,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       await cleanupBatch.commit();
 
       await cancelSubscription(rid);
+      // POS connections live outside the rid (one per merchant) — drop
+      // this restaurant's reference, revoking the grant if it was the last.
+      await detachRestaurant(rid);
       await db.recursiveDelete(db.collection("restaurants").doc(rid));
       try {
         await getStorage().bucket().deleteFiles({ prefix: `receipts/${rid}/` });
@@ -943,6 +965,59 @@ async function route(req: Request, res: Response): Promise<unknown> {
     });
     if (!mailAccepted(sent)) return json(res, 502, { error: "the order email could not be sent" });
     return json(res, 201, { ok: true });
+  }
+
+  // ── POS integrations (docs/pos.md) ─────────────────────────────
+  // Provider-generic: every route takes :provider and the engine never
+  // branches on it. Reading and disconnecting stay open on any plan — a
+  // downgraded location must be able to see why sync paused and to let
+  // go. Everything that calls the provider or edits mappings is Pro+.
+  if (head === "integrations") {
+    if (m === "GET" && seg.length === 1) {
+      if (!can(member, "integrations")) return forbidden(res);
+      return json(res, 200, await listIntegrations(rid));
+    }
+    // Finish an OAuth connect. Not scoped to the active location or perms
+    // here: completeOAuth checks the CALLER started this very flow, and
+    // re-checks their rights and the plan on the restaurant it was for.
+    if (m === "POST" && id === "oauth" && seg.length === 2) {
+      return json(res, 200, await completeOAuth(member.uid, completePosOAuthSchema.parse(req.body)));
+    }
+    const provider = posProviderSchema.safeParse(id);
+    if (!provider.success) return json(res, 404, { error: "unknown_provider" });
+    const p = provider.data;
+    const sub = seg[3];
+    if (m === "GET") {
+      if (!can(member, "integrations")) return forbidden(res);
+      if (action === "locations" && seg.length === 3) return json(res, 200, await listLocations(rid, p));
+      if (action === "links" && seg.length === 3) return json(res, 200, await listLinks(rid, p));
+    }
+    if (!can(member, "integrations", "edit")) return forbidden(res);
+    if (m === "DELETE" && seg.length === 2) {
+      await disconnect(rid, p);
+      return json(res, 200, { ok: true });
+    }
+    if (!planInfo.limits.integrations) return paywall("integrations_pro");
+    if (m === "POST" && action === "connect" && seg.length === 3) {
+      return json(res, 200, await startConnect({ rid, uid: member.uid, provider: p, origin: req.headers.origin }));
+    }
+    if (m === "PUT" && seg.length === 2) {
+      const body = selectPosLocationSchema.parse(req.body);
+      return json(res, 200, await selectLocation(rid, p, body.locationExternalId));
+    }
+    // Pull the POS catalog now (also runs on bind and daily).
+    if (m === "POST" && action === "catalog" && sub === "sync" && seg.length === 4) {
+      return json(res, 200, await syncCatalog(rid, p));
+    }
+    // "Buscar coincidencias": re-run every tier, LLM included, without a POS call.
+    if (m === "POST" && action === "links" && sub === "match" && seg.length === 4) {
+      return json(res, 200, await rematch(rid, p, { llm: true }));
+    }
+    if (m === "PUT" && action === "links" && sub && seg.length === 4) {
+      const body = posLinkActionSchema.parse(req.body);
+      // req.path is not URL-decoded; link ids may carry an escaped "/".
+      return json(res, 200, await updateLink(rid, p, decodeURIComponent(sub), body));
+    }
   }
 
   // ── assistant: stateless Q&A over perm-filtered data (Pro) ────
@@ -1027,7 +1102,7 @@ export const api = onRequest(
   {
     region: REGION,
     maxInstances: 10,
-    secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY],
+    secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY, ...POS_SECRETS],
     memory: "512MiB",
     timeoutSeconds: 120,
   },
