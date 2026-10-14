@@ -67,7 +67,9 @@ const assistantLocal = {
 };
 
 const options = {
-  entryPoints: ["src/index.ts", "src/seed-cli.ts", "src/migrate-cli.ts"],
+  // src/demo/index.ts → lib/demo/index.js: the demo-profile seeder the
+  // marketing pipeline imports with its own Admin app (docs/demo-profiles.md).
+  entryPoints: ["src/index.ts", "src/seed-cli.ts", "src/migrate-cli.ts", "src/demo/index.ts"],
   outdir: "lib",
   bundle: true,
   platform: "node",
