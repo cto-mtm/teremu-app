@@ -295,7 +295,7 @@ export const tools: ToolRow[] = [
     description: "The user wants to scan, photograph or upload a supplier invoice, receipt or delivery note.",
     permission: "scan:write",
     input: z.object({}),
-    route: "/scan",
+    to: "scanner",
   },
   {
     kind: "handoff",
@@ -303,7 +303,7 @@ export const tools: ToolRow[] = [
     description: "The user wants to review, approve or fix scanned invoices waiting in triage.",
     permission: "triage:read",
     input: z.object({}),
-    route: "/triage",
+    to: "triage",
   },
   {
     kind: "handoff",
@@ -311,7 +311,7 @@ export const tools: ToolRow[] = [
     description: "Open a dish card (ficha de plato) to edit its recipe or price.",
     permission: "menu:read",
     input: z.object({ id: z.string().describe("Dish id from getDishCosts") }),
-    route: "/menu/{id}",
+    to: "dish",
   },
   {
     kind: "handoff",
@@ -319,7 +319,7 @@ export const tools: ToolRow[] = [
     description: "Open an ingredient's pantry page (price history, stock).",
     permission: "pantry:read",
     input: z.object({ id: z.string().describe("Ingredient id from searchIngredients") }),
-    route: "/pantry/{id}",
+    to: "ingredient",
   },
   {
     kind: "handoff",
@@ -327,6 +327,6 @@ export const tools: ToolRow[] = [
     description: "Open a vendor's page (proveedor): their invoices, ingredients supplied, and contact.",
     permission: "vendors:read",
     input: z.object({ id: z.string().describe("Vendor key from getVendors") }),
-    route: "/vendors/{id}",
+    to: "vendor",
   },
 ];

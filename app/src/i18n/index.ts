@@ -133,9 +133,6 @@ export function setCurrency(code: Currency): void {
   for (const locale of SUPPORTED_LOCALES) i18n.global.setNumberFormat(locale, numberFormatFor(code))
 }
 
-/** The active restaurant's BASE currency, read-only (the assistant's money cards use it). */
-export const activeCurrency = computed(() => currency.value)
-
 /** "$" / "€" / "£" in the current language — for labels like "Precio ({symbol})". */
 export const currencySymbol = computed(
   () =>

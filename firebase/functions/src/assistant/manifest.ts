@@ -40,6 +40,9 @@ export const manifest = {
   plan: { from: "principal.plan" },
   locale: { from: "principal.locale", default: "es" },
   timezone: { from: "principal.timezone", default: "Europe/Madrid" },
+  // Base currency for `format: 'money'` cards — resolved on the server and
+  // sent to the modal (replaces the old client `currency` plugin option).
+  currency: { from: "principal.currency", default: "EUR" },
   facts: {
     "Restaurant base currency (all amounts)": "principal.currency",
     "Current plan": "principal.planLabel",
@@ -57,13 +60,25 @@ export const manifest = {
   },
   usage: "ai_usage",
   instructions: prompt,
-  pageContext: {
-    "/menu/:id": "The user is viewing dish {id}.",
-    "/pantry/:id": "The user is viewing ingredient {id}.",
-    "/triage/:id": "The user is viewing invoice {id} in triage.",
-    "/vendors/:key": "The user is viewing vendor {key}.",
+  // Everywhere the assistant can send the user, declared once: entity links
+  // (card({ entity })), handoff rows (`to`), and pageContext all resolve
+  // through this. Entity-link paths are filled with `{id}` (the carded
+  // field's value) — so `vendor` uses {id}, holding the vendor key.
+  destinations: {
+    dish: "/menu/{id}",
+    ingredient: "/pantry/{id}",
+    invoice: "/triage/{id}",
+    vendor: "/vendors/{id}",
+    scanner: "/scan",
+    triage: "/triage",
   },
-  routes: { dish: "/menu/{id}", ingredient: "/pantry/{id}", invoice: "/triage/{id}", vendor: "/vendors/{key}" },
+  // Keyed by destination name; the placeholder comes from its path.
+  pageContext: {
+    dish: "The user is viewing dish {id}.",
+    ingredient: "The user is viewing ingredient {id}.",
+    invoice: "The user is viewing invoice {id} in triage.",
+    vendor: "The user is viewing vendor {id}.",
+  },
   // getRecentInvoices: equality on status + order by createdAt.
   indexes: [{ collectionGroup: "invoices", fields: [{ fieldPath: "status" }, { fieldPath: "createdAt", order: "DESCENDING" }] }],
   // Revenue/expense rows return up to 90 days.

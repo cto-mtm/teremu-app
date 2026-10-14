@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
-import { i18n, activeCurrency } from './i18n'
+import { i18n } from './i18n'
 import { registerNative } from './lib/native'
 import { assistant } from '@mtmcya/assistant/vue'
 import { API_BASE_URL } from './lib/api'
@@ -26,7 +26,8 @@ app.use(assistant, {
   },
   router,
   locale: i18n.global.locale,
-  currency: activeCurrency,
+  // Currency is resolved server-side now (manifest.currency) and sent to
+  // the modal via ClientMeta — no longer a client plugin option.
   title: 'Teremu',
   examples: {
     es: ['¿Qué platos tienen menos margen?', '¿A cuánto está el tomate?', 'Últimas facturas', 'Ventas de los últimos 30 días'],
