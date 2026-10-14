@@ -43,4 +43,5 @@ docs/samples/real/
 
 # Misc
 .DS_Store
-.claude/
+.claude/*
+!.claude/skills/

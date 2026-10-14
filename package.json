@@ -40,7 +40,8 @@
     "real:eval": "npm run build:shared && tsx scripts/real-samples/eval-ocr.ts",
     "real:seed": "npm run build:shared && tsx scripts/real-samples/seed-account.ts",
     "test:real": "npm run build:shared && node scripts/real-samples/test-real.mjs",
-    "assistant:dev": "cross-env ASSISTANT_LOCAL=1 npm run dev --workspace teremu-app"
+    "assistant:dev": "cross-env ASSISTANT_LOCAL=1 npm run dev --workspace teremu-app",
+    "assistant:update": "node scripts/assistant-update.mjs"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.9",
