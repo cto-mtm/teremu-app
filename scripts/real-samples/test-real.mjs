@@ -15,6 +15,7 @@ import { createConnection } from "node:net";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CORPUS_DIR, MANIFEST_PATH, REPO_ROOT, resolveCassetteDir } from "./corpus.mjs";
+import { emulators } from "../lib/ports.mjs";
 
 if (!existsSync(MANIFEST_PATH)) {
   console.log("Real corpus not on this machine (or not prepared) — nothing to run. See docs/real-samples.md.");
@@ -47,7 +48,12 @@ const busy = (port) =>
     s.once("error", () => resolve(false));
   });
 const taken = [];
-for (const port of [9099, 8080, 5001, 9199]) if (await busy(port)) taken.push(port);
+// The four emulators this suite boots itself (emulators:exec below) —
+// ports from ports.json, never literals.
+for (const name of ["auth", "firestore", "functions", "storage"]) {
+  const port = emulators[name];
+  if (await busy(port)) taken.push(port);
+}
 if (taken.length) {
   console.error(`Emulator ports in use (${taken.join(", ")}). Stop your running emulators — this suite boots its own in replay mode.`);
   process.exit(1);

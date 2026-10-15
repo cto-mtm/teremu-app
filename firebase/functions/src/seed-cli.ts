@@ -41,12 +41,17 @@ import {
 import { OWNER_PERMS, type MemberDoc, type MembershipDoc, type Perms } from "./models.js";
 import { seedDemoData } from "./seed.js";
 import { resolveMember } from "./tenancy.js";
+// This CLI is a LOCAL emulator tool (never deployed-function code): it
+// is a separate esbuild entry, run as `node lib/seed-cli.js` against the
+// emulators. So it may read the repo-root ports.json — the deployed api
+// (index.ts) never does. Env vars still win when set.
+import { emulatorHost } from "../../../scripts/lib/ports.mjs";
 
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST ?? emulatorHost("firestore");
 process.env.FIREBASE_AUTH_EMULATOR_HOST =
-  process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099";
+  process.env.FIREBASE_AUTH_EMULATOR_HOST ?? emulatorHost("auth");
 process.env.FIREBASE_STORAGE_EMULATOR_HOST =
-  process.env.FIREBASE_STORAGE_EMULATOR_HOST ?? "127.0.0.1:9199";
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST ?? emulatorHost("storage");
 
 const PROJECT_ID = "demo-app";
 initializeApp({ projectId: PROJECT_ID, storageBucket: `${PROJECT_ID}.appspot.com` });

@@ -5,6 +5,7 @@
  */
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { emulators } from '../scripts/lib/ports.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -33,13 +34,13 @@ export const PROJECT_ID = 'demo-app'
  *  404 on every request, not just in production. */
 export const REGION = 'us-east1'
 
-export const AUTH_EMULATOR = 'http://127.0.0.1:9099'
-export const FIRESTORE_EMULATOR = 'http://127.0.0.1:8080'
-export const STORAGE_EMULATOR = 'http://127.0.0.1:9199'
+export const AUTH_EMULATOR = `http://127.0.0.1:${emulators.auth}`
+export const FIRESTORE_EMULATOR = `http://127.0.0.1:${emulators.firestore}`
+export const STORAGE_EMULATOR = `http://127.0.0.1:${emulators.storage}`
 /** The api Cloud Function on the FUNCTIONS emulator — the app's dev
  *  BASE_URL (app/src/lib/api.ts). Auth/Firestore up but this down = every
  *  screen renders empty with a connection error. */
-export const API_EMULATOR = `http://127.0.0.1:5001/${PROJECT_ID}/${REGION}/api`
+export const API_EMULATOR = `http://127.0.0.1:${emulators.functions}/${PROJECT_ID}/${REGION}/api`
 
 /**
  * Sample receipt per Playwright project.

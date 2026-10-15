@@ -43,6 +43,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { DERIVED_DIR, chronological, corpusPresent, loadManifest, resolveCassetteDir, uniquePages } from "./corpus.mjs";
+import { emulatorHost } from "../lib/ports.mjs";
 
 const { values: args } = parseArgs({
   options: {
@@ -75,9 +76,9 @@ if (args.emulator) {
   }
   args.project = "demo-app";
   args.bucket ??= "demo-app.appspot.com";
-  process.env.FIRESTORE_EMULATOR_HOST ??= "127.0.0.1:8080";
-  process.env.FIREBASE_AUTH_EMULATOR_HOST ??= "127.0.0.1:9099";
-  process.env.FIREBASE_STORAGE_EMULATOR_HOST ??= "127.0.0.1:9199";
+  process.env.FIRESTORE_EMULATOR_HOST ??= emulatorHost("firestore");
+  process.env.FIREBASE_AUTH_EMULATOR_HOST ??= emulatorHost("auth");
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST ??= emulatorHost("storage");
 } else {
   for (const v of ["FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST", "FIREBASE_STORAGE_EMULATOR_HOST"]) {
     if (process.env[v]) {

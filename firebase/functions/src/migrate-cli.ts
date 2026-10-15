@@ -17,10 +17,13 @@
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { DEFAULT_RESTAURANT_NAME, memberDocSchema, type MembershipDoc } from "./models.js";
+// Local emulator tool (separate esbuild entry, run as node lib/migrate-cli.js);
+// not deployed-function code, so it may read the repo-root ports.json.
+import { emulatorHost } from "../../../scripts/lib/ports.mjs";
 
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST ?? emulatorHost("firestore");
 process.env.FIREBASE_AUTH_EMULATOR_HOST =
-  process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099";
+  process.env.FIREBASE_AUTH_EMULATOR_HOST ?? emulatorHost("auth");
 
 initializeApp({ projectId: "demo-app" });
 

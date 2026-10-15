@@ -22,12 +22,13 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { stage } from '../scripts/lib/stage.mjs'
+import { emulators } from '../scripts/lib/ports.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
-const AUTH_EMULATOR = 'http://127.0.0.1:9099'
+const AUTH_EMULATOR = `http://127.0.0.1:${emulators.auth}`
 // Must match REGION in firebase/functions/src/region.ts.
-const API_EMULATOR = 'http://127.0.0.1:5001/demo-app/us-east1/api'
+const API_EMULATOR = `http://127.0.0.1:${emulators.functions}/demo-app/us-east1/api`
 
 // `--verbose` (ours, not Playwright's) turns on Playwright's per-action
 // debug stream in the LOG FILE only. It is ~10x the log volume, so it is
@@ -192,6 +193,9 @@ try {
     process.exit(1)
   }
   if (authUp) {
+    // Guard: the emulators answering must be THIS project's, not another
+    // project's holding the same ports (check-ports asks the hub).
+    run(`node "${path.join(root, 'scripts', 'check-ports.mjs')}" --mode connect`, root)
     const s = stage('E2E: Playwright against the already-running emulators')
     // The local CLI via node, not npx — npx can stall on its registry check.
     const cli = path.join(root, 'node_modules', '@playwright', 'test', 'cli.js')
@@ -210,6 +214,11 @@ try {
 
     // Free ports in case a previous dev session left emulators half-alive
     run(`node "${path.join(root, 'scripts', 'lib', 'kill-emulator-ports.mjs')}"`, root)
+
+    // Guard: with the ports freed, every emulator port must now be free —
+    // if something else (another project) still holds one, fail with a
+    // named port instead of a cryptic emulator "port taken" later.
+    run(`node "${path.join(root, 'scripts', 'check-ports.mjs')}" --mode exec`, root)
 
     let s = stage('E2E 1/2: build shared + firebase/functions (the emulator serves the built api)')
     run('npm run build:functions', root)

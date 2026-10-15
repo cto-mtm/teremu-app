@@ -36,11 +36,12 @@ import {
 } from "../src/models";
 import { emailKey } from "../src/tenancy";
 import { REGION } from "../src/region";
+import { emulatorHost } from "../../../scripts/lib/ports.mjs";
 
 const PROJECT_ID = "demo-app";
-const FUNCTIONS_HOST = "127.0.0.1:5001";
-const AUTH_HOST = "127.0.0.1:9099";
-const FIRESTORE_HOST = "127.0.0.1:8080";
+const FUNCTIONS_HOST = emulatorHost("functions");
+const AUTH_HOST = emulatorHost("auth");
+const FIRESTORE_HOST = emulatorHost("firestore");
 // The emulator serves each function under its declared region, so this
 // must track REGION in src/region.ts — imported rather than repeated so
 // a region move can't leave the suite pointing at a 404.

@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 import { STORAGE_STATE } from './constants'
+import { app as appPorts } from '../scripts/lib/ports.mjs'
+
+// The dev server's origin — port from ports.json (app.vite), never a
+// literal. Playwright drives the app and auto-starts Vite here.
+const APP_URL = `http://localhost:${appPorts.vite}`
 
 /**
  * Teremu E2E — runs against the live Vite dev server + Firebase emulators.
@@ -27,7 +32,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
 
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: APP_URL,
     // The app picks its locale from localStorage only, defaulting to `es`
     // (app/src/i18n/index.ts) — so the UI is Spanish regardless of what
     // Playwright reports. These are pinned anyway so date/number
@@ -90,7 +95,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     cwd: '../app',
-    url: 'http://localhost:5173',
+    url: APP_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     stdout: 'pipe',

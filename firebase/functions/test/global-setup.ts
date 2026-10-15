@@ -4,12 +4,13 @@
  * emulators aren't up yet, so "forgot to start the emulators" never
  * looks like a wall of cryptic connection-refused test failures.
  */
+import { emulatorHost } from "../../../scripts/lib/ports.mjs";
 
 const EMULATOR_HOSTS: Record<string, string> = {
-  Firestore: "127.0.0.1:8080",
-  Auth: "127.0.0.1:9099",
-  Storage: "127.0.0.1:9199",
-  Functions: "127.0.0.1:5001",
+  Firestore: emulatorHost("firestore"),
+  Auth: emulatorHost("auth"),
+  Storage: emulatorHost("storage"),
+  Functions: emulatorHost("functions"),
 };
 
 async function checkReachable(name: string, hostPort: string): Promise<void> {

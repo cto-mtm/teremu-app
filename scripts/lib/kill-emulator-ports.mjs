@@ -6,9 +6,11 @@
  * Usage: node scripts/lib/kill-emulator-ports.mjs
  */
 import { execSync } from 'node:child_process'
+import { emulators } from './ports.mjs'
 
-// Auth, Firestore, Functions, Storage (matches firebase/firebase.json emulator config)
-const PORTS = [9099, 8080, 5001, 9199]
+// Every emulator port this project declares (ports.json) — so freeing
+// them stays in sync with firebase.json automatically.
+const PORTS = Object.values(emulators)
 
 let killed = 0
 
