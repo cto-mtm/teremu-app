@@ -3,8 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173",
-    "dev:remote": "vite --host 0.0.0.0 --port 5173 --mode remote",
+    "dev": "vite --host 0.0.0.0",
+    "dev:remote": "vite --host 0.0.0.0 --mode remote",
     "build": "vue-tsc -b && vite build",
     "typecheck": "vue-tsc -b",
     "preview": "vite preview",

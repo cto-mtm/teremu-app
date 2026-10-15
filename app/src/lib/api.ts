@@ -29,7 +29,13 @@ async function authHeaders(): Promise<Record<string, string>> {
 // firebase/functions/src/region.ts (us-east1, where the Storage bucket
 // is). The emulator serves each function under its declared region, so
 // a mismatch here is a 404 in local dev, not just in prod.
-const EMULATOR_URL = 'http://127.0.0.1:5001/demo-app/us-east1/api'
+//
+// Single-origin rule: in dev this is a SAME-ORIGIN path, not a
+// 127.0.0.1 port — the Vite dev server proxies `/demo-app/*` to the
+// functions emulator (see app/vite.config.ts), so the browser (which on
+// a phone over Tailscale cannot reach the host's 127.0.0.1) talks only
+// to its own origin. The port is never named here; it lives in ports.json.
+const EMULATOR_URL = '/demo-app/us-east1/api'
 
 const BASE_URL =
   import.meta.env.VITE_API_URL ??

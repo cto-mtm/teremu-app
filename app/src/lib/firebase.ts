@@ -43,14 +43,20 @@ const app = initializeApp(
 
 export const auth = getAuth(app)
 if (!hasRealConfig) {
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+  // Single-origin rule: point the Auth SDK at THIS origin, not a
+  // 127.0.0.1 port — the Vite dev server proxies the emulator's paths
+  // (identitytoolkit / securetoken / emulator) to the Auth emulator
+  // (see app/vite.config.ts). On a phone over Tailscale, 127.0.0.1 would
+  // be the phone; same-origin is the only thing that works there and
+  // locally alike. The port is never named here; it lives in ports.json.
+  connectAuthEmulator(auth, window.location.origin, { disableWarnings: true })
 
   // DEV DIAGNOSTIC: intercept fetch to the Auth emulator to catch silent
   // token refresh failures that cause phantom logouts.
   const _originalFetch = window.fetch.bind(window)
   window.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
-    if (url.includes('127.0.0.1:9099') || url.includes('securetoken') || url.includes('identitytoolkit')) {
+    if (url.includes('securetoken') || url.includes('identitytoolkit')) {
       const res = await _originalFetch(input, init)
       if (!res.ok) {
         const body = await res.clone().text()
