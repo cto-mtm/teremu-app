@@ -11,6 +11,10 @@ npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebas
 - `firebase/` — Firebase Hosting config + Cloud Functions API (invoice OCR, pantry, margins) + emulator scripts
 - `docs/` — Internal documentation (read `docs/animations.md` before touching any animation, `docs/i18n.md` before touching any user-facing string, `docs/llm.md` before touching any AI call — all LLM traffic goes through `firebase/functions/src/llm.ts`; the provider is env config, never hardcoded in callers — `docs/pos.md` before touching any POS/integration code, `docs/multi-currency.md` before touching any money field, money formatter, or anything under `firebase/functions/src/{fx,countries}/` — three currencies, document / base / display, "it's timezones"; country-specific behaviour lives only in a country pack — `docs/mtmcya-mailer.md` before touching any email code — all mail goes through `sendMail()` in `firebase/functions/src/mail.ts` to the shared mtmcya-mailer; no SMTP / SES SDK / `mail` collection — and `docs/real-samples.md` before touching the real client corpus in `docs/samples/real/` — gitignored client data, never copied into a committed path)
 
+## Ports (non-negotiable)
+
+- Never hardcode a port. Every port comes from the repo-root `ports.json` (`firebase/firebase.json` is the only other copy, kept in sync by `scripts/check-ports.mjs`); browser code and Cloud Functions code never import it.
+
 ## Schemas (shared vs mirrored)
 
 - The shared **vocabulary** (enums + `permsSchema`) lives ONLY in `shared/src/vocab.ts`. Add a unit / category / permission area there once — never redeclare it in `app` or `functions`.

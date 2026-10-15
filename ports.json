@@ -1,0 +1,19 @@
+{
+  "app": {
+    "vite": 5173,
+    "tailscale": 5173
+  },
+  "emulators": {
+    "ui": 10400,
+    "hub": 10401,
+    "logging": 10402,
+    "auth": 10403,
+    "functions": 10404,
+    "firestore": 10405,
+    "firestoreWebsocket": 10406,
+    "hosting": 10408,
+    "storage": 10410,
+    "eventarc": 10411,
+    "tasks": 10412
+  }
+}
