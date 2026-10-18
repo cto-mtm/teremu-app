@@ -145,6 +145,14 @@ export const revenueEntrySchema = z.object({
   amount: z.number(),
   itemsSold: z.array(z.object({ menuItemId: z.string(), qty: z.number() })),
   createdAt: z.number(),
+  // POS entries only (the projector writes them; absent = a manual entry).
+  // Lenient on purpose, like the rest of this file: an unknown future
+  // source must not blank the whole list.
+  source: z.string().optional(),
+  provider: z.string().optional(),
+  /** Net sales that reached no dish, so the day still ties out with the POS. */
+  unattributed: z.object({ amount: z.number(), count: z.number() }).optional(),
+  refunded: z.number().optional(),
 })
 
 export const expenseSchema = z.object({

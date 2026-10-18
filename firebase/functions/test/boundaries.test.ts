@@ -38,10 +38,15 @@ const COUNTRY_COMPARE = /\bcountry\b[^\n]*["'`][A-Z]{2}["'`]/;
 
 describe("currency-layer module boundaries", () => {
   it("(a) no country literal outside src/countries/", () => {
-    const offenders = outside("countries").filter((f) => {
-      const text = code(f);
-      return COUNTRY_LITERAL.test(text) || COUNTRY_COMPARE.test(text);
-    });
+    // demo/profiles/* are seed DATA (a fake restaurant's country), not
+    // country-branching core logic — the seepage this guard prevents. They
+    // are exempt like src/countries/ itself.
+    const offenders = outside("countries")
+      .filter((f) => !rel(f).startsWith("demo/profiles/"))
+      .filter((f) => {
+        const text = code(f);
+        return COUNTRY_LITERAL.test(text) || COUNTRY_COMPARE.test(text);
+      });
     expect(offenders.map(rel)).toEqual([]);
   });
 

@@ -79,6 +79,9 @@ import {
   startConnect,
 } from "./pos/connections.js";
 import { listLinks, rematch, rematchAfterMenuChange, syncCatalog, updateLink } from "./pos/catalog.js";
+import { syncOrders } from "./pos/orders.js";
+import { projectDirtyDays } from "./pos/project.js";
+import { posCoversDate } from "./pos/days.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -636,6 +639,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "POST" && seg.length === 1) {
       if (!can(member, "finance", "edit")) return forbidden(res);
       const body = revenueSchema.parse(req.body);
+      // The POS already reports this day's sales: a manual entry on top
+      // would count them twice (docs/pos.md §Projection — manual collision).
+      if (await posCoversDate(rid, body.date)) return json(res, 409, { error: "pos_covers_date" });
       // Echo the full entity (incl. createdAt) so the app's zod schema
       // can validate the response like any other RevenueEntry.
       const { id: revId, createdAt } = await recordRevenue(rid, body.date, body.amount, body.itemsSold);
@@ -1061,10 +1067,21 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "POST" && action === "links" && sub === "match" && seg.length === 4) {
       return json(res, 200, await rematch(rid, p, { llm: true }));
     }
+    // Pull sales now (the scheduler also polls, adaptively — orders.ts) and rebuild the stale days.
+    if (m === "POST" && action === "orders" && sub === "sync" && seg.length === 4) {
+      const synced = await syncOrders(rid, p, { maxPages: 5 });
+      return json(res, 200, { ...synced, ...(await projectDirtyDays(rid, p, { limit: 30 })) });
+    }
     if (m === "PUT" && action === "links" && sub && seg.length === 4) {
       const body = posLinkActionSchema.parse(req.body);
       // req.path is not URL-decoded; link ids may carry an escaped "/".
-      return json(res, 200, await updateLink(rid, p, decodeURIComponent(sub), body));
+      const view = await updateLink(rid, p, decodeURIComponent(sub), body);
+      // A mapping change re-attributes history: rebuild the first few days
+      // now so Pulse reflects it; the scheduler works through the rest.
+      await projectDirtyDays(rid, p, { limit: 10 }).catch((err) =>
+        logger.warn("POS reprojection after mapping change failed", { rid, p, err }),
+      );
+      return json(res, 200, view);
     }
   }
 

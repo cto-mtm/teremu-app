@@ -1,6 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import { POS_PROVIDERS, type PosProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
+import { markAllDaysDirty } from "./days.js";
 import { llmSuggestions, matchItem, prepareDishes, type Candidate, type MatchDish } from "./matching.js";
 import { toMajor } from "./money.js";
 import { connectedIntegration, db, integrationRef, withCredentials, type IntegrationDoc } from "./store.js";
@@ -47,13 +48,14 @@ export interface MatchSummary {
   pending: number;
 }
 
-const linksCol = (rid: string) => db().collection(`restaurants/${rid}/posLinks`);
-const linkIdFor = (provider: PosProvider, externalId: string): string =>
+export const linksCol = (rid: string) => db().collection(`restaurants/${rid}/posLinks`);
+export const linkIdFor = (provider: PosProvider, externalId: string): string =>
   `${provider}_${externalId.replace(/\//g, "%2F")}`;
 const priceOf = (l: LinkDoc): number | null => (l.priceMinor === null ? null : toMajor(l.priceMinor, l.currency));
 const linked = (l: LinkDoc): boolean => l.status === "auto" || l.status === "confirmed";
+export const isLinked = linked;
 
-async function currentLinks(rid: string, provider: PosProvider, epoch: number): Promise<Map<string, LinkDoc>> {
+export async function currentLinks(rid: string, provider: PosProvider, epoch: number): Promise<Map<string, LinkDoc>> {
   // Two equality filters — served by single-field indexes, no composite needed.
   const snap = await linksCol(rid).where("provider", "==", provider).where("epoch", "==", epoch).get();
   return new Map(snap.docs.map((d) => [d.id, d.data() as LinkDoc]));
@@ -75,15 +77,33 @@ function summarize(links: Iterable<LinkDoc>): MatchSummary {
 
 const mappingKey = (l: LinkDoc): string => JSON.stringify([l.status, l.menuItemId, l.matchedBy, l.candidates, l.noAuto]);
 
-/** Persist changed links (≤400 ops per batch). THE write path for links. */
+/** Which dish a link sells as — the only part of a link that changes what
+ * a past sale is attributed to. (Unmapped and ignored both land in the
+ * unattributed bucket, so moving between them changes nothing.) */
+const attributionOf = (l: LinkDoc | undefined): string => (l && linked(l) && l.menuItemId ? l.menuItemId : "");
+
+/**
+ * Persist changed links (≤400 ops per batch). THE write path for links —
+ * and therefore the one place "mapping changed → business days dirty"
+ * lives: if any link's attribution changed, every day with POS data is
+ * marked stale and the projector re-attributes history (docs/pos.md
+ * §Projection). Doing it here means no caller can forget.
+ */
 async function writeLinks(rid: string, changed: Map<string, LinkDoc>): Promise<void> {
   const now = Date.now();
   const entries = [...changed];
+  let reattribute = false;
   for (let i = 0; i < entries.length; i += 400) {
+    const chunk = entries.slice(i, i + 400);
+    const olds = await db().getAll(...chunk.map(([id]) => linksCol(rid).doc(id)));
     const batch = db().batch();
-    for (const [id, link] of entries.slice(i, i + 400)) batch.set(linksCol(rid).doc(id), { ...link, updatedAt: now });
+    chunk.forEach(([id, link], n) => {
+      if (attributionOf(olds[n].data() as LinkDoc | undefined) !== attributionOf(link)) reattribute = true;
+      batch.set(linksCol(rid).doc(id), { ...link, updatedAt: now });
+    });
     await batch.commit();
   }
+  if (reattribute && entries.length > 0) await markAllDaysDirty(rid, entries[0][1].provider);
 }
 
 /**

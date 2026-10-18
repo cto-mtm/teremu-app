@@ -68,6 +68,58 @@ export interface PosCatalogItem {
   currency: string;
 }
 
+/**
+ * One sale line, already reduced to NET by the adapter (docs/pos.md
+ * §Money & tax): discounts (incl. prorated order-level ones) are out,
+ * tax is out whether the provider prices tax-inclusive or additive,
+ * service charges and tips are out. The engine only ever reads `netMinor`.
+ * Modifier money is folded into the parent line; the sub-lines are kept
+ * only so a later phase can map them.
+ */
+export interface PosOrderLine {
+  externalLineId: string;
+  /** The sellable the line points at (Square: item variation). Null =
+   * a custom amount with no catalog entry — always unattributed. */
+  catalogExternalId: string | null;
+  name: string;
+  /** Decimal — weight-sold items exist. */
+  qty: number;
+  grossMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+  netMinor: number;
+  modifiers: { catalogExternalId: string | null; name: string; netMinor: number }[];
+}
+
+export type PosOrderState = "completed" | "open" | "canceled";
+
+export interface PosOrder {
+  externalId: string;
+  locationExternalId: string;
+  state: PosOrderState;
+  /** Epoch ms UTC. Null while the order is open. */
+  closedAt: number | null;
+  /** Epoch ms UTC of the provider's last change — the reconciliation cursor. */
+  updatedAt: number;
+  /** Adapter-defined and only ever compared for "newer": Square's integer
+   * `version`; a provider without one supplies its last-modified time. */
+  revision: number;
+  currency: string;
+  lines: PosOrderLine[];
+  /** Itemized returns, as POSITIVE amounts. They reduce revenue but do not
+   * put stock back: the refunded plate was already cooked. */
+  returns: PosOrderLine[];
+  /** An amount-only refund (no itemization), net of tax and tip, positive. */
+  refundedMinor: number;
+}
+
+export interface PosOrderQuery {
+  /** Orders changed at or after this instant (epoch ms). */
+  since: number;
+  /** Opaque, from the previous page of THIS query; null = first page. */
+  cursor: string | null;
+}
+
 export interface PosAdapter {
   connect: PosConnectFlow;
   /** Absent = credentials don't refresh (or never expire). */
@@ -77,6 +129,15 @@ export interface PosAdapter {
   listLocations(credentials: PosCredentials): Promise<PosLocation[]>;
   /** Everything currently sellable at one location (all pages). */
   fetchCatalog(credentials: PosCredentials, locationExternalId: string): Promise<PosCatalogItem[]>;
+  /** One page of orders changed since `query.since`, oldest change first.
+   * COMPLETED orders only — an order still open is not a sale yet. This
+   * is the only order read: ingestion is a poll (docs/pos.md §Order
+   * ingestion), so a provider needs no webhooks to be supported. */
+  listOrders(
+    credentials: PosCredentials,
+    locationExternalId: string,
+    query: PosOrderQuery,
+  ): Promise<{ orders: PosOrder[]; cursor: string | null }>;
 }
 
 /** A provider's whole contribution: its adapter, whether this deployment

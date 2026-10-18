@@ -14,6 +14,9 @@ import {
 import { POS_SECRETS } from "./pos/index.js";
 import { oauthFailureUrl, oauthReturnUrl, refreshExpiringCredentials } from "./pos/connections.js";
 import { syncAllCatalogs } from "./pos/catalog.js";
+import { boundRestaurants, pollDue, syncOrders } from "./pos/orders.js";
+import { projectDirtyDays } from "./pos/project.js";
+import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { getPlanInfo } from "./plan.js";
 
 initializeApp();
@@ -111,6 +114,39 @@ export const posDaily = onSchedule(
       "POS catalog sync",
       await syncAllCatalogs(async (rid) => (await getPlanInfo(rid)).limits.integrations),
     );
+  },
+);
+
+/**
+ * The POS smart poll, every provider (docs/pos.md §Order ingestion). No
+ * webhooks: this ticks every 5 minutes, and each restaurant is polled
+ * only when its own adaptive `nextPollAt` is due (≤5 min behind while
+ * selling, backing off to 30 min when quiet). A poll pulls a few pages
+ * (so the initial import finishes across ticks and no invocation
+ * swallows a year of orders), then every bound restaurant rebuilds
+ * whatever days went stale — including ones a mapping change dirtied.
+ */
+export const posSync = onSchedule(
+  { schedule: "every 5 minutes", timeZone: "UTC", region: REGION, secrets: POS_SECRETS, timeoutSeconds: 540 },
+  async () => {
+    const now = Date.now();
+    let polled = 0;
+    let failed = 0;
+    for (const { rid, provider } of await boundRestaurants()) {
+      try {
+        if (!(await getPlanInfo(rid)).limits.integrations) continue; // paused, data kept
+        const integ = (await integrationRef(rid, provider).get()).data() as IntegrationDoc | undefined;
+        if (integ && pollDue(integ, now)) {
+          await syncOrders(rid, provider);
+          polled += 1;
+        }
+        await projectDirtyDays(rid, provider, { limit: 20 });
+      } catch (err) {
+        failed += 1;
+        logger.warn("POS order sync failed", { rid, provider, err });
+      }
+    }
+    if (polled || failed) logger.info("POS order sync", { polled, failed });
   },
 );
 

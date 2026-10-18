@@ -363,7 +363,7 @@ export async function approveInvoice(
  * reads per sold dish) so the cost is 2 reads regardless of how many
  * dishes appear in the revenue entry.
  */
-async function usageFor(
+export async function usageFor(
   rid: string,
   itemsSold: { menuItemId: string; qty: number }[]
 ): Promise<Map<string, number>> {
@@ -433,6 +433,13 @@ async function usageFor(
 
 type SoldItems = { menuItemId: string; qty: number }[];
 
+/** POS entries belong to the projector: it diffs the pantry against the
+ * exact amounts IT applied, so a hand edit or delete would corrupt that
+ * accounting. Fix the cause (a mapping, a refund) and the day rebuilds. */
+function assertManual(entry: { source?: string }): void {
+  if (entry.source === "pos") throw new RequestError("pos_entry_readonly", 409);
+}
+
 /** Record revenue and deplete the Theoretical Pantry via menu recipes. */
 export async function recordRevenue(
   rid: string,
@@ -466,7 +473,8 @@ export async function updateRevenue(
   const ref = restCol(rid, "revenue").doc(id);
   const snap = await ref.get();
   if (!snap.exists) return false;
-  const old = snap.data() as { itemsSold?: SoldItems };
+  const old = snap.data() as { itemsSold?: SoldItems; source?: string };
+  assertManual(old);
   const oldUsage = await usageFor(rid, old.itemsSold ?? []);
   const newUsage = await usageFor(rid, itemsSold);
 
@@ -491,7 +499,8 @@ export async function deleteRevenue(rid: string, id: string): Promise<boolean> {
   const ref = restCol(rid, "revenue").doc(id);
   const snap = await ref.get();
   if (!snap.exists) return false;
-  const old = snap.data() as { itemsSold?: SoldItems };
+  const old = snap.data() as { itemsSold?: SoldItems; source?: string };
+  assertManual(old);
   const batch = db.batch();
   for (const [ingredientId, used] of await usageFor(rid, old.itemsSold ?? [])) {
     batch.update(restCol(rid, "ingredients").doc(ingredientId), {

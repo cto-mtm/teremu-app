@@ -1,10 +1,10 @@
 # POS integrations (Square first)
 
-Status: **Phases 1 (Foundation) and 2 (Catalog + marriage) implemented 2026-10-05 / 2026-10-10; Phases 3–5 are design.** Both were written in sessions that could not run the typechecks or the test suite (and had no web access for the Square checklist below). Before merging, run `npm run build --workspace @teremu/shared`, both typechecks, and `npm run test`; `test/pos.test.ts` and `test/pos-catalog.test.ts` cover them. See §Built so far. First market: **Spain** (Square operates there; prices are IVA-inclusive). First provider: **Square**. The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` already anticipates "POS integration (Square/Toast webhook → `POST /revenue`)" as the natural next endpoint, and this doc is how that lands without wiring Square-isms into the core.
+Status: **Phases 1–3 implemented (Foundation 2026-10-05, Catalog + marriage 2026-10-10, Ingestion + projection 2026-10-15; webhooks replaced by a smart poll 2026-10-17); Phases 4–5 are design.** As of 2026-10-15 the whole tree typechecks and `npm run test` passes (20 files / 220 tests), including `test/pos.test.ts`, `test/pos-catalog.test.ts`, `test/pos-orders.test.ts`, `test/pos-ingest.test.ts` and `test/pos-adapter.test.ts`. The 2026-10-17 poll switch (webhooks removed, tests rewritten onto "sync now") typechecks, and `npm run test` passes again on 2026-10-17 (20 files / 210 tests). Everything is verified against the deterministic mock provider only: nothing has run against a live Square account yet (see §Verify against live Square docs for what the docs settled and what still needs a Spanish sandbox). See §Built so far and §Phase 3. First market: **Spain** (Square operates there; prices are IVA-inclusive). First provider: **Square**. The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` anticipated "POS integration (Square/Toast webhook → `POST /revenue`)"; this doc is how that lands without wiring Square-isms into the core — and without webhooks (§Order ingestion).
 
 Read this before touching any POS/integration code. Companion docs: `architecture.md` (tenancy: restaurant = location, per-location billing), `multi-location-plan.md`, `llm.md` (the matcher's LLM assist goes through `llm.ts` like everything else).
 
-## What this commit contains (and what it does not)
+## What the Phase 1–2 commit contained (historical — the tree now builds as a whole)
 
 This commit lands **Phases 1–2 only**, and it was split out of a working tree
 that *also* held an in-progress assistant rewrite. Two consequences to know
@@ -37,7 +37,7 @@ before you build on it:
 2. **Ids, never names.** Every cross-system reference is `provider` + `externalId`. Names are display data that drifts.
 3. **Raw orders are the source of truth; everything downstream is a rebuildable projection.** Normalized orders are stored immutably (upserted only by provider version); revenue entries, dish attribution, and pantry depletion are *derived* and can be regenerated for any (restaurant, business day) at any time. This one commitment is what makes late mappings, refunds, mapping corrections, and attribution bug-fixes all the same cheap operation: mark the day dirty, rebuild it.
 4. **Money is integer minor units (cents) + currency code inside the POS layer.** Convert to the app's float amounts in the restaurant's **base currency** (`docs/multi-currency.md`) only at the projection boundary (existing `revenueEntry` shape). A POS location selling in a currency other than base cannot be bound (`409 currency_mismatch`); POS revenue with its own currency and rate is a Later item there. Revenue for margin math is **net: gross − discounts − IVA, tips excluded entirely**.
-5. **Everything works offline.** No connection → deterministic mock provider (the offline-mock pattern OCR uses without `NVIDIA_API_KEY` — but deterministic, unlike OCR's randomized mock, so tests can assert on it). Webhooks get an emulator-only injection route.
+5. **Everything works offline.** No connection → deterministic mock provider (the offline-mock pattern OCR uses without `NVIDIA_API_KEY` — but deterministic, unlike OCR's randomized mock, so tests can assert on it). The mock can also simulate a revoked grant (`posMockRevoked/{merchantId}`), so every path is testable offline.
 
 ## Provider abstraction
 
@@ -46,7 +46,8 @@ firebase/functions/src/pos/
   types.ts            THE contract: PosAdapter, PosProviderModule, normalized types
   index.ts            provider registry (typed against the vocab), adapter selection, secrets
   providers/
-    square.ts         Square — the only file that knows Square
+    square/           Square — the only folder that knows Square
+                      (config, client, auth, catalog, orders, types)
     mock.ts           deterministic stand-in for ANY provider (offline + tests)
   store.ts            shared persistence + credentials (refresh, needs_reauth)
   crypto.ts           credentials at rest (AES-256-GCM key ring)
@@ -54,7 +55,8 @@ firebase/functions/src/pos/
   catalog.ts          catalog sync, link table, review queue     (engine)
   matching.ts         pure matcher + LLM tier                    (engine)
   money.ts            minor units → base-currency floats
-  orders.ts, project.ts, webhook.ts                              (Phase 3)
+  orders.ts         raw orders + the smart poll                (Phase 3)
+  days.ts, project.ts  business days, dirty-day projector       (Phase 3)
 ```
 
 The adapter contract (`types.ts`; Phase 3 methods marked):
@@ -66,9 +68,7 @@ interface PosAdapter {
   revoke?(merchantId, credentials): void     // optional, best effort
   listLocations(credentials): PosLocation[]  // externalId, name, timezone, currency, active
   fetchCatalog(credentials, locationId): PosCatalogItem[]
-  listOrders(credentials, locationId, { since, cursor }): { orders: PosOrder[], cursor }   // Phase 3
-  fetchOrder(credentials, orderId): PosOrder                                              // Phase 3
-  parseWebhook?(headers, rawBody, url): PosEvent[] | null   // Phase 3; optional — null = bad signature
+  listOrders(credentials, locationId, { since, cursor }): { orders: PosOrder[], cursor }   // Phase 3 — the only order read
 }
 type PosConnectFlow = { kind: "oauth"; authUrl(state, redirectUri); exchangeCode(code, redirectUri): PosGrant }
                     // a provider whose access is granted on ITS side (partner marketplace toggle,
@@ -81,7 +81,6 @@ Normalized types (all money in minor units):
 - `PosCatalogItem` — `{ externalId, groupExternalId, name, priceMinor | null, currency }` — the sellable grain a sale line points at (Square: item variation; the group is the parent item). Modifiers join as a `kind` when modifier mapping lands (Later).
 - `PosOrder` — `{ externalId, locationExternalId, state, closedAt (UTC), revision, currency, lines[], refundedMinor }`. `revision` is adapter-supplied and only ever compared for "newer": Square's integer `version`; a provider without one supplies its last-modified time.
 - `PosOrderLine` — `{ externalLineId, catalogExternalId | null, name, qty (decimal — weight-sold items exist), grossMinor, discountMinor (line share incl. prorated order-level discounts), taxMinor, netMinor, modifiers: [{ catalogExternalId, name, netMinor }] }` — the adapter does the provider's tax/discount arithmetic; the engine only ever reads net.
-- `PosEvent` — `{ type: "order_changed" | "catalog_changed" | "access_revoked", merchantId, locationExternalId?, orderId? }` — provider event names (`order.updated`, `oauth.authorization.revoked`…) never leave the adapter.
 
 Vocabulary (in `shared/src/vocab.ts`, per the schemas rule): `posProviderSchema = z.enum(POS_PROVIDERS)`; `revenueSourceSchema = z.enum(["manual", "pos"])` (Phase 3, with its first user); and an `integrations` area in `permsSchema` (`none | read | edit` — read: see status and mappings; edit: connect, disconnect, map; owners bypass as usual).
 
@@ -93,11 +92,28 @@ The registry in `pos/index.ts` is `{ square } satisfies Record<PosProvider, PosP
 2. `pos/providers/<id>.ts`: export a `PosProviderModule` — `{ adapter, configured(), secrets }`. Its secrets are declared there with `defineSecret` and flow into `POS_SECRETS` automatically. Env config only (base URL, API version); never hardcoded in callers.
 3. `pos/index.ts`: one line in `PROVIDERS`.
 4. `app/src/i18n/locales/components/integrations.ts`: the display name under `provider.<id>` in `es` and `en`.
-5. Register the shared callback / webhook URLs in the provider's dashboard; add the provider's facts to a verify checklist here.
+5. Register the shared OAuth callback URL in the provider's dashboard (OAuth providers only); add the provider's facts to a verify checklist here. No webhook to register: ingestion polls.
 
 Nothing else changes: routes take `:provider`, the Settings card and the review page render whatever `GET /integrations` lists, the mock covers every provider in tests, and data is keyed `provider + externalId` everywhere. A provider that can't do something the contract needs is the signal to extend the *contract* (a new `connect.kind`, an optional method) — never an `if (provider === …)` in the engine.
 
-**Toast, as currently understood (UNVERIFIED — check before building):** access is granted by the restaurant enabling the partner integration on Toast's side rather than a per-merchant OAuth redirect; one partner credential then reaches every restaurant that enabled it, each addressed by a restaurant GUID. That maps onto this model as a second `connect.kind` (the owner picks their Toast restaurant from the ones that granted access), `merchantId` = Toast restaurant group, location = Toast restaurant, and no `refresh`/`revoke` per merchant (the adapter refreshes its partner token internally). Webhooks and order revisions differ too — hence `parseWebhook` being optional and `revision` being adapter-defined.
+### Toast (researched 2026-10-14 — not built)
+
+Toast has no per-merchant OAuth redirect. There are two supported ways in, plus two rejected ones.
+
+**1. Standard API access — preferred.** A restaurant creates **read-only** API credentials itself in Toast Web (Integrations → Toast API access → Manage credentials → *Standard API*). Requirements: an active employee of the location with the **Manage Integrations** permission, and every location on **Toast RMS Essentials or higher** (locations below that show locked). Toast shows the API subdomain, client ID and client secret immediately; the secret is shown once. A credential set can cover one location or several in the management group, and every request addresses one location. No partner approval is needed. Write access is not available, so Teremu cannot accidentally change anything. (Analytics API access is a separate credential type for higher packages; not needed here.) Sources: [overview](https://doc.toasttab.com/doc/devguide/devApiAccessUserGuide.html), [credentials](https://doc.toasttab.com/doc/devguide/devApiAccessCredentials.html), [requirements](https://doc.toasttab.com/doc/devguide/devApiAccessRequirements.html), [FAQs](https://doc.toasttab.com/doc/devguide/devApiAccessFAQs.html).
+
+This maps onto the contract as a second `connect.kind`, e.g. `{ kind: "credentials"; fields: [...]; validate(input): PosGrant }`. The Settings card renders a paste form with copy-through instructions instead of a redirect, and the adapter exchanges client ID + secret for a short-lived token on every use, so it implements neither `refresh` nor `revoke`. The pasted secret is sealed like any other credential (`crypto.ts`). `merchantId` = the credential set (it already scopes which locations we can see); location = Toast restaurant GUID. The engine still never learns it is Toast. The consent-phishing rule still applies: the paste is only accepted from a signed-in user with `integrations:edit`.
+
+**2. Partner integration (marketplace).** The restaurant enables Teremu in Toast's integrations portal, and one partner credential then reaches every restaurant that enabled it, each addressed by a restaurant GUID. This fits as a third `connect.kind` (pick your restaurant from the ones that granted access). It is gated on acceptance into Toast's partner program, which is slow; worth applying early, but not a blocker if path 1 is allowed.
+
+**Rejected** (for every provider, Square included, where a real OAuth API makes it pointless anyway — and "the subscriber consented" does not fix it: the owner can share their own data but cannot waive the POS vendor's terms, which typically forbid automated dashboard access and shared logins, and it is the owner's account that gets suspended)
+
+- **"Invite Teremu as a read-only team member."** This only grants a person's login to Toast Web, not API access. A read-only member also lacks Manage Integrations, so it cannot create API credentials. Getting data out would mean a bot accepting the invite, holding a login per restaurant, handling 2FA and scraping the dashboard. That is fragile, likely against Toast's terms, and puts the restaurant's account at risk. If an owner wants to invite us, path 1 asks the same owner for three pasted values instead.
+- **Emailed reports via an inbound address.** Toast cannot email the Product Mix report on a schedule ([Toast support](https://support.toasttab.com/en/article/Request-to-Send-Product-Mix-Report-by-Email), updated 2026-03-26; logged as a feature request). The **nightly data export** does include a "Product Mix (All Items)" file plus order/payment files, delivered after each location's closeout (default 04:00) and kept for 7 days, but it must be enabled through Toast Customer Care and arrives over SFTP ([data exports](https://support.toasttab.com/en/article/Automated-Nightly-Data-Export-1492723819691)). It is a possible fallback for restaurants below RMS Essentials, not the main path. It also breaks the "ids, never names" principle unless the files carry item GUIDs (unverified).
+
+Order revisions differ from Square, which is why `revision` is adapter-defined. Ingestion is a poll for every provider, so whether Toast's Standard API credentials can receive webhooks no longer matters.
+
+**Market caveat:** as far as we know, Toast operates in the US, Canada, the UK and Ireland, not Spain. Toast therefore follows Square, which stays first for the Spanish launch.
 
 ## Identity & connections (merchant ≠ restaurant)
 
@@ -111,7 +127,7 @@ Rules that keep this honest:
 - **OAuth `state`** is a single-use random doc (`posOauthStates/{nonce}`, short TTL) binding `{ provider, rid, uid }`. One callback function serves every OAuth provider. **The callback never completes the connection**: a state proves which flow this is, not who is holding the browser — someone could start a flow on their own restaurant and forward the consent link to a real merchant, attaching that merchant's sales to the wrong restaurant. So the callback hands `state` + `code` back to the app, and the **signed-in** user completes it (`POST /integrations/oauth`), which is refused unless the caller is the user who started the flow. (Native: in-app browser + app scheme, not a popup — still open.)
 - **Reconnect to a *different* merchant bumps the epoch.** Catalog ids are per-merchant, so every link and cursor carries the epoch it was created under; a merchant change archives (not deletes) all links/cursors of the old epoch in one query. Same-merchant reconnect keeps the epoch — links survive.
 - **Disconnect is per restaurant**: remove the restaurant's integration doc reference and pause its sync. Revoke the merchant token only when the *last* restaurant referencing that connection disconnects. **Synced sales are retained** — they are the restaurant's own history; UI copy states this. Full purge rides the existing `DELETE /restaurants/:rid` recursive delete (posOrders/posLinks live under the rid); that handler must also drop the connection reference (and revoke if last).
-- **Revocation from the provider side** (an `access_revoked` event, or a `PosAuthError` from any adapter call — Square: a 401) flips the connection to `needs_reauth` — surfaced as a reconnect banner in Settings and a `sendMail` alert to the owner. Sync pauses; nothing errors loudly in the background forever. The state lives on the connection only, so one reconnect heals every restaurant on that merchant.
+- **Revocation from the provider side** shows up as a `PosAuthError` on the next adapter call — Square: a 401 — and the poll makes one at least every 30 minutes, so it is noticed within that. It flips the connection to `needs_reauth` — surfaced as a reconnect banner in Settings and a `sendMail` alert to the owner. Sync pauses; nothing errors loudly in the background forever. The state lives on the connection only, so one reconnect heals every restaurant on that merchant.
 - **Credential encryption**: AES-256-GCM with a key from Secret Manager (`POS_TOKEN_ENC_KEY`, `defineSecret` like Stripe's in `billing.ts`); ciphertext is prefixed with a key version so rotation is decrypt-with-old / encrypt-with-new, no big-bang. A daily job refreshes credentials expiring within 7 days (for adapters that refresh) and re-seals anything under an old key.
 
 Timezone/currency synergy: at connect time, populate `restaurants/{rid}.timezone`/`currency` from the POS location if unset (the fields `multi-location-plan.md` reserved).
@@ -152,10 +168,17 @@ Triage-pattern UI: confirm suggestion / pick another dish / **import as new dish
 
 ## Order ingestion
 
-- **Webhooks are the fast path, where the provider has them**: ONE function (`posWebhook`, exposed like the Stripe webhook) routed by path `/{provider}`; the adapter's `parseWebhook` verifies the signature and returns normalized `PosEvent`s, so the engine handles `order_changed` / `catalog_changed` / `access_revoked` without knowing whose events they were. For orders, **fetch the full order from the API** rather than trusting the payload (thin-webhook best practice — also makes duplicate and out-of-order deliveries harmless), normalize, upsert. A provider without webhooks just leans on reconciliation.
-- **Upsert is revision-guarded**: `restaurants/{rid}/posOrders/{provider}_{orderId}`, applied only if the incoming `revision` is newer. Refunds/voids arriving days later are just another version — the order's day goes dirty and rebuilds.
-- **Reconciliation** (scheduled, us-east1 like everything else): per connected restaurant, `searchOrders` over a trailing window with the stored cursor — catches missed webhooks. Only `COMPLETED`-state orders count toward sales.
-- **Backfill** (initial import, default 90 days, setting-controlled): chunked and resumable — each scheduler tick processes pages for pending backfills, checkpointing the cursor on the integration doc after every page, until caught up. No single invocation ever tries to swallow a year of orders (timeout + write-cost control). Upgrade path if scheduler cadence ever feels slow: Cloud Tasks; not needed to start.
+**No webhooks — a smart poll** (decided 2026-10-17). A dashboard of margins does not need sub-minute freshness, and polling removes a public endpoint, a signing secret, the byte-exact notification-URL trap, and a second ingestion path to keep consistent. The revision guard and the overlap window already made the poll correct on its own; webhooks were only ever a latency optimization. Nothing else needed them: revocation surfaces as a 401 on the next poll (see §Identity), and catalog changes are caught as described below. Reintroducing push later would be one optional adapter method feeding the same `ingestOrders` — nothing else would change.
+
+- **One read**: `listOrders(since, cursor)` — orders whose provider *updated* time is ≥ `since`, oldest change first (a refund days later updates the order, so it is found). Square: `SearchOrders`, `COMPLETED` only, sorted by `UPDATED_AT`.
+- **Upsert is revision-guarded**: `restaurants/{rid}/posOrders/{provider}_{orderId}`, applied only if the incoming `revision` is newer. Re-reading an order is a no-op, so overlapping windows are free. Refunds/voids arriving days later are just another revision — the order's day goes dirty and rebuilds.
+- **Adaptive cadence** (`orders.ts`): `posSync` ticks every 5 minutes, but each restaurant is polled only when its own `orderSync.nextPollAt` is due. A pass that stored something new keeps the next poll 5 minutes out; each quiet pass doubles the wait, capped at 30 minutes (5 → 10 → 20 → 30). A restaurant in service is ≤5 minutes behind, a closed one costs two calls an hour, and the first sale of the morning is picked up within 30 minutes. Mid-pass (more pages pending) is always due on the next tick. "Sincronizar ventas" (`POST …/orders/sync`) polls immediately.
+- **Overlap**: each pass's next `since` is its own start minus 10 minutes, so an order changed while a pass ran is still caught.
+- **Daily deep pass**: once every 24 h a pass reaches 72 h back instead — Square accepts orders taken on a POS in offline mode up to 72 h late. Unverified whether such orders carry a late `updated_at` (then the normal poll catches them anyway) or keep the offline time (then only this pass does).
+- **Catalog freshness without catalog webhooks**: the daily `posDaily` sync, plus — when a poll stores a sale whose catalog id is not in the link table — an immediate catalog sync (throttled to one per hour). A newly added dish reaches the review queue the hour it is first sold.
+- **Backfill** (initial import, default 90 days): the same mechanism. The first pass starts 90 days back; every page is checkpointed on the integration doc, a few pages per tick, until caught up. No single invocation ever tries to swallow a year of orders. Binding a location runs the first 2 pages immediately.
+- **Projection runs every tick** for every bound restaurant (one empty query when nothing is dirty), so days dirtied by a mapping change are rebuilt within 5 minutes even when no poll is due.
+- **Cost/limits**: one `SearchOrders` call per due restaurant (up to 500 orders per page). Square documents no hard per-seller rate limit beyond 429 backoff; at ≤12 calls per restaurant per hour we are far below anything that would throttle.
 - posOrders growth is bounded per the repo's existing stance (time-windowed reads, rollups over raising limits): daily revenue entries *are* the rollup; consider a Firestore TTL policy on `posOrders` (e.g. ~13 months) once as-of costing (below) settles what history it needs.
 
 ## Money & tax (Spain)
@@ -186,8 +209,8 @@ Integrations are a **Pro-and-up, per-location** feature (consistent with per-loc
 
 - **Mock provider** (`pos/providers/mock.ts`): deterministic catalog + orders so connect → map → project → Pulse works fully offline in the emulators, per repo rule.
 - **Sandbox**: Square's sandbox (`connect.squareupsandbox.com`) via env config — never hardcode the base URL in callers (same rule as `llm.ts` providers).
-- **Webhook injection**: emulator-only route accepting a normalized `PosEvent` (seed.ts pattern), because real webhooks can't reach the emulator. The webhook path must be testable before production.
-- **Unit tests** (`firebase/functions/test/`): matcher normalization/tiers/ambiguity-refusal; version-guarded upsert idempotency (webhook + reconcile delivering the same order); projector determinism (same inputs → same entry) and pantry **delta** on rebuild; net-money math incl. prorated discounts and decimal qty; token encrypt/decrypt round-trip + key-version rotation; OAuth state single-use; epoch archival on merchant change; HMAC verification (valid/invalid/replayed).
+- **Simulated POS changes**: tests write `posMockOrders` / `posMockCatalog` / `posMockRevoked` and call "sync now" — exactly what the next poll would see.
+- **Unit tests** (`firebase/functions/test/`): matcher normalization/tiers/ambiguity-refusal; version-guarded upsert idempotency (overlapping polls re-reading the same order); poll cadence/backoff; projector determinism (same inputs → same entry) and pantry **delta** on rebuild; net-money math incl. prorated discounts and decimal qty; token encrypt/decrypt round-trip + key-version rotation; OAuth state single-use; epoch archival on merchant change.
 - **i18n**: all new strings in a per-feature `integrations` locale module, `es` authored first, `en` mirrored same change.
 
 ## Built so far
@@ -196,7 +219,7 @@ Where the code settled details the design left open (module map in §Provider ab
 
 **Phase 1 — Foundation**
 
-- **Adapter selection** mirrors `llm.ts`: `TEREMU_TEST_MOCKS` → mock; provider credentials configured (`PosProviderModule.configured()`; Square: `SQUARE_APP_ID` + `SQUARE_APP_SECRET`) → that provider; emulator without them → mock; deployed without them → `501 pos_not_configured`.
+- **Adapter selection** mirrors `llm.ts`: `TEREMU_TEST_MOCKS` → mock; provider credentials configured (`PosProviderModule.configured()`; Square: `SQUARE_APP_SECRET` — the production app id `sq0idp--72l5BFDOKatnObhy_fj0w` is the code default, `SQUARE_APP_ID` overrides it, and the host follows the id unless `SQUARE_ENV` says otherwise) → that provider; emulator without them → mock (in the emulator a `.secret.local` secret alone is not enough — live Square locally also needs an explicit `SQUARE_APP_ID`); deployed without them → `501 pos_not_configured`.
 - **Routes** (all take `:provider`): `GET /integrations` (read), `GET …/locations` (read), `POST …/connect` → `{ url }` (edit, Pro+), `POST /integrations/oauth { state, code }` (the starter only), `PUT /integrations/:provider { locationExternalId }` (edit, Pro+), `DELETE /integrations/:provider` (edit, any plan — a downgraded location can still let go).
 - **OAuth round trip**: provider → `posOauthCallback` → `/settings?pos=complete&state&code` → the Settings card POSTs `/integrations/oauth` as the signed-in user → `{ result: connected|forbidden|upgrade|not_configured|invalid_state|failed, rid }`; `?pos=denied|invalid_state|failed` when the callback itself can't continue. Completion re-checks the starter's `integrations:edit` and the plan. Return origin: `APP_URL`, else the web origin that started the flow; native shells get the web app. If the flow was started on another of the user's locations, the app switches to it.
 - **Location binding**: `posConnections/{id}.locations` maps `locationExternalId → rid`, so one POS location never feeds two restaurants (`409 location_taken`). Binding adopts the location's currency as base if the restaurant never set one and has approved nothing, and fills an unset timezone.
@@ -215,17 +238,38 @@ Where the code settled details the design left open (module map in §Provider ab
 - **Review page** `/integrations/:provider` (`PosLinksPage.vue`): tabs sin vincular / vinculados / ignorados / retirados, suggestion chips, any-dish picker, price-drift line, and **bulk "crear platos"** — which opens the existing `MenuScanWizard` seeded with the POS names + prices (no photo step, same AI recipe drafts), then confirms each link to the dish it created. The exact-name auto-link on dish create would catch it anyway; the explicit confirm marks it human-reviewed.
 - **Mock catalog**: a fixed EUR fixture per mock location; tests simulate POS edits by writing `posMockCatalog/{merchantId}`.
 
-Before the first deploy with this code: create the `POS_TOKEN_ENC_KEY` and `SQUARE_APP_SECRET` secrets (bound to `api` and `posDaily`, so deploy fails without them — a placeholder `SQUARE_APP_SECRET` is fine until Square is set up, as long as `SQUARE_APP_ID` stays unset). Cloud Scheduler must be enabled for `posDaily`. Add a Firestore TTL policy on `posOauthStates.expiresAt`; expired states are already refused, TTL just sweeps them.
+Before the first deploy with this code: run `node scripts/pos-secrets.mjs` — it sets `SQUARE_APP_SECRET` (prompted, or from the environment) and creates `POS_TOKEN_ENC_KEY` if missing; it never regenerates an existing key (that would orphan every sealed token), and `--rotate` prepends a new one. Both are bound to `api`, `posDaily` and `posSync`, so deploy fails without them. With the app id now a code default, a placeholder secret makes Square look configured and OAuth fail — set the real one. Cloud Scheduler must be enabled for `posDaily`. Add a Firestore TTL policy on `posOauthStates.expiresAt`; expired states are already refused, TTL just sweeps them.
 
 Open: native OAuth (`@capacitor/browser` + an app URL scheme; no native projects are in the repo yet); e2e specs for the Settings card and the review page; a Menu-page nudge when the queue is non-empty.
+
+## Phase 3 — built (2026-10-15)
+
+Order ingestion and projection, on the deterministic mock (`test/pos-orders.test.ts`, 30 tests).
+
+- **Contract** (`types.ts`): `PosOrder` / `PosOrderLine` (net-only money), and on the adapter `listOrders` (the webhook-era `fetchOrder` / `parseWebhook` / `PosEvent` were removed with the poll switch). `revenueSourceSchema` (`manual | pos`) in the shared vocab.
+- **Net money** (Square, `normalizeSquareOrder`): line net = `total_money − total_tax_money − total_service_charge_money`. `total_money` already carries the apportioned discounts, and subtracting tax gives the same net whether the seller prices tax-inclusive (Spain) or additive (US), which is why it does not start from `gross_sales_money` (Square deducts inclusive tax from it in the US/CA/JP but not in Europe/AU). Gift-card lines are dropped; custom amounts keep `catalogExternalId: null`. Itemized returns are positive amounts in `returns`; an amount-only refund is `refundedMinor` (net of tax and tip).
+- **Raw orders** (`orders.ts`): `restaurants/{rid}/posOrders/{provider}_{orderId}`, upserted in transactions of 100 only when the revision is newer (or the epoch differs). The poll, the deep pass and backfill all land in `ingestOrders`, so re-reads are no-ops.
+- **Backfill, poll and late-order sweep are one mechanism** (`syncOrders`): `integrations/{provider}.orderSync = { since, cursor, passStartedAt, backfilling, nextPollAt, idleStreak, deepPassAt }`, checkpointed after every page. The first pass reaches `BACKFILL_DAYS` (90) back; each finished pass sets the next `since` to `passStartedAt − 10 min` and schedules `nextPollAt` (5–30 min, §Order ingestion); once a day the pass reaches 72 h back. Filtered and sorted by `updated_at` so a refund days later is found. `posSync` ticks every 5 min (5 pages per due restaurant); binding a location runs the first 2 pages immediately.
+- **No webhooks** (removed 2026-10-17 before ever going live — see §Order ingestion). `posSync` is the smart poll; a revoked grant is a 401 on the next poll; an unknown catalog id in a sale triggers a catalog sync.
+- **Projector** (`project.ts`): `restaurants/{rid}/posDays/{provider}_{date}` tracks `dirtySeq` (bumped by every trigger), `dirty`, and `applied`. A day is rebuilt deterministically from its orders and the link table into the revenue entry `pos_{provider}_{date}` (`source: "pos"`, `provider`, `unattributed: {amount, count}`, `refunded`). The business day is computed here (restaurant timezone, default `UTC`, minus `settings.businessDayCutoff`, default 04:00).
+- **Pantry delta is exact.** The day doc stores `applied`, the per-ingredient usage the last projection subtracted; the next one moves the pantry by `applied − new` in the same transaction. It never recomputes the "old" usage from current recipes (they may have changed), and an ingredient deleted in the meantime is skipped. If something dirties the day mid-rebuild (`dirtySeq` moved) it stays dirty.
+- **Returns reduce revenue, not stock**: the refunded plate was already cooked.
+- **Mapping changes re-attribute history**: `writeLinks` compares each link's attribution (which dish it sells as; unmapped and ignored are equivalent) with the stored one and marks every day with POS data dirty if any changed. `PUT …/links/:id` then rebuilds the first 10 days inline; the scheduler does the rest.
+- **Unattributed bucket**: unmapped, ignored, stale-link (dish gone or inactive) and custom-amount lines stay in `amount` and are counted in `unattributed`, so the day ties out with the POS dashboard. Pulse shows "X in N unmatched lines — review", linking to the review queue.
+- **Manual collision**: `POST /revenue` for a date a POS reports is refused (`409 pos_covers_date`); `PUT`/`DELETE` of a POS entry is `409 pos_entry_readonly`.
+- **Routes**: `POST /integrations/:provider/orders/sync` ("sync now": 5 pages + rebuild up to 30 days; returns `nextPollAt`). **Functions**: `posSync` (every 5 min), `posDaily`, `posOauthCallback`.
+
+Deploy chores: `node scripts/pos-secrets.mjs`; Cloud Scheduler must allow `posSync` and `posDaily`; if a `SQUARE_WEBHOOK_SIGNATURE_KEY` secret was ever created, destroy it after the deploy (the script prints the command). Square Developer Console: only the OAuth redirect URL — no webhook subscription (see §Square Developer Console setup).
+
+Known limits / Later: `usageFor` reads the whole catalog per rebuilt day (fine for ≤300 dishes/ingredients, wasteful for a 90-day backfill: load once per run if it shows up in cost); a base-currency change after binding makes that restaurant's orders skip with a warning; no email on `needs_reauth` yet (Phase 4); no UI for the order-sync state beyond "sync now" (route only).
 
 ## Phased delivery
 
 1. **Foundation** ✅ (built, unverified) — vocab (`posProviderSchema`, `integrations` perm), `pos/` skeleton with types + mock + Square auth (OAuth state, callback, credential encryption, connections model), Settings connect/disconnect UI.
 2. **Catalog + marriage** ✅ (built, unverified) — catalog sync, link table, matcher, review queue (+ import-as-dish via the menu-scan wizard / `draftRecipes`), drift display.
-3. **Ingestion + projection** — `revenueSource` + `revenueEntry.source`; adapter `listOrders` / `fetchOrder` / `parseWebhook`; the one `posWebhook` function (+ emulator injection route), reconciliation, chunked backfill, dirty-day projector with delta pantry depletion (dirty-marking hooked into `writeLinks`), unattributed surfacing in Pulse, manual-collision guard.
+3. **Ingestion + projection** ✅ (built, mock-verified; see §Phase 3) — `revenueSource` + `revenueEntry.source`; adapter `listOrders`; the adaptive poll (+ daily 72 h deep pass, unknown-item catalog refresh), chunked backfill, dirty-day projector with delta pantry depletion (dirty-marking hooked into `writeLinks`), unattributed surfacing in Pulse, manual-collision guard.
 4. **Hardening** — revocation/reauth flows, plan gating + pause, price-drift warnings, modifier-revenue flagging.
-5. **Later** — modifier→ingredient mapping, as-of costing, inventory push back to the POS (opt-in), next provider (Toast per architecture.md).
+5. **Later** — modifier→ingredient mapping, as-of costing, inventory push back to the POS (opt-in), next provider (Toast per architecture.md, via Standard API access if its terms allow — see §Toast).
 
 ## Gap → resolution map
 
@@ -248,11 +292,12 @@ Open: native OAuth (`@capacitor/browser` + an app URL scheme; no native projects
 | Dangling links | Matcher requeues links to deleted/inactive dishes on every dish save; projection-time validation → unattributed `stale_link` (guards `expandUsage`'s silent drop) |
 | IVA-inclusive price matching | Name-first matcher; price is tiebreaker only, inclusive-vs-inclusive |
 | Backfill scale | Chunked, cursor-checkpointed, scheduler-driven; 90-day default window |
+| Freshness without webhooks | 5-min tick, per-restaurant backoff to 30 min, "sync now", daily 72 h deep pass, catalog sync on unknown item |
 | Business day / timezone | Projector-computed from restaurant tz + cutoff; changes rebuild |
-| OAuth hygiene | Single-use `state` docs; revocation event / `PosAuthError` → `needs_reauth` banner + email; revision guard makes webhook dupes/ordering harmless |
+| OAuth hygiene | Single-use `state` docs; `PosAuthError` on the next poll → `needs_reauth` banner (+ email, Phase 4); revision guard makes overlapping re-reads harmless |
 | Forwarded consent link (consent phishing) | Callback never completes; the signed-in starter completes via `POST /integrations/oauth` (caller uid must equal state uid) |
 | Owner rejects an exact auto-link | `noAuto` on unlink: suggested forever, never re-auto-linked |
-| Offline webhook dev | Emulator-only injection route + mock provider |
+| Offline dev / push vs pull | No webhooks: adaptive poll; the mock simulates orders, catalog edits and revocation |
 | Plan gating | Pro+ per location; downgrade pauses sync, keeps data |
 | Disconnect semantics | Data retained, sync stops, token revoked on last reference; purge rides restaurant deletion |
 | Double counting vs manual | `source` field; projector owns only pos entries; manual form warns on covered dates |
@@ -260,14 +305,44 @@ Open: native OAuth (`@capacitor/browser` + an app URL scheme; no native projects
 
 ## Verify against live Square docs before going live
 
+**Checked 2026-10-15** (Square developer docs): **(4)** OAuth access tokens expire after 30 days, refresh via `ObtainToken` with `grant_type=refresh_token`, and Square recommends refreshing every 7 days or less; the adapter's 7-day-ahead refresh matches. **(6)** `SearchOrders` takes up to 10 location ids, `limit` default 500 / max 1000, and can filter and sort by created, updated or closed time (we use updated); orders made on a POS in offline mode can reach Square up to 72 hours late (the daily 72 h deep pass covers that). **(3)** Line `total_money` includes apportioned discounts; inclusive tax stays inside `gross_sales_money` in Europe/AU but is deducted from it in the US/CA/JP (hence the total-minus-tax net). **(2)** Spain is on Square's payment-processing country list and the developer docs say the OAuth token acts as if called from the seller's own country; a consumer help page lists the Orders API only for the US, CA, AU, UK and JP, which contradicts that. **Treat Spain Orders-API availability as unconfirmed until a Spanish sandbox account returns orders.** The sandbox exists only in payment-processing regions, so create the test account in Spain.
+
+Still needs a live Spanish sandbox: **(1)** the `Square-Version` to pin (currently defaulting to `2025-01-23`, check the changelog); **(8)** the ListCatalog presence/override fields; the exact shape of `returns` / `return_amounts` on a refunded order (our reading: itemized returns arrive in `returns[].return_line_items`, amount-only refunds in `return_amounts`); that `updated_at` filtering combined with `state_filter` behaves as assumed; and whether the sandbox's `SearchOrders` is healthy (a developer-forum report from 2026-09 says it stopped returning new orders for 40+ hours).
+
 (Still blocked — no web access in the design, Phase 1 or Phase 2 sessions. All are adjustments inside `pos/providers/square.ts`, none change the architecture. Phases 1–2 assumed: API version `2025-01-23`; scopes `MERCHANT_PROFILE_READ ITEMS_READ ORDERS_READ`; `POST /oauth2/token` with `expires_at` ISO; `POST /oauth2/revoke` with `Authorization: Client <secret>`; `GET /v2/locations`; `GET /v2/catalog/list?types=ITEM` with nested `item_data.variations`, `present_at_all_locations` defaulting to true, and `location_overrides[].price_money`.)
 
 1. Current `Square-Version` to pin; recent breaking changes in Orders/Catalog/OAuth.
-2. Spain availability of Orders/Catalog/OAuth/webhooks and any ES-specific gaps; supported currencies (EUR).
+2. Spain availability of Orders/Catalog/OAuth and any ES-specific gaps; supported currencies (EUR).
 3. Exact per-line money semantics: does `total_discount_money` include prorated order-level discounts; tax-inclusive pricing behavior on line totals.
 4. OAuth token lifetime (~30 days?) and refresh semantics; PKCE requirements; whether any scope needs app review.
-5. Webhook event names, signature header/scheme, retry policy; sandbox webhook support.
+5. ~~Webhooks~~ — not used (smart poll).
 6. Rate limits / backoff guidance; SearchOrders page size limits.
 7. Whether the Node SDK is worth its bundle weight vs. plain fetch given the esbuild external-deps setup. (Phases 1–2 chose plain fetch.)
 8. Catalog: the ListCatalog fields above; whether archived items still list; whether a variation can be absent where its item is present.
-9. Before a second provider: the Toast notes in §Adding a provider (access model, restaurant GUIDs, webhooks, order revision field).
+9. Before a second provider: see the Toast checklist below.
+
+## Square Developer Console setup (production app `sq0idp--72l5BFDOKatnObhy_fj0w`)
+
+1. **OAuth → Redirect URL**: exactly `https://us-east1-teremu-app.cloudfunctions.net/posOauthCallback` (what `oauthRedirectUrl()` sends), or whatever `POS_OAUTH_REDIRECT_URL` is set to. Square compares it verbatim with the `redirect_uri` we pass — scheme, host, path, no trailing slash.
+2. **Credentials**: production application secret → `node scripts/pos-secrets.mjs`. The app id is public and already the code default.
+3. **Scopes** are requested per consent, not configured in the console: `MERCHANT_PROFILE_READ ITEMS_READ ORDERS_READ` (read-only).
+4. **Webhooks**: none. Do not add a subscription.
+5. **Sandbox (optional, recommended before real merchants)**: the sandbox app has its own id (`sandbox-sq0idb-…`) and secret. To test against it, set `SQUARE_APP_ID` to the sandbox id (the host follows) and the sandbox secret, and register the same callback URL in the sandbox tab. Spain-specific Orders-API behavior needs a Spanish sandbox/test account (§Verify).
+6. **App Marketplace listing is not required** for other sellers to authorize via OAuth; it is a distribution channel, not a gate (re-check before scaling past friendly restaurants).
+
+## Verify against live Toast docs before building the Toast adapter
+
+The access model in §Toast was checked against Toast's public docs on 2026-10-14. Everything below was not, and each item is a decision input, not just a detail.
+
+1. **Terms first.** Do Toast's terms allow a restaurant to give Standard API credentials to a third-party SaaS vendor, or are they for the restaurant's own use only (with vendors required to go through the partner program)? Read the Standard API access FAQs and the developer terms. If vendors may not use them, path 1 is out and the partner application becomes the critical path.
+2. **Markets.** Confirm Toast's country list (believed to be US / CA / UK / IE, not Spain) and currency handling per location.
+3. **Auth.** The token endpoint and body for Standard API credentials (client-credentials flow with `userAccessType`?), token lifetime, and the scopes a Standard API credential carries. Whether scopes are fixed or chosen at creation (the docs mention fixing scope errors by editing the client's scopes).
+4. **Locations.** How a Standard API credential lists the restaurants it covers (an endpoint, or must the owner also paste restaurant GUIDs?). The location's timezone, currency and closeout hour.
+5. **Catalog.** The menus API shape: item/variation grain vs our `PosCatalogItem`, stable GUIDs across menu edits, sizes, modifiers.
+6. **Orders.** The orders API by business date vs modified date, page limits, and which field serves as `revision` (a modified timestamp?). Voids, refunds and per-line discount/tax/net semantics; whether prices are tax-inclusive outside the US.
+7. **Polling limits.** Ingestion is poll-only for every provider: check the orders API rate limits per credential against the 5–30 min cadence.
+8. **Rate limits** per credential and per location.
+9. **Revocation.** How deleting or editing a credential set in Toast Web shows up to us (expected: 401 on token exchange → `needs_reauth`).
+10. **Plan gating.** Whether RMS Essentials is still the minimum, and what happens to the credential when a location downgrades.
+11. **Nightly export fallback** (only if needed): self-serve vs Customer Care, SFTP push vs pull, file schema, and whether product mix rows carry item GUIDs.
+12. **Partner program.** Application requirements and lead time, in case path 1 is not allowed or webhooks need it.

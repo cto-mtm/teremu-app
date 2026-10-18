@@ -3,6 +3,8 @@ import { logger } from "firebase-functions/v2";
 import { defaultAppOrigin, isAllowedOrigin } from "../helpers/cors.js";
 import { CURRENCIES, DEFAULT_CURRENCY, memberDocSchema, POS_PROVIDERS, type PosProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
+import { syncOrders } from "./orders.js";
+import { projectDirtyDays } from "./project.js";
 import { getPlanInfo } from "../plan.js";
 import { can } from "../tenancy.js";
 import { pendingLinkCount, syncCatalog } from "./catalog.js";
@@ -255,6 +257,8 @@ async function attach(rid: string, uid: string, provider: PosProvider, grant: Po
       connectedBy: uid,
       catalogSyncedAt: kept?.catalogSyncedAt ?? null,
       lastSyncAt: kept?.lastSyncAt ?? null,
+      // Same merchant keeps its place in the import; a different one starts over.
+      orderSync: kept?.orderSync ?? null,
     };
     tx.set(intRef, doc);
     return releasedConn;
@@ -367,6 +371,8 @@ export async function selectLocation(
       status: "active",
       locationExternalId: loc.externalId,
       locationName: loc.name,
+      // Orders are per location: moving to another one restarts the import.
+      ...(intSnap.get("locationExternalId") !== loc.externalId ? { orderSync: null } : {}),
     });
   });
 
@@ -377,6 +383,14 @@ export async function selectLocation(
     await syncCatalog(rid, provider);
   } catch (err) {
     logger.warn("POS catalog sync after location bind failed", { rid, provider, err });
+  }
+  // Then the first slice of sales history (the scheduler finishes the
+  // rest, a few pages per tick). Same best-effort rule.
+  try {
+    await syncOrders(rid, provider, { maxPages: 2 });
+    await projectDirtyDays(rid, provider, { limit: 30 });
+  } catch (err) {
+    logger.warn("POS order import after location bind failed", { rid, provider, err });
   }
   return (await listIntegrations(rid)).find((v) => v.provider === provider)!;
 }

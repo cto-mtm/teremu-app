@@ -39,7 +39,35 @@ export interface IntegrationDoc {
   connectedAt: number;
   connectedBy: string;
   catalogSyncedAt: number | null;
+  /** When the last order pass ran to the end (backfill or reconcile). */
   lastSyncAt: number | null;
+  /** Order-sync checkpoint (orders.ts). Absent = never synced. */
+  orderSync?: OrderSyncState | null;
+}
+
+/**
+ * Where order ingestion stands. One query is in flight at a time: `since`
+ * and `cursor` belong together and only advance together, checkpointed
+ * after every page so a timed-out invocation resumes instead of
+ * restarting (docs/pos.md §Order ingestion — backfill).
+ */
+export interface OrderSyncState {
+  /** The query's lower bound on the provider's updatedAt. */
+  since: number;
+  /** Next page of the in-flight query; null = start a pass at `since`. */
+  cursor: string | null;
+  /** When the in-flight pass began — the next pass's `since` is this,
+   * minus an overlap, so nothing changed mid-pass slips through. */
+  passStartedAt: number;
+  /** True until the first pass has reached the end (the initial import). */
+  backfilling: boolean;
+  /** When the scheduler should poll next (epoch ms; 0/absent = now).
+   * Adaptive: see `nextPollDelay` in orders.ts. */
+  nextPollAt?: number;
+  /** Finished passes in a row that brought nothing new — the backoff. */
+  idleStreak?: number;
+  /** When the last deep pass (re-reading DEEP_LOOKBACK) started. */
+  deepPassAt?: number;
 }
 
 export interface ConnectionDoc {

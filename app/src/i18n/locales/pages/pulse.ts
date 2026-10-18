@@ -31,6 +31,8 @@ const es = {
   chartTitle: 'Gastos vs ingresos · 8 semanas',
   legendExpenses: 'Gastos',
   legendRevenue: 'Ingresos',
+  posRevenue: 'Ventas del TPV',
+  posUnattributed: '{amount} en {count} líneas sin asignar — revisar',
   alertsTitle: 'Alertas',
   noAlerts: 'Todo tranquilo. Los precios de proveedores están estables y los márgenes en objetivo.',
   priceUp: '{vendor} subió {name} un {pct}',
@@ -82,6 +84,7 @@ const es = {
     amount: 'Ventas totales ({symbol})',
     dishesHint: 'Platos vendidos (opcional — mantiene la despensa teórica al día)',
     saveFailed: 'No se pudieron guardar los ingresos.',
+    posCoversDate: 'Tu TPV ya registra las ventas de ese día; sumar un ingreso manual las contaría dos veces.',
   },
 }
 
@@ -119,6 +122,8 @@ const en: typeof es = {
   chartTitle: 'Expenses vs revenue · 8 weeks',
   legendExpenses: 'Expenses',
   legendRevenue: 'Revenue',
+  posRevenue: 'POS sales',
+  posUnattributed: '{amount} across {count} unmatched lines — review',
   alertsTitle: 'Alerts',
   noAlerts: 'All quiet. Vendor prices are stable and margins are on target.',
   priceUp: '{vendor} raised {name} by {pct}',
@@ -170,6 +175,7 @@ const en: typeof es = {
     amount: 'Total sales ({symbol})',
     dishesHint: 'Dishes sold (optional — keeps the Theoretical Pantry accurate)',
     saveFailed: 'Could not save revenue.',
+    posCoversDate: 'Your POS already reports sales for that day; adding a manual entry would count them twice.',
   },
 }
 

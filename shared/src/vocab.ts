@@ -135,6 +135,13 @@ export const POS_PROVIDERS = ["square"] as const;
 export const posProviderSchema = z.enum(POS_PROVIDERS);
 export type PosProvider = z.infer<typeof posProviderSchema>;
 
+/** Where a daily revenue entry came from. `pos` entries are owned by the
+ * projector (docs/pos.md §Projection): deterministic id, rebuilt from the
+ * raw orders, never hand-edited. Absent on a stored entry = `manual`. */
+export const REVENUE_SOURCES = ["manual", "pos"] as const;
+export const revenueSourceSchema = z.enum(REVENUE_SOURCES);
+export type RevenueSource = z.infer<typeof revenueSourceSchema>;
+
 // ── Granular permissions ────────────────────────────────────────────
 // Per-area access levels instead of fixed roles. Owners bypass all
 // checks (enforced server-side). Sharing this shape means adding a new

@@ -1,5 +1,13 @@
 import { getFirestore } from "firebase-admin/firestore";
-import type { PosAdapter, PosCatalogItem, PosCredentials, PosLocation } from "../types.js";
+import {
+  PosAuthError,
+  type PosAdapter,
+  type PosCatalogItem,
+  type PosCredentials,
+  type PosLocation,
+  type PosOrder,
+  type PosOrderLine,
+} from "../types.js";
 
 /**
  * Deterministic offline provider (docs/pos.md, Principle 5): connect →
@@ -15,6 +23,15 @@ import type { PosAdapter, PosCatalogItem, PosCredentials, PosLocation } from "..
  * `posMockCatalog/{merchantId}` = { items: PosCatalogItem[] } to simulate
  * the owner editing their POS (only ever read offline — this adapter is
  * never selected in a deployed function).
+ *
+ * Orders work the same way: a small deterministic fixture (the last three
+ * days at the Centro location, 10% IVA inclusive), unless a test writes
+ * `posMockOrders/{merchantId}` = { orders: PosOrder[], pageSize?: number }
+ * to simulate sales, refunds and late changes.
+ *
+ * Revocation: while `posMockRevoked/{merchantId}` exists, every
+ * authenticated call answers like a revoked grant (PosAuthError) — how a
+ * test sees the poll discover that the owner removed Teremu in the POS.
  */
 
 const DAY_MS = 86_400_000;
@@ -47,12 +64,54 @@ export const MOCK_CATALOG: Record<string, PosCatalogItem[]> = {
   ],
 };
 
+/** A sale line at 10% IVA included in the price. */
+function saleLine(uid: string, catalogExternalId: string | null, name: string, qty: number, grossMinor: number): PosOrderLine {
+  const taxMinor = Math.round((grossMinor * 10) / 110);
+  return { externalLineId: uid, catalogExternalId, name, qty, grossMinor, discountMinor: 0, taxMinor, netMinor: grossMinor - taxMinor, modifiers: [] };
+}
+
+/** Three days of service, deterministic per calendar day (ids carry the date). */
+export function mockFixtureOrders(now: number): PosOrder[] {
+  const orders: PosOrder[] = [];
+  for (let back = 1; back <= 3; back++) {
+    const date = new Date(now - back * 86_400_000).toISOString().slice(0, 10);
+    const closedAt = Date.parse(`${date}T14:00:00Z`);
+    const base = { locationExternalId: "mock-loc-centro", state: "completed" as const, closedAt, updatedAt: closedAt, revision: 1, currency: "EUR", returns: [], refundedMinor: 0 };
+    orders.push({
+      ...base,
+      externalId: `mock-order-${date}-1`,
+      lines: [
+        saleLine("1", "mock-var-croquetas", "Croquetas de jamón", 2, 1700),
+        saleLine("2", "mock-var-burger-n", "Burger — Normal", 1, 1200),
+        saleLine("3", "mock-var-agua", "Agua mineral", 1, 200),
+        saleLine("4", null, "Importe libre", 1, 500),
+      ],
+    });
+    orders.push({
+      ...base,
+      externalId: `mock-order-${date}-2`,
+      lines: [saleLine("1", "mock-var-tortilla", "Tortilla española", 1, 900), saleLine("2", "mock-var-cafe", "Café con leche", 2, 360)],
+    });
+  }
+  return orders;
+}
+
+async function mockOrders(credentials: PosCredentials): Promise<{ orders: PosOrder[]; pageSize: number }> {
+  const override = await getFirestore().doc(`posMockOrders/${merchantOf(credentials)}`).get();
+  if (override.exists) return { orders: override.get("orders") as PosOrder[], pageSize: (override.get("pageSize") as number) || 100 };
+  return { orders: mockFixtureOrders(Date.now()), pageSize: 100 };
+}
+
 const credentialsFor = (merchantId: string): PosCredentials => ({
   secret: { accessToken: `mock-access-${merchantId}` },
   expiresAt: Date.now() + 30 * DAY_MS,
 });
 
 const merchantOf = (c: PosCredentials): string => c.secret.accessToken.replace(/^mock-access-/, "");
+
+async function assertGranted(c: PosCredentials): Promise<void> {
+  if ((await getFirestore().doc(`posMockRevoked/${merchantOf(c)}`).get()).exists) throw new PosAuthError();
+}
 
 export const mockAdapter: PosAdapter = {
   connect: {
@@ -70,12 +129,24 @@ export const mockAdapter: PosAdapter = {
     return { ...credentials, expiresAt: Date.now() + 30 * DAY_MS };
   },
   async revoke() {},
-  async listLocations() {
+  async listLocations(credentials) {
+    await assertGranted(credentials);
     return MOCK_LOCATIONS;
   },
   async fetchCatalog(credentials, locationExternalId) {
+    await assertGranted(credentials);
     const override = await getFirestore().doc(`posMockCatalog/${merchantOf(credentials)}`).get();
     if (override.exists) return override.get("items") as PosCatalogItem[];
     return MOCK_CATALOG[locationExternalId] ?? [];
+  },
+  async listOrders(credentials, locationExternalId, { since, cursor }) {
+    await assertGranted(credentials);
+    const { orders, pageSize } = await mockOrders(credentials);
+    const matching = orders
+      .filter((o) => o.locationExternalId === locationExternalId && o.updatedAt >= since)
+      .sort((a, b) => a.updatedAt - b.updatedAt || a.externalId.localeCompare(b.externalId));
+    const offset = cursor ? Number(cursor) : 0;
+    const next = offset + pageSize;
+    return { orders: matching.slice(offset, next), cursor: next < matching.length ? String(next) : null };
   },
 };

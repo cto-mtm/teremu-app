@@ -229,7 +229,18 @@ const entries = computed<Entry[]>(() => {
   return [...rev, ...exp].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
 })
 
+/** POS entries are rebuilt from the POS's own orders, so they are read-only here. */
+const isPos = (en: Entry): boolean => en.kind === 'revenue' && (en.raw as RevenueEntry).source === 'pos'
+
+/** The POS day's sales that matched no dish, when there are any. */
+function unattributedOf(en: Entry): { amount: number; count: number; provider: string } | null {
+  if (!isPos(en)) return null
+  const r = en.raw as RevenueEntry
+  return r.unattributed && r.unattributed.count > 0 ? { ...r.unattributed, provider: r.provider ?? 'square' } : null
+}
+
 function entryLabel(en: Entry): string {
+  if (isPos(en)) return t('pulse.posRevenue')
   if (en.kind === 'revenue') return t('pulse.legendRevenue')
   const e = en.raw as ExpenseEntry
   return e.vendorName ? `${e.tag} · ${e.vendorName}` : e.tag
@@ -323,7 +334,7 @@ async function saveRevenue(): Promise<void> {
     amount.value = ''
     sold.value = {}
   } else {
-    alert(t('pulse.sheet.saveFailed'))
+    alert(kitchen.error?.includes('pos_covers_date') ? t('pulse.sheet.posCoversDate') : t('pulse.sheet.saveFailed'))
   }
 }
 
@@ -703,11 +714,18 @@ watch(showExpense, (open) => {
           <div class="min-w-0 flex-1">
             <div class="truncate text-sm font-medium">{{ entryLabel(en) }}</div>
             <div class="text-xs text-smoke">{{ d(new Date(en.date + 'T12:00:00'), 'short') }}</div>
+            <RouterLink
+              v-if="unattributedOf(en)"
+              :to="`/integrations/${unattributedOf(en)!.provider}`"
+              class="text-xs font-medium text-ember hover:underline"
+            >
+              {{ t('pulse.posUnattributed', { amount: n(unattributedOf(en)!.amount, 'currency'), count: unattributedOf(en)!.count }) }}
+            </RouterLink>
           </div>
           <div class="shrink-0 text-sm font-semibold" :class="en.kind === 'revenue' ? 'text-herb-700' : ''">
             {{ en.kind === 'revenue' ? '+' : '−' }}{{ n(en.amount, 'currency') }}
           </div>
-          <template v-if="canEdit">
+          <template v-if="canEdit && !isPos(en)">
             <button class="shrink-0 text-xs font-medium text-smoke hover:text-ink" @click="editEntry(en)">
               {{ t('common.action.edit') }}
             </button>
