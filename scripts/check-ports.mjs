@@ -57,6 +57,30 @@ function fail(msg) {
   process.exit(1)
 }
 
+// ── 0. Node version (warning only) ──────────────────────────────────
+// The repo pins Node in .nvmrc (the functions' engines say the same).
+// On Windows, Node 23+ has a libuv race that aborts a process outright
+// ("Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file
+// src\win\async.c", exit code 3221226505 / 0xC0000409). When it hits
+// the Firebase CLI mid-suite, the in-process Functions emulator dies
+// with it: every later test fails in milliseconds and an orphaned
+// Firestore emulator keeps the ports. A vitest worker hitting it shows
+// up as "Worker exited unexpectedly". Not blocking — just say so.
+try {
+  const pinned = readFileSync(join(REPO_ROOT, '.nvmrc'), 'utf8').trim().replace(/^v/, '').split('.')[0]
+  const running = process.versions.node.split('.')[0]
+  if (pinned && running !== pinned) {
+    console.warn(
+      `[check-ports] ⚠ Running Node ${process.versions.node}, but .nvmrc pins ${pinned}.` +
+        (process.platform === 'win32' && Number(running) >= 23
+          ? ` On Windows, Node ${running} can abort the emulators mid-run (libuv UV_HANDLE_CLOSING) — switch to Node ${pinned} if the suite flakes.`
+          : ''),
+    )
+  }
+} catch {
+  // no .nvmrc: nothing to compare against
+}
+
 // ── 1. firebase.json ↔ ports.json ───────────────────────────────────
 //
 // ports.json name  →  where its port lives in firebase.json's emulators
