@@ -118,6 +118,8 @@ export const ingredientSchema = z.object({
   theoreticalQty: z.number(),
   lastCountQty: z.number().nullable(),
   lastCountAt: z.number().nullable(),
+  // The owner said it never goes in a recipe: not flagged as unused.
+  notInRecipes: z.boolean().optional().catch(undefined),
 })
 
 export const recipeLineSchema = z.object({

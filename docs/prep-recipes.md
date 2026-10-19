@@ -1,6 +1,6 @@
 # Prep recipes (preparaciones)
 
-Status: **built 2026-10-19.** A *prep* is a recipe the kitchen makes in batches and
+Status: **built 2026-10-19**, with the unused-ingredient warning (§ Unused ingredients). A *prep* is a recipe the kitchen makes in batches and
 uses inside other recipes — a stock, a sauce, a dough, a pico de gallo. It is not
 sold, so it has a **yield** instead of a price.
 
@@ -100,6 +100,29 @@ until a line is edited to use a unit.
   the prep's ingredients by 1/40 of a batch; POS matching and `getDishCosts` skip preps.
 - E2E (`e2e/tests/menu/prep-recipe.spec.ts`): create a prep, use it in a dish by ml,
   see the dish cost.
+
+## Unused ingredients
+
+An ingredient that no active recipe uses never reaches a plate cost, so a margin
+that leaves it out is wrong without anyone noticing. The pantry flags it
+(`unusedIngredients()` in `app/src/lib/domain.ts`, `kitchen.unused`):
+
+- **Used** = some active dish *or prep* has a line on it. An ingredient inside a prep
+  counts as used: the prep is a recipe, and a prep nobody uses shows "Sin usar" on its
+  own card.
+- **Never flagged**: `cleaning` category, and ingredients the owner marked
+  `notInRecipes` (packaging, a bottle sold as it is). Nothing is flagged while the
+  restaurant has no recipe at all.
+- **Pantry list**: a banner with the count and a *Ver* filter, plus a *Sin receta* chip
+  per row.
+- **Ingredient page**: a warning with the two fixes — *Añadir a una receta* opens
+  `LinkToRecipeSheet.vue` (pick a dish or prep, amount per plate / per batch in any
+  unit compatible with the stock unit; the line is appended through the normal
+  `PUT /menu-items/:id`), and *No va en recetas* sets the flag
+  (`PUT /ingredients/:id/recipe-use` `{ notInRecipes }`, pantry edit; undoable).
+
+Linking needs `menu` edit; dismissing needs `pantry` edit — each button shows only
+to whoever can use it.
 
 ## Not built (follow-ups)
 

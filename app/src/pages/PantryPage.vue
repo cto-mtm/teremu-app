@@ -59,12 +59,18 @@ async function createIngredient(): Promise<void> {
 const search = ref('')
 const catFilter = ref<'all' | Category>('all')
 const sortBy = ref<'name' | 'stock' | 'value'>('name')
+// Ingredients in no recipe never reach a plate cost — flag them, and let
+// the banner narrow the list to them (the fix lives on each one's page).
+const unusedIds = computed(() => new Set(kitchen.unused.map((i) => i.id)))
+const onlyUnused = ref(false)
 
 const filtered = computed(() => {
   const q = normalizeName(search.value)
   const list = kitchen.ingredients.filter(
     (i) =>
       (catFilter.value === 'all' || i.category === catFilter.value) &&
+      // The banner (and its toggle) goes away once nothing is unused.
+      (!onlyUnused.value || !unusedIds.value.size || unusedIds.value.has(i.id)) &&
       (!q || i.nameKey.includes(q)),
   )
   switch (sortBy.value) {
@@ -311,6 +317,20 @@ async function commit(id: string): Promise<void> {
     </div>
 
     <template v-else>
+      <div
+        v-if="unusedIds.size"
+        class="card flex flex-wrap items-center justify-between gap-3 border-ember-100 bg-ember-50 !py-3"
+        role="status"
+      >
+        <p class="text-sm text-ember-700">
+          <span aria-hidden="true">⚠</span>
+          {{ t('pantry.unused.banner', { n: unusedIds.size }, unusedIds.size) }}
+        </p>
+        <button class="text-sm font-semibold text-ember-700 hover:underline" @click="onlyUnused = !onlyUnused">
+          {{ onlyUnused ? t('pantry.unused.showAll') : t('pantry.unused.show') }}
+        </button>
+      </div>
+
       <div class="flex flex-wrap gap-2">
         <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
         <select v-model="catFilter" class="input w-auto">
@@ -340,6 +360,9 @@ async function commit(id: string): Promise<void> {
             {{ ing.name }}
           </div>
           <div class="text-xs text-smoke">
+            <span v-if="unusedIds.has(ing.id)" class="mr-1 rounded-full bg-ember-50 px-1.5 py-0.5 text-[10px] font-semibold text-ember-700">
+              {{ t('pantry.unused.chip') }}
+            </span>
             {{ t('pantry.pricePerUnit', { price: n(ing.lastUnitPrice ?? 0, 'currency'), unit: t('common.unit.' + ing.unit) }) }}
             <template v-if="ing.lastCountAt">
               · {{ t('pantry.counted', { date: d(new Date(ing.lastCountAt), 'short') }) }}

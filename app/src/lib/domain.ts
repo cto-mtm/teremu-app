@@ -411,6 +411,18 @@ export function receiptsForIngredient(invoices: Invoice[], ing: Ingredient): Rec
 }
 
 /**
+ * Ingredients no active recipe uses, so they never reach a plate cost —
+ * the pantry flags them (docs/prep-recipes.md § Unused ingredients).
+ * Cleaning supplies and anything the owner marked "not in recipes" are
+ * left out. An ingredient inside a prep counts as used: the prep is a
+ * recipe.
+ */
+export function unusedIngredients(ingredients: Ingredient[], menuItems: MenuItem[]): Ingredient[] {
+  const used = new Set(menuItems.filter((m) => m.active).flatMap((m) => m.recipe.map((r) => r.ingredientId)))
+  return ingredients.filter((i) => !used.has(i.id) && !i.notInRecipes && i.category !== 'cleaning')
+}
+
+/**
  * Active recipes (dishes and preps) with a line on this ingredient or
  * sub-recipe, one entry per line, in the line's own qty/unit. Direct use
  * only: an ingredient inside a prep is "used" by the prep, and the prep

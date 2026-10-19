@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
@@ -16,11 +16,13 @@ import {
 import { CATEGORIES, SUBCATEGORIES, type Category, type Subcategory } from '../lib/types'
 import Sparkline from '../components/Sparkline.vue'
 import MiniBars from '../components/MiniBars.vue'
+import BaseButton from '../components/BaseButton.vue'
+import LinkToRecipeSheet from '../components/LinkToRecipeSheet.vue'
 
 /**
- * One ingredient end to end: theoretical stock, price trend, the dishes
- * whose margins depend on it, every approved receipt containing it, and
- * the vendors who supply it.
+ * One ingredient end to end: theoretical stock, price trend, the recipes
+ * whose costs depend on it (or a warning when none do), every approved
+ * receipt containing it, and the vendors who supply it.
  */
 const { t, n, d } = useI18n()
 const route = useRoute()
@@ -37,6 +39,20 @@ const dishes = computed(() =>
 const receipts = computed(() =>
   ingredient.value ? receiptsForIngredient(invoicesStore.invoices, ingredient.value) : [],
 )
+
+// ── Unused warning: link it to a recipe, or say it never goes in one ──
+const isUnused = computed(() => !!ingredient.value && kitchen.unused.some((i) => i.id === ingredient.value!.id))
+const canLink = computed(() => auth.can('menu', 'edit'))
+const canDismiss = computed(() => auth.can('pantry', 'edit'))
+const linkOpen = ref(false)
+const dismissBusy = ref(false)
+async function setNotInRecipes(value: boolean): Promise<void> {
+  if (!ingredient.value) return
+  dismissBusy.value = true
+  const ok = await kitchen.setNotInRecipes(ingredient.value.id, value)
+  dismissBusy.value = false
+  if (!ok) alert(t('pantry.detail.dismissFailed'))
+}
 const history = computed(() =>
   ingredient.value ? priceHistory(invoicesStore.invoices, ingredient.value) : [],
 )
@@ -159,8 +175,33 @@ const suppliers = computed(() => {
 
     <div class="card p-0">
       <div class="px-4 pt-3 pb-1 text-sm font-semibold">{{ t('pantry.detail.dishesTitle') }}</div>
-      <div v-if="dishes.length === 0" class="px-4 pb-4 text-xs text-smoke">
+      <div
+        v-if="isUnused"
+        class="mx-4 mb-4 space-y-2 rounded-xl border border-ember-100 bg-ember-50 p-3"
+        role="status"
+      >
+        <p class="text-sm font-semibold text-ember-700">⚠ {{ t('pantry.detail.unusedTitle') }}</p>
+        <p class="text-xs text-ink/70">{{ t('pantry.detail.unusedBody') }}</p>
+        <div v-if="canLink || canDismiss" class="flex flex-wrap gap-2 pt-1">
+          <BaseButton v-if="canLink" @click="linkOpen = true">+ {{ t('pantry.detail.linkCta') }}</BaseButton>
+          <BaseButton v-if="canDismiss" variant="ghost" :disabled="dismissBusy" @click="setNotInRecipes(true)">
+            {{ t('pantry.detail.dismiss') }}
+          </BaseButton>
+        </div>
+      </div>
+      <div v-else-if="dishes.length === 0" class="px-4 pb-4 text-xs text-smoke">
         {{ t('pantry.detail.dishesEmpty') }}
+        <template v-if="ingredient.notInRecipes">
+          · {{ t('pantry.detail.dismissed') }}
+          <button
+            v-if="canDismiss"
+            class="font-semibold text-ember-700 hover:underline"
+            :disabled="dismissBusy"
+            @click="setNotInRecipes(false)"
+          >
+            {{ t('pantry.detail.undo') }}
+          </button>
+        </template>
       </div>
       <div v-else class="divide-y divide-gray-100">
         <RouterLink
@@ -171,11 +212,20 @@ const suppliers = computed(() => {
         >
           <div class="text-sm font-medium">{{ item.name }}</div>
           <div class="text-xs text-smoke">
-            {{ t('pantry.detail.perPlate', { qty: n(qty), unit: t('common.unit.' + (unit ?? ingredient.unit)) }) }}
+            {{ t(item.kind === 'prep' ? 'pantry.detail.perBatch' : 'pantry.detail.perPlate', { qty: n(qty), unit: t('common.unit.' + (unit ?? ingredient.unit)) }) }}
           </div>
         </RouterLink>
       </div>
+      <button
+        v-if="dishes.length && canLink"
+        class="w-full border-t border-gray-100 px-4 py-2.5 text-left text-xs font-semibold text-ember-700 hover:bg-gray-50"
+        @click="linkOpen = true"
+      >
+        + {{ t('pantry.detail.linkCta') }}
+      </button>
     </div>
+
+    <LinkToRecipeSheet v-model="linkOpen" :ingredient="ingredient" />
 
     <div v-if="suppliers.length" class="card p-0">
       <div class="px-4 pt-3 pb-1 text-sm font-semibold">{{ t('pantry.detail.vendorsTitle') }}</div>

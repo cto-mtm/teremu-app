@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isFoodInvoice, pantryValue, priceChangePct, recipesUsing, reconcileDeliveryNotes } from './domain'
+import { isFoodInvoice, pantryValue, priceChangePct, recipesUsing, reconcileDeliveryNotes, unusedIngredients } from './domain'
 import type { Ingredient, Invoice, MenuItem } from './types'
 
 // domain.ts is the client-side math behind Pulse, Menu and Pantry. The
@@ -108,5 +108,22 @@ describe('recipesUsing', () => {
 
   it('is empty for an ingredient no active recipe uses', () => {
     expect(recipesUsing(menu, { ingredientId: 'saffron' })).toEqual([])
+  })
+})
+
+describe('unusedIngredients', () => {
+  const ing = (id: string, over: Partial<Ingredient> = {}) => ({ id, category: 'produce', ...over }) as Ingredient
+  const dish = (recipe: MenuItem['recipe'], active = true) =>
+    ({ id: 'd' + recipe.length, name: 'd', price: 10, targetMarginPct: 70, recipe, active }) as MenuItem
+
+  it('flags only ingredients no active recipe uses', () => {
+    const ings = [ing('lemon'), ing('salt'), ing('old')]
+    const menu = [dish([{ ingredientId: 'lemon', qty: 1 }]), dish([{ ingredientId: 'old', qty: 1 }, { ingredientId: 'x', qty: 1 }], false)]
+    expect(unusedIngredients(ings, menu).map((i) => i.id)).toEqual(['salt', 'old'])
+  })
+
+  it('leaves out cleaning supplies and what the owner marked "not in recipes"', () => {
+    const ings = [ing('bleach', { category: 'cleaning' }), ing('bags', { notInRecipes: true }), ing('salt')]
+    expect(unusedIngredients(ings, []).map((i) => i.id)).toEqual(['salt'])
   })
 })

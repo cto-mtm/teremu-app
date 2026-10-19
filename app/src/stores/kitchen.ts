@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { isDish } from '@teremu/shared'
+import { unusedIngredients } from '../lib/domain'
 import { apiFetch, writeEpoch } from '../lib/api'
 import { replaceById } from '../lib/collections'
 import {
@@ -43,6 +44,11 @@ export const useKitchenStore = defineStore('kitchen', () => {
   const dishes = computed(() => activeMenuItems.value.filter(isDish))
   /** Batch recipes used inside other recipes; never sold. */
   const preps = computed(() => activeMenuItems.value.filter((m) => !isDish(m)))
+  /** Ingredients in no recipe. Empty until there is a recipe at all — with
+   * no menu yet, "everything is unused" is noise, not a warning. */
+  const unused = computed(() =>
+    activeMenuItems.value.length ? unusedIngredients(ingredients.value, menuItems.value) : [],
+  )
   /** Distinct tags already used — feeds the expense form's suggestions. */
   const expenseTags = computed(() => [...new Map(expenses.value.map((e) => [e.tagKey, e.tag])).values()])
 
@@ -325,6 +331,21 @@ export const useKitchenStore = defineStore('kitchen', () => {
     return res.ok
   }
 
+  /** "Never goes in a recipe" (or undo): stops the unused warning. */
+  async function setNotInRecipes(ingredientId: string, notInRecipes: boolean): Promise<boolean> {
+    const res = await apiFetch<Ingredient>(
+      `/ingredients/${ingredientId}/recipe-use`,
+      { method: 'PUT', body: JSON.stringify({ notInRecipes }) },
+      ingredientSchema,
+    )
+    if (res.ok) {
+      ingredients.value = replaceById(ingredients.value, ingredientId, res.data)
+    } else {
+      error.value = res.error
+    }
+    return res.ok
+  }
+
   /** Monthly true-up: overwrite the AI estimate with a physical count. */
   async function trueUp(ingredientId: string, qty: number): Promise<boolean> {
     const res = await apiFetch<Ingredient>(
@@ -367,6 +388,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
     activeMenuItems,
     dishes,
     preps,
+    unused,
     expenseTags,
     refresh,
     reset,
@@ -382,6 +404,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
     updateExpense,
     deleteExpense,
     setCategory,
+    setNotInRecipes,
     trueUp,
   }
 })

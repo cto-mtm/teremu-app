@@ -4,10 +4,12 @@ import {
   clearFirestore,
   col,
   makeOwner,
+  makeUserToken,
   post,
   put,
   del,
   seedIngredient,
+  seedMember,
   seedMenuItem,
   uniqueId,
 } from "./helpers";
@@ -152,6 +154,26 @@ describe("pantry & revenue", () => {
     const deleted = await del(`/revenue/${created.body.id}`, owner.token);
     expect(deleted.status).toBe(200);
     expect((await ing(owner.rid, pepper.id)).theoreticalQty).toBe(500); // fully restored
+  });
+
+  it("PUT /ingredients/:id/recipe-use marks an ingredient as never in a recipe, and back", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const bags = await seedIngredient(owner.rid, { name: "Bolsas", unit: "each" });
+    const path = `/ingredients/${bags.id}/recipe-use`;
+
+    expect((await put(path, undefined, { notInRecipes: true })).status).toBe(401);
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "none", menu: "edit", pantry: "read", finance: "none", vendors: "none", integrations: "none", scan: false });
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await put(path, reader, { notInRecipes: true }, owner.rid)).status).toBe(403);
+
+    expect((await put(path, owner.token, { notInRecipes: "yes" })).status).toBe(400);
+    expect((await put("/ingredients/nope/recipe-use", owner.token, { notInRecipes: true })).status).toBe(404);
+
+    const set = await put(path, owner.token, { notInRecipes: true });
+    expect(set).toMatchObject({ status: 200, body: { id: bags.id, notInRecipes: true } });
+    expect((await ing(owner.rid, bags.id)).notInRecipes).toBe(true);
+    expect((await put(path, owner.token, { notInRecipes: false })).body.notInRecipes).toBe(false);
   });
 
   it("PUT /ingredients/:id re-categorizes, clears the subcategory on omission, and 400s a crossed pair", async () => {

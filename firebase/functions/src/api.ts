@@ -14,6 +14,7 @@ import {
   approveInvoiceSchema,
   completePosOAuthSchema,
   countSchema,
+  recipeUseSchema,
   createIngredientSchema,
   DEFAULT_LOCALE,
   DEFAULT_RESTAURANT_NAME,
@@ -648,6 +649,15 @@ async function route(req: Request, res: Response): Promise<unknown> {
         subcategory: body.subcategory ?? null,
       });
       const snap = await col("ingredients").doc(id).get();
+      return json(res, 200, { id, ...snap.data() });
+    }
+    if (m === "PUT" && id && action === "recipe-use") {
+      if (!can(member, "pantry", "edit")) return forbidden(res);
+      const { notInRecipes } = recipeUseSchema.parse(req.body);
+      const ref = col("ingredients").doc(id);
+      if (!(await ref.get()).exists) return json(res, 404, { error: "ingredient not found" });
+      await ref.update({ notInRecipes });
+      const snap = await ref.get();
       return json(res, 200, { id, ...snap.data() });
     }
     if (m === "PUT" && id && action === "count") {

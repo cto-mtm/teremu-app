@@ -83,6 +83,7 @@ Ports Dirumed's helpers, adapted to HTTP + Teremu's Firestore-based membership (
 **3. Pantry & revenue**
 - `POST /revenue` with `itemsSold` depletes pantry via recipes, incl. sub-recipe recursion + cycle/depth guard, and a prep by the share of its yield a line uses.
 - Update/delete revenue reverts the deltas.
+- `PUT /ingredients/:id/recipe-use` sets / clears `notInRecipes` (401 / 403 without pantry edit / 400 / 404).
 - `PUT /ingredients/:id/count` overwrites `theoreticalQty`.
 
 **4. Freemium paywalls**

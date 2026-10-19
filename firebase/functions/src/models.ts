@@ -159,6 +159,9 @@ export const ingredientDocSchema = z.object({
   theoreticalQty: z.number(),
   lastCountQty: z.number().nullable(),
   lastCountAt: z.number().nullable(),
+  // The owner said this never goes in a recipe (packaging, a bottle sold
+  // as-is…): the pantry stops flagging it as unused. Absent = false.
+  notInRecipes: z.boolean().optional(),
 });
 export type IngredientDoc = z.infer<typeof ingredientDocSchema>;
 
@@ -216,6 +219,11 @@ export const revenueSchema = z.object({
   itemsSold: z.array(
     z.object({ menuItemId: z.string().min(1), qty: z.number().int().positive() })
   ),
+});
+
+/** PUT /ingredients/:id/recipe-use — "this never goes in a recipe". */
+export const recipeUseSchema = z.object({
+  notInRecipes: z.boolean(),
 });
 
 /** PUT /ingredients/:id/count — monthly physical-count true-up. */
