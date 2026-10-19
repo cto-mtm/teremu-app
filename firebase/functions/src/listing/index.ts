@@ -1,7 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import { safeFetch } from "../helpers/safeFetch.js";
 import { fakeBackend } from "./fake.js";
-import { adcAuth, googleProvider, type PlacesAuth } from "./google.js";
+import { adcAuth, googleProvider, type PlacesAuth, type PlacesContext } from "./google.js";
 import type { ListingBackend } from "./types.js";
 
 /**
@@ -20,10 +20,10 @@ import type { ListingBackend } from "./types.js";
  * Live Google in the emulator is always an explicit opt-in: being logged
  * into gcloud is not enough.
  */
-export function listingBackend(): ListingBackend | null {
+export function listingBackend(ctx: PlacesContext = {}): ListingBackend | null {
   if (process.env.TEREMU_TEST_MOCKS) return fakeBackend;
   const auth = placesAuth();
-  if (auth) return { places: googleProvider(auth), fetchPage: (url) => safeFetch(url) };
+  if (auth) return { places: googleProvider(auth, ctx), fetchPage: (url) => safeFetch(url) };
   return process.env.FUNCTIONS_EMULATOR === "true" ? fakeBackend : null;
 }
 

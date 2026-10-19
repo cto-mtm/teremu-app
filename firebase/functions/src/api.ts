@@ -78,7 +78,8 @@ import { toBaseTotal } from "./fx/convert.js";
 import { packFor, profileOf } from "./countries/index.js";
 import { listingBackend } from "./listing/index.js";
 import { adoptedCurrency } from "./baseCurrency.js";
-import { consumeListingCall, createImport, importView, loadImport, placeInUse, readMenu, readWebsite } from "./listing/jobs.js";
+import { createImport, importView, loadImport, placeInUse, readMenu, readWebsite } from "./listing/jobs.js";
+import { consumeDaily } from "./helpers/dailyCap.js";
 import { commitImport, PlaceLinkedToYourLocation, releaseClaim } from "./listing/commit.js";
 import { listingStatus, unlinkListing, updateListing } from "./listing/settings.js";
 import { confirmVerification, requestReview, startVerification } from "./listing/verify.js";
@@ -313,7 +314,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const { code } = listingVerifyConfirmSchema.parse(req.body);
       return json(res, 200, await confirmVerification({ rid, uid: member.uid }, code));
     }
-    const backend = listingBackend();
+    const backend = listingBackend({ rid });
     if (!backend) return json(res, 501, { error: "listing_unavailable" });
     const language = await userLocale();
     if (m === "POST" && id === "verify" && seg.length === 2) {
@@ -323,7 +324,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "GET" && id === "search" && seg.length === 2) {
       const q = String(req.query.q ?? "").trim().slice(0, 120);
       if (q.length < 2) return json(res, 200, { results: [] });
-      if (!(await consumeListingCall(rid, "searches"))) return json(res, 429, { error: "search_limit" });
+      if (!(await consumeDaily(rid, "listingSearches"))) return json(res, 429, { error: "search_limit" });
       const session = typeof req.query.session === "string" ? req.query.session.slice(0, 64) : undefined;
       const results = await backend.places.autocomplete(q, { session, country: planInfo.country, language });
       return json(res, 200, { results });
@@ -331,7 +332,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     // Photos + reviews, live: shown during review, never stored.
     if (m === "GET" && id === "place" && action && seg[3] === "media" && seg.length === 4) {
       if (!(await placeInUse(rid, action))) return forbidden(res);
-      if (!(await consumeListingCall(rid, "media"))) return json(res, 429, { error: "media_limit" });
+      if (!(await consumeDaily(rid, "listingMedia"))) return json(res, 429, { error: "media_limit" });
       return json(res, 200, await backend.places.media(action, { language }));
     }
     if (id === "imports") {
@@ -693,7 +694,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
   // ── menu-scan wizard (photo → dishes → AI recipe drafts) ──────
   // Deliberately NOT metered by consumeScan: menu setup is onboarding
   // (1-3 photos, once) and gating it would kill activation — the exact
-  // pain point competitors have. Cost guard: per-member cooldown.
+  // pain point competitors have. Cost guards: a per-member cooldown and a
+  // per-restaurant daily cap (helpers/dailyCap.ts, docs/business-model.md §3).
   if (head === "menu" && m === "POST" && seg.length === 2) {
     if (!can(member, "menu", "edit")) return forbidden(res);
     const memberRef = col("members").doc(member.uid);
@@ -701,6 +703,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (Date.now() - lastMenuAiAt < 5_000) {
       return json(res, 429, { error: "one menu AI call every 5 seconds" });
     }
+    if (!(await consumeDaily(rid, "menuAi"))) return json(res, 429, { error: "menu_ai_limit" });
     await memberRef.update({ lastMenuAiAt: Date.now() });
 
     if (id === "scan") {

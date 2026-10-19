@@ -23,7 +23,7 @@
       "indexes": []
     },
     {
-      "collectionGroup": "listingUsage",
+      "collectionGroup": "dailyUsage",
       "fieldPath": "purgeAt",
       "ttl": true,
       "indexes": []

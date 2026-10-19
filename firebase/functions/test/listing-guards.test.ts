@@ -161,3 +161,33 @@ describe("listing commit edge cases", () => {
     expect((await post(`/listing/imports/${brisa.body.id}/commit`, o.token, commitBody(), o.rid)).status).toBe(200);
   });
 });
+
+describe("daily abuse caps (helpers/dailyCap.ts)", () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+  const seed = (rid: string, counts: Record<string, number>) =>
+    db().doc(`restaurants/${rid}/dailyUsage/${today()}`).set(counts, { merge: true });
+
+  it("search stops at 100 a day, media at 10", async () => {
+    const o = await newOwner();
+    await post("/listing/imports", o.token, { placeId: "fake-faro" }, o.rid);
+    await seed(o.rid, { listingSearches: 99, listingMedia: 9 });
+    expect((await get("/listing/search?q=faro", o.token, o.rid)).status).toBe(200);
+    expect(await get("/listing/search?q=faro", o.token, o.rid)).toMatchObject({ status: 429, body: { error: "search_limit" } });
+    expect((await get("/listing/place/fake-faro/media", o.token, o.rid)).status).toBe(200);
+    expect(await get("/listing/place/fake-faro/media", o.token, o.rid)).toMatchObject({ status: 429, body: { error: "media_limit" } });
+  });
+
+  it("the menu wizard's AI calls stop at 30 a day per restaurant", async () => {
+    const o = await newOwner();
+    await seed(o.rid, { menuAi: 30 });
+    const res = await post("/menu/draft-recipes", o.token, { dishes: ["Paella"] }, o.rid);
+    expect(res).toMatchObject({ status: 429, body: { error: "menu_ai_limit" } });
+  });
+
+  it("the cap is per restaurant", async () => {
+    const a = await newOwner();
+    const b = await newOwner();
+    await seed(a.rid, { menuAi: 30 });
+    expect((await post("/menu/draft-recipes", b.token, { dishes: ["Paella"] }, b.rid)).status).toBe(200);
+  });
+});

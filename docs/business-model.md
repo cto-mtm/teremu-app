@@ -41,7 +41,8 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | Emails sent (invites + supplier orders) | 10/day | 50/day | 100/day | Per location; abuse cap, not a selling point |
 | Free locations per owner | 3 | — | — | Paid locations don't count |
 | Data export (CSV) | — | ✓ | ✓ | ✓ |
-| POS integration *(roadmap)* | — | ✓ | ✓ | ✓ |
+| POS integration (Square — built, `docs/pos.md`) | — | ✓ | ✓ | ✓, per location |
+| "Find your restaurant" import (Google listing + website menu) | ✓ | ✓ | ✓ | ✓, per location |
 | Support | Community | Priority (48 h) | Priority (48 h) | Dedicated |
 
 **Pricing update (2026-07-27).** Pro re-anchored from the $29 placeholder to **$39** (the recovered-margin math supports it, and lowering later is painless where raising is a churn event), and **Max** added at **$59** — 1,500 scans, 10 seats — to harvest the price umbrella under Haddock's 85–159€ entry from the customers who resemble Haddock's, without taxing free→Pro conversion. §9's breakeven tables still assume $29, so they now read conservative. Max costs ~$4.50/month worst-case to serve at Gemini prices, so its margin profile matches Pro's.
@@ -52,7 +53,9 @@ Design intents behind the numbers: 25 scans ≈ one delivery-heavy week — enou
 
 **Why menu size is deliberately *not* a gate.** Capping menu items was considered and rejected. A dish doc costs us effectively nothing (inference, not storage, is COGS — see §4), so a cap would be pure price discrimination on the one thing that *is* the core promise: the margin on every plate. Cap it and a bar (40–80 drink SKUs) or any restaurant with a wine/cocktail list hits the wall almost immediately, gets a dashboard that's silently wrong on part of the menu, and churns — the exact activation failure competitors suffer, just moved behind a paywall. So "unlimited menu, dishes and drinks" is a free-tier *feature we market*, a direct contrast to tools that make menu setup painful, and the reason the photo-to-menu wizard is also quota-free. Upgrade pressure stays on the metrics that genuinely scale with the business: scans, seats, and history.
 
-**Why the menu wizard stays unmetered (revisited at Gemini prices).** A full wizard run — menu photo → dishes, then AI recipe drafts — costs **~$0.005, worst case ~$0.02** (`docs/llm.md`), and it happens roughly once per restaurant lifetime, with occasional re-runs for seasonal menus. Metering it would tax the single highest-leverage moment in the funnel: it runs at *minute five*, before any habit exists, and its output is the anchor — a restaurant that has its full menu costed in Teremu has built the switching cost that makes the scan cap bite later. Charging $0.02-worth of tokens to protect against that is backwards; the wizard is CAC we don't pay in dollars. The only guard worth having is an abuse valve, not a paywall — a per-restaurant daily cap generous enough that no real user ever sees it (e.g., 30 wizard runs/day) purely to bound scripted abuse of the free endpoint.
+**Why the menu wizard stays unmetered (revisited at Gemini prices).** A full wizard run — menu photo → dishes, then AI recipe drafts — costs **~$0.005, worst case ~$0.02** (`docs/llm.md`), and it happens roughly once per restaurant lifetime, with occasional re-runs for seasonal menus. Metering it would tax the single highest-leverage moment in the funnel: it runs at *minute five*, before any habit exists, and its output is the anchor — a restaurant that has its full menu costed in Teremu has built the switching cost that makes the scan cap bite later. Charging $0.02-worth of tokens to protect against that is backwards; the wizard is CAC we don't pay in dollars. The only guard worth having is an abuse valve, not a paywall. It is built: **30 menu-AI calls per restaurant per day** (photo reads and recipe drafts; a full run is 2–4 calls, so ~8–15 runs/day), plus the existing 5-second per-member cooldown — `helpers/dailyCap.ts`. That is generous enough that no real user ever sees it, and it exists purely to bound scripted abuse of the free endpoint.
+
+**Why the listing import is free too (2026-10-19).** "Find your restaurant" (`docs/restaurant-listing.md`) is the same bet one step earlier: the owner's Google listing and website prefill the restaurant and its menu before the photo wizard is even needed. It costs about **$0.10 once per restaurant** at list price, and **$0 for the first ~200 onboardings a month** because of Google's free monthly caps (§4, "Google Places"). It is the cheapest activation step we have. Metering it would be the paywall-at-minute-one mistake. Like the wizard, it gets abuse valves instead of a price: 5 imports, 100 searches and 10 photo/review loads per restaurant per day (`helpers/dailyCap.ts`), plus project-wide quotas in Google Cloud (§4).
 
 ## 4. Unit economics (order-of-magnitude)
 
@@ -66,7 +69,7 @@ Design intents behind the numbers: 25 scans ≈ one delivery-heavy week — enou
 | Cloud Functions | ~$0.18 | ~60K API invocations + OCR wait time |
 | Auth / Hosting | ~$0 | Google sign-in is free; SPA is ~1 MB |
 
-**The Gemini lever.** The provider is config, not code (`docs/llm.md`), and the planned switch to `gemini-3.1-flash-lite` ($0.25/1M input, $1.50/1M output, checked 2026-07-24) reprices a scan at ~2.5K input + ~1K output tokens ≈ **$0.0025 including retries** — call it $0.003. A heavy Pro month becomes ~$1.25 of scan inference plus ~$0.60 for 100 assistant questions (those are dominated by the data snapshot, ~20K tokens each): **≈ $2 of inference, ≈ $3 all-in** instead of $11. At that point inference stops being the dominant COGS line and Firestore reads take over — the "cost worth watching" below flips from the model bill to the database.
+**The Gemini lever.** The provider is config, not code (`docs/llm.md`), and the planned switch to `gemini-3.1-flash-lite` ($0.25/1M input, $1.50/1M output, checked 2026-07-24) reprices a scan at ~2.5K input + ~1K output tokens ≈ **$0.0025 including retries** — call it $0.003. A heavy Pro month becomes ~$1.25 of scan inference plus ~$0.60 for 100 assistant questions (those are dominated by the data snapshot, ~20K tokens each): **≈ $2 of inference, ≈ $3 all-in** instead of $11. *(Update 2026-10-13: the assistant no longer sends a snapshot. It is the shared `@mtmcya/assistant` package on Vertex Gemini Flash-Lite, calling tools, measured at **≈ $0.0005 per two-step turn** (`docs/llm.md` § Assistant). 100 questions now cost ~$0.05, not ~$0.60. Every assistant figure in this section and the archetype table below is therefore an over-estimate by roughly 10×. They are left as written because they are conservative.)* At that point inference stops being the dominant COGS line and Firestore reads take over — the "cost worth watching" below flips from the model bill to the database.
 
 So on NVIDIA-era assumptions a heavy Pro costs **≈ $11 all-in** ($10 inference + $1 GCP) against $29; a typical Pro (~180 scans) ≈ $4–5. On Gemini pricing those become ≈ $3 and ≈ $1.50 respectively, and a capped free user falls from ~$0.60–0.70 to **~$0.20**.
 
@@ -80,13 +83,43 @@ So on NVIDIA-era assumptions a heavy Pro costs **≈ $11 all-in** ($10 inference
 | Heavy Pro | 500 | ~100 | ~$2 | ~$3 |
 | Tail Pro (every call worst-case, 300 Qs) | 500 | 300 | ~$7.50 | ~$10 |
 
-Three readings. First, the assistant is Pro-only in the code (`api.ts` paywalls it, with a 10s per-member cooldown as a burst guard), so a free user's inference is scans alone — the blended free-user cost at a realistic dormant/active mix is ~$0.10, and the $0.20 used in §9 is comfortably conservative. Second, the **tail Pro (~$10) is what the NVIDIA-era model assumed an ordinary heavy Pro cost** — the pathological case still clears 3× margin against $29. Third, the assistant, not scanning, is the widest variance driver (its snapshot grows ~20× with restaurant size); its query caps are what keep the tail closed, so treat those limits as pricing infrastructure, not tuning knobs. These archetype shares (how many dormant vs active, real scans/questions per tier) are exactly what the beta instrumentation in §7 must measure — the token math is solid, the *mix* is still assumption.
+Three readings. First, the assistant is Pro-only in the code (the package's quota is free 0 / Pro 300 / Max 1,000 turns a month, with 60 per person per day as the burst guard — `assistant/manifest.ts`), so a free user's inference is scans alone — the blended free-user cost at a realistic dormant/active mix is ~$0.10, and the $0.20 used in §9 is comfortably conservative. Second, the **tail Pro (~$10) is what the NVIDIA-era model assumed an ordinary heavy Pro cost** — the pathological case still clears 3× margin against $29. Third, the assistant, not scanning, was the widest variance driver while it sent a snapshot that grew ~20× with restaurant size. As a tool loop its cost per turn is nearly flat, and the per-plan turn quota is what keeps the tail closed. Treat that quota as pricing infrastructure, not a tuning knob. These archetype shares (how many dormant vs active, real scans/questions per tier) are exactly what the beta instrumentation in §7 must measure — the token math is solid, the *mix* is still assumption.
+
+### Google Places (the listing import)
+
+The import (`docs/restaurant-listing.md`) is the first non-LLM, per-call paid API in the stack. Prices are from Google's Maps Platform price list, last updated 2026-10-16 and checked 2026-10-19 ([pricing](https://developers.google.com/maps/billing-and-pricing/pricing)). Since March 2025 there is no $200 monthly credit: each SKU has its own free monthly cap, they don't pool, and they reset monthly. **A request is billed at its most expensive field**, which is why the code keeps two separate field masks.
+
+| Our call | When | SKU (why) | Free / month | Price per 1,000 |
+|---|---|---|---|---|
+| Search-as-you-type | each debounced keystroke on the setup screen | Autocomplete Requests | 10,000 | $2.83 |
+| Listing details | once per import (and per verification-code send) | Place Details **Enterprise** (our mask includes hours, phone and rating) | 1,000 | $20.00 |
+| Reviews + photo list | once per review screen | Place Details **Enterprise + Atmosphere** (reviews) | 1,000 | $25.00 |
+| Each photo shown | up to 5 per review screen | Place Details Photos | 1,000 | $7.00 |
+
+Google doesn't say whether Places (New) waives the autocomplete keystrokes of a session that ends in a details call, as the legacy API did. The numbers below assume they're paid, so they read high.
+
+**Per onboarding** (~6 keystrokes, 1 details call, 1 review screen with 5 photos): ~$0.017 + $0.020 + $0.025 + $0.035 ≈ **$0.10 at list price**, plus ~$0.005 of LLM to read the website menu (≤ ~$0.02 worst case, the same order as the photo wizard). It happens once per restaurant, and again only on a Settings re-import.
+
+**What the free caps absorb.** Photos run out first: 1,000 photo calls is ~200 review screens.
+
+| New restaurants onboarding / month | Places cost / month | Per onboarding |
+|---|---|---|
+| ≤ 200 | ~$0 | $0 |
+| 1,000 | ~$28 (photos only) | ~$0.03 |
+| 3,000 | ~$210 | ~$0.07 |
+| 10,000 | ~$900 | ~$0.09 |
+
+Against a $60 CAC target (below), even the list price is noise. Against the free tier's ~$0.20/month (§9), it is half a month of a free user's cost, paid once. **No change to the tier math.**
+
+**The real exposure is abuse, not use.** Per-restaurant daily caps bound one account at **~$0.98/day**: 100 searches ≈ $0.28, 5 imports ≈ $0.10, 10 media loads ≈ $0.60. A real onboarding uses about 6 searches, 1 import and 1 media load. But accounts are free and Google sign-in is unlimited, so the caps alone don't bound the **total**. Two backstops belong in the Google Cloud console before launch, not in code: **per-SKU daily quotas** on Places API (New) (e.g., Place Details 3,000/day, Photos 5,000/day, Autocomplete 20,000/day — far above organic use, a hard stop for a script), and a **budget alert** on the project. A quota hit makes the import answer an error, and the owner can still continue with "Prefiero empezar de cero" or the photo wizard.
+
+Claim verification and its emails are rare and negligible. Each code send adds one Enterprise details call ($0.02) and one mail through the shared mtmcya-mailer, with send caps per restaurant, per place and per address. Places authenticates as the function's own service account, so there is no API key and no secret to manage.
 
 ### From scenarios to measured distributions
 
 Low/avg/worst is the right *planning prior*, but it is not how AI COGS is modeled operationally. LLM cost distributions are **right-skewed**: most calls are cheap, a small fraction are expensive, and the arithmetic mean is systematically misleading — industry practice (the discipline is being called *TokenOps*, FinOps applied to tokens) is to track **percentiles**. The scenarios above should be retired the month real telemetry exists. What replaces them:
 
-**Instrumentation (built).** Every provider response includes exact token counts, and `llm.ts` now emits a structured `llm_usage` log line per call (`label` = ocr / menu-extract / recipe-drafts / assistant, model, prompt + completion tokens). Cloud Logging → a logs-based metric or BigQuery sink → multiply by the price sheet in `docs/llm.md`. Nothing is estimated; COGS is *observed*. When per-restaurant attribution is worth having (it will be, for the fair-use conversation), thread the `rid` into the label — every call site already has it in scope.
+**Instrumentation (built).** Every provider response includes exact token counts, and `llm.ts` now emits a structured `llm_usage` log line per call (`label` = ocr / menu-extract / menu-extract-text / recipe-drafts, plus the POS matcher; model, prompt + completion tokens). The assistant logs its own turns to the `ai_usage` collection, with `estimatedCostMicros`. **Google Places** logs a `places_usage` line per request (`sku`, `status`, `rid`, auth mode — `listing/google.ts`). A logs-based metric × the price list in §4 "Google Places" gives Places COGS per SKU and per restaurant, the same way `llm_usage` does for the model. Cloud Logging → a logs-based metric or BigQuery sink → multiply by the price sheet in `docs/llm.md`. Nothing is estimated; COGS is *observed*. When per-restaurant attribution is worth having (it will be, for the fair-use conversation), thread the `rid` into the label — every call site already has it in scope.
 
 **The KPI set:**
 
@@ -126,6 +159,8 @@ The permission system already carries per-member gating; plan gating is the same
 - Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
 - Params (`functions/.env`): `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_YEARLY`, `STRIPE_PRICE_MAX_MONTHLY`, `STRIPE_PRICE_MAX_YEARLY` (price IDs of each product's two recurring prices — all four required or billing stays 501), `APP_URL` (checkout return base). The webhook derives the tier from which price the subscription actually carries, so the price IDs are also what map Stripe → `plan: "pro" | "max"`.
 - Point a Stripe webhook endpoint at the deployed `stripeWebhook` URL, subscribing to `checkout.session.completed` and `customer.subscription.*`.
+
+**Listing import (built — Google Places, `docs/restaurant-listing.md`).** No key or secret. Production calls Places (New) as the function's own service account: `PLACES_AUTH=adc` in `functions/.env.teremu-app`, Places API (New) enabled on the project, billing on. The first-run redirect for new owners is `LISTING_SETUP=on`. Without `PLACES_AUTH` the listing routes answer 501, and `/me` reports `listingAvailable: false` so the app hides the entry points.
 
 Until `STRIPE_SECRET_KEY` is set, checkout/portal return 501 (`billing_not_configured`) and the emulator-only `PUT /billing/plan` switches tiers for testing. The two recurring prices are the only Stripe objects that must exist; everything else is created on the fly.
 

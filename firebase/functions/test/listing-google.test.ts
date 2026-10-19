@@ -1,3 +1,4 @@
+import { logger } from "firebase-functions/v2";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBackend } from "../src/listing/fake";
 import { googleProvider, type PlacesAuth } from "../src/listing/google";
@@ -156,6 +157,32 @@ describe("google adapter: requests and mapping", () => {
     expect(m.photos).toEqual([{ url: "https://lh3.googleusercontent.com/p1", attributions: [{ name: "Marta", uri: "https://maps.google.com/u/1", photoUri: null }] }]);
     expect(m.reviews[0]).toMatchObject({ rating: 5, text: "Muy buena paella", author: { name: "Marta G." }, relativeTime: "hace un mes" });
     expect(m.photos[0].url).not.toMatch(/key=|token/);
+  });
+});
+
+describe("places_usage telemetry", () => {
+  it("logs one line per Places request with its SKU and restaurant", async () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      stubGoogle({
+        "/places:autocomplete": { suggestions: [] },
+        "/places/ChIJfaro": PLACE,
+        "/photos/p1/media": { photoUri: "https://lh3.googleusercontent.com/p1" },
+      });
+      const places = googleProvider(SA, { rid: "r1" });
+      await places.autocomplete("faro", { language: "es" });
+      await places.details("ChIJfaro", { language: "es" });
+      await places.media("ChIJfaro", { language: "es" });
+      const lines = info.mock.calls.filter((c) => c[0] === "places_usage").map((c) => c[1]);
+      expect(lines).toEqual([
+        { sku: "autocomplete_request", status: 200, rid: "r1", auth: "token" },
+        { sku: "details_enterprise", status: 200, rid: "r1", auth: "token" },
+        { sku: "details_enterprise_atmosphere", status: 200, rid: "r1", auth: "token" },
+        { sku: "details_photos", status: 200, rid: "r1", auth: "token" },
+      ]);
+    } finally {
+      info.mockRestore();
+    }
   });
 });
 

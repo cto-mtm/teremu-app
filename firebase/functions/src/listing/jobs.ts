@@ -219,10 +219,7 @@ export async function readMenu(backend: ListingBackend, rid: string, id: string)
   return { ...job, ...patch };
 }
 
-// ── Cost guards (Places is billed per call) ─────────────────────────
-
-const SEARCHES_PER_DAY = 300;
-const MEDIA_PER_DAY = 30;
+// ── Cost guard (Places is billed per call; daily caps: helpers/dailyCap) ─
 
 /** Photos/reviews are only served for a place this restaurant is working
  * with: its linked or contested place, or one of its live imports. */
@@ -231,17 +228,4 @@ export async function placeInUse(rid: string, placeId: string): Promise<boolean>
   if (rest.get("listing.placeId") === placeId || rest.get("listing.contestedPlaceId") === placeId) return true;
   const snap = await importsCol(rid).where("placeId", "==", placeId).limit(1).get();
   return snap.docs.some((d) => (d.get("expiresAt") as Timestamp).toMillis() > Date.now());
-}
-
-/** One daily counter per restaurant (TTL on purgeAt). False = over the cap. */
-export async function consumeListingCall(rid: string, kind: "searches" | "media"): Promise<boolean> {
-  const day = new Date().toISOString().slice(0, 10);
-  const ref = db().doc(`restaurants/${rid}/listingUsage/${day}`);
-  const cap = kind === "searches" ? SEARCHES_PER_DAY : MEDIA_PER_DAY;
-  return db().runTransaction(async (tx) => {
-    const used = ((await tx.get(ref)).get(kind) as number | undefined) ?? 0;
-    if (used >= cap) return false;
-    tx.set(ref, { [kind]: used + 1, purgeAt: Timestamp.fromMillis(Date.now() + 2 * DAY_MS) }, { merge: true });
-    return true;
-  });
 }

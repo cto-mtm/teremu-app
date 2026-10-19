@@ -1,4 +1,5 @@
 import { GoogleAuth } from "google-auth-library";
+import { logger } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import type { Cuisine } from "../models.js";
 import type { Attribution, ListingProvider, PlaceDetails, PlaceMedia, PlaceSuggestion } from "./types.js";
@@ -132,7 +133,25 @@ class PlacesError extends Error {
   }
 }
 
-async function call<T>(auth: PlacesAuth, path: string, init: { method?: string; body?: unknown; mask?: string; query?: Record<string, string> }): Promise<T> {
+/**
+ * The SKU each call bills as (docs/business-model.md §4, "Google Places"):
+ * our details mask includes hours/phone/rating → Enterprise; reviews add
+ * Atmosphere; each photo is its own call.
+ */
+export type PlacesSku = "autocomplete_request" | "details_enterprise" | "details_enterprise_atmosphere" | "details_photos";
+
+/** Who the call is for — the places_usage log line attributes cost to it. */
+export interface PlacesContext {
+  rid?: string;
+}
+
+async function call<T>(
+  auth: PlacesAuth,
+  sku: PlacesSku,
+  ctx: PlacesContext,
+  path: string,
+  init: { method?: string; body?: unknown; mask?: string; query?: Record<string, string> },
+): Promise<T> {
   const url = new URL(`${BASE()}/${path}`);
   for (const [k, v] of Object.entries(init.query ?? {})) url.searchParams.set(k, v);
   const res = await fetch(url, {
@@ -145,6 +164,9 @@ async function call<T>(auth: PlacesAuth, path: string, init: { method?: string; 
     body: init.body ? JSON.stringify(init.body) : undefined,
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
+  // One line per Places request: a logs-based metric × the price list =
+  // Places COGS, per SKU and per restaurant (like llm_usage for the LLM).
+  logger.info("places_usage", { sku, status: res.status, rid: ctx.rid ?? null, auth: auth.kind });
   if (res.status === 404) throw new PlacesError(404, "place not found");
   if (!res.ok) throw new PlacesError(res.status, `places ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as T;
@@ -211,7 +233,7 @@ function toDetails(p: GPlace, placeId: string): PlaceDetails {
   };
 }
 
-export function googleProvider(auth: PlacesAuth): ListingProvider {
+export function googleProvider(auth: PlacesAuth, ctx: PlacesContext = {}): ListingProvider {
   return {
     async autocomplete(input, { session, country, language }): Promise<PlaceSuggestion[]> {
       const body = {
@@ -224,7 +246,7 @@ export function googleProvider(auth: PlacesAuth): ListingProvider {
       };
       const res = await call<{
         suggestions?: { placePrediction?: { placeId?: string; structuredFormat?: { mainText?: GText; secondaryText?: GText }; text?: GText } }[];
-      }>(auth, "places:autocomplete", { method: "POST", body });
+      }>(auth, "autocomplete_request", ctx, "places:autocomplete", { method: "POST", body });
       return (res.suggestions ?? []).flatMap((s) => {
         const p = s.placePrediction;
         if (!p?.placeId) return [];
@@ -240,7 +262,7 @@ export function googleProvider(auth: PlacesAuth): ListingProvider {
 
     async details(placeId, { session, language }) {
       try {
-        const place = await call<GPlace>(auth, `places/${encodeURIComponent(placeId)}`, {
+        const place = await call<GPlace>(auth, "details_enterprise", ctx, `places/${encodeURIComponent(placeId)}`, {
           mask: DETAILS_MASK,
           query: { languageCode: language, ...(session ? { sessionToken: session } : {}) },
         });
@@ -252,14 +274,14 @@ export function googleProvider(auth: PlacesAuth): ListingProvider {
     },
 
     async media(placeId, { language }): Promise<PlaceMedia> {
-      const place = await call<GPlace>(auth, `places/${encodeURIComponent(placeId)}`, {
+      const place = await call<GPlace>(auth, "details_enterprise_atmosphere", ctx, `places/${encodeURIComponent(placeId)}`, {
         mask: MEDIA_MASK,
         query: { languageCode: language },
       });
       const photos = await Promise.all(
         (place.photos ?? []).slice(0, MAX_PHOTOS).map(async (ph) => {
           if (!ph.name) return null;
-          const media = await call<{ photoUri?: string }>(auth, `${ph.name}/media`, {
+          const media = await call<{ photoUri?: string }>(auth, "details_photos", ctx, `${ph.name}/media`, {
             query: { maxWidthPx: "800", skipHttpRedirect: "true" },
           }).catch(() => null);
           return media?.photoUri ? { url: media.photoUri, attributions: (ph.authorAttributions ?? []).map(attribution) } : null;
