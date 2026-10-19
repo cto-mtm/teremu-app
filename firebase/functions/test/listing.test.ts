@@ -205,6 +205,16 @@ describe("listing commit", () => {
       o.rid,
     );
     expect(bad).toMatchObject({ status: 400, body: { error: "unknown_menu_item" } });
+
+    // …nor a prep: it has no menu price (docs/prep-recipes.md).
+    const prep = await seedMenuItem(o.rid, { name: "Fondo", kind: "prep", price: 0, yield: { qty: 2, unit: "L" } });
+    const asPrep = await post(
+      `/listing/imports/${id2}/commit`,
+      o.token,
+      commitBody([{ name: "Fondo", price: 3, action: "update_price", menuItemId: prep.id }]),
+      o.rid,
+    );
+    expect(asPrep).toMatchObject({ status: 400, body: { error: "unknown_menu_item" } });
   });
 
   it("keeps a country the owner chose in Settings", async () => {

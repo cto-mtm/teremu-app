@@ -8,7 +8,7 @@ import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useListingStore } from '../stores/listing'
 import { useSettingsStore } from '../stores/settings'
-import { actualMarginPct } from '../lib/domain'
+import { actualMarginPct, recipesUsing } from '../lib/domain'
 import { compatibleUnits } from '../lib/units'
 import { CATEGORIES, type Category, type MenuItem, type RecipeLine, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
@@ -92,7 +92,7 @@ const prepRows = computed(() => {
     .filter((m) => !q || m.name.toLowerCase().includes(q))
     .map((m) => {
       const { cost, missing } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
-      const usedIn = kitchen.activeMenuItems.filter((d) => d.recipe.some((r) => r.subItemId === m.id)).length
+      const usedIn = new Set(recipesUsing(kitchen.menuItems, { subItemId: m.id }).map((u) => u.item.id)).size
       return { m, cost, missing, unitCost: m.yield?.qty ? cost / m.yield.qty : null, usedIn }
     })
     .sort((a, b) => a.m.name.localeCompare(b.m.name))
@@ -117,7 +117,9 @@ watch(
   ([editId]) => {
     if (typeof editId === 'string' && !editing.value) {
       const item = kitchen.menuItems.find((m) => m.id === editId)
-      if (item) openEditor(item)
+      if (!item) return
+      tab.value = item.kind === 'prep' ? 'preps' : 'dishes' // the list behind the sheet
+      openEditor(item)
     }
   },
   { immediate: true },

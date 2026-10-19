@@ -1,7 +1,7 @@
 // Pure domain math — no I/O, no Vue. Everything the Pulse, Menu and
 // Pantry pages derive client-side from the fetched collections.
 
-import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RevenueEntry, Unit } from './types'
+import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RecipeLine, RevenueEntry, Unit } from './types'
 import { convertQty } from './units'
 import {
   expandUsage,
@@ -410,14 +410,21 @@ export function receiptsForIngredient(invoices: Invoice[], ing: Ingredient): Rec
   return rows.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
 }
 
-/** Dishes whose recipes include the ingredient (qty in recipe units). */
-export function dishesUsing(menuItems: MenuItem[], ingredientId: string) {
+/**
+ * Active recipes (dishes and preps) with a line on this ingredient or
+ * sub-recipe, one entry per line, in the line's own qty/unit. Direct use
+ * only: an ingredient inside a prep is "used" by the prep, and the prep
+ * shows its own users.
+ */
+export function recipesUsing(
+  menuItems: MenuItem[],
+  ref: { ingredientId: string } | { subItemId: string },
+): { item: MenuItem; qty: number; unit?: Unit }[] {
+  const hits = (r: RecipeLine) =>
+    'ingredientId' in ref ? r.ingredientId === ref.ingredientId : r.subItemId === ref.subItemId
   return menuItems
-    .filter((m) => m.active && m.recipe.some((r) => r.ingredientId === ingredientId))
-    .map((m) => {
-      const line = m.recipe.find((r) => r.ingredientId === ingredientId)!
-      return { item: m, qty: line.qty, unit: line.unit }
-    })
+    .filter((m) => m.active)
+    .flatMap((m) => m.recipe.filter(hits).map((r) => ({ item: m, qty: r.qty, unit: r.unit })))
 }
 
 // ── Production planning (events / catering) ─────────────────────────

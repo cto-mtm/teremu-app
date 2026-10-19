@@ -4,7 +4,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import { actualMarginPct, costBreakdown, unitsSoldWeekly } from '../lib/domain'
+import { actualMarginPct, costBreakdown, recipesUsing, unitsSoldWeekly } from '../lib/domain'
 import BaseButton from '../components/BaseButton.vue'
 import MiniBars from '../components/MiniBars.vue'
 
@@ -32,13 +32,7 @@ const margin = computed(() =>
 const isPrep = computed(() => dish.value?.kind === 'prep')
 const unitCost = computed(() => (dish.value?.yield?.qty ? margin.value.cost / dish.value.yield.qty : null))
 /** Recipes that use this one, with the amount each line takes. */
-const usedIn = computed(() =>
-  dish.value
-    ? kitchen.activeMenuItems.flatMap((m) =>
-        m.recipe.filter((r) => r.subItemId === dish.value!.id).map((r) => ({ item: m, qty: r.qty, unit: r.unit })),
-      )
-    : [],
-)
+const usedIn = computed(() => (dish.value ? recipesUsing(kitchen.menuItems, { subItemId: dish.value.id }) : []))
 const weekly = computed(() => (dish.value ? unitsSoldWeekly(kitchen.revenue, dish.value.id) : []))
 const sold14 = computed(() => weekly.value.slice(-2).reduce((s, v) => s + v, 0))
 const breakdown = computed(() =>

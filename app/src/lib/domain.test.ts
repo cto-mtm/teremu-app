@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isFoodInvoice, pantryValue, priceChangePct, reconcileDeliveryNotes } from './domain'
-import type { Ingredient, Invoice } from './types'
+import { isFoodInvoice, pantryValue, priceChangePct, recipesUsing, reconcileDeliveryNotes } from './domain'
+import type { Ingredient, Invoice, MenuItem } from './types'
 
 // domain.ts is the client-side math behind Pulse, Menu and Pantry. The
 // cases here pin the rules that, when wrong, double-count or hide money:
@@ -84,5 +84,29 @@ describe('priceChangePct / pantryValue', () => {
         ing({ theoreticalQty: 4 }),
       ]),
     ).toBe(6)
+  })
+})
+
+describe('recipesUsing', () => {
+  const item = (id: string, recipe: MenuItem['recipe'], over: Partial<MenuItem> = {}): MenuItem => ({
+    id, name: id, price: 10, targetMarginPct: 70, recipe, active: true, ...over,
+  })
+  const menu = [
+    item('stock', [{ ingredientId: 'bones', qty: 4, unit: 'kg' }], { kind: 'prep', price: 0, yield: { qty: 2, unit: 'L' } }),
+    item('steak', [{ subItemId: 'stock', qty: 50, unit: 'ml' }, { ingredientId: 'salt', qty: 2, unit: 'g' }, { ingredientId: 'salt', qty: 1, unit: 'g' }]),
+    item('old', [{ ingredientId: 'bones', qty: 1 }], { active: false }),
+  ]
+
+  it('lists active recipes, preps included, one entry per line', () => {
+    expect(recipesUsing(menu, { ingredientId: 'bones' }).map((u) => u.item.id)).toEqual(['stock'])
+    expect(recipesUsing(menu, { ingredientId: 'salt' }).map((u) => u.qty)).toEqual([2, 1])
+  })
+
+  it('finds the users of a prep by its sub-recipe lines', () => {
+    expect(recipesUsing(menu, { subItemId: 'stock' })).toEqual([{ item: menu[1], qty: 50, unit: 'ml' }])
+  })
+
+  it('is empty for an ingredient no active recipe uses', () => {
+    expect(recipesUsing(menu, { ingredientId: 'saffron' })).toEqual([])
   })
 })

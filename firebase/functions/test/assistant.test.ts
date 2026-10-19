@@ -226,6 +226,8 @@ describe("assistant", () => {
     await seedInvoice(owner.rid, { status: "needs_review", vendorName: "C", total: 1 });
     await seedIngredient(owner.rid, { name: "Sal", nameKey: "sal" });
     await seedMenuItem(owner.rid, { name: "Tapa", active: true });
+    // A prep is a recipe, not a dish on the menu: it is not counted.
+    await seedMenuItem(owner.rid, { name: "Fondo", kind: "prep", price: 0, yield: { qty: 2, unit: "L" } });
 
     const t = await turn(owner.token, owner.rid, "¿Cuanto llevo registrado?");
     expect(t.status).toBe(200);

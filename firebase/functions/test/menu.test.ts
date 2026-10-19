@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  api,
   clearFirestore,
+  col,
   FAKE_JPEG,
   get,
   makeOwner,
+  makeUserToken,
   post,
   put,
   seedIngredient,
+  seedMember,
   uniqueId,
   upload,
 } from "./helpers";
@@ -78,6 +82,28 @@ describe("menu & menu-scan", () => {
     const list = await get<Array<{ id: string; kind?: string; yield?: unknown; price: number }>>("/menu-items", owner.token);
     expect(list.body.find((m) => m.id === created.body.id)).toMatchObject({ kind: "dish", price: 12 });
     expect(list.body.find((m) => m.id === created.body.id)!.yield).toBeUndefined();
+  });
+
+  it("/menu-items: 401 without a token, 403 without menu edit or for another restaurant", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const body = { name: "Fondo", kind: "prep", yield: { qty: 2, unit: "L" }, price: 0, targetMarginPct: 0, active: true, recipe: [] };
+
+    expect((await post("/menu-items", undefined, body)).status).toBe(401);
+    expect((await api("/menu-items")).status).toBe(401);
+
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "none", menu: "read", pantry: "none", finance: "none", vendors: "none", integrations: "none", scan: false });
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await post("/menu-items", reader, body, owner.rid)).status).toBe(403);
+    const created = await post<{ id: string }>("/menu-items", owner.token, body);
+    expect((await put(`/menu-items/${created.body.id}`, reader, body, owner.rid)).status).toBe(403);
+
+    // Another restaurant's owner naming this one falls back to their own
+    // location (tenancy.ts resolveMember): the write never lands here.
+    const stranger = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const foreign = await post<{ id: string }>("/menu-items", stranger.token, { ...body, name: "Ajeno" }, owner.rid);
+    expect((await col(owner.rid, "menuItems").doc(foreign.body.id).get()).exists).toBe(false);
+    expect((await col(stranger.rid, "menuItems").doc(foreign.body.id).get()).exists).toBe(true);
   });
 
   it("prepMinutes persists on menu items and the labor rate round-trips via /restaurants + /me", async () => {

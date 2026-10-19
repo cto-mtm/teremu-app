@@ -6,12 +6,12 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import {
-  dishesUsing,
   ingredientWeeklyQty,
   normalizeName,
   priceChangePct,
   priceHistory,
   receiptsForIngredient,
+  recipesUsing,
 } from '../lib/domain'
 import { CATEGORIES, SUBCATEGORIES, type Category, type Subcategory } from '../lib/types'
 import Sparkline from '../components/Sparkline.vue'
@@ -32,7 +32,7 @@ const auth = useAuthStore()
 const ingredient = computed(() => kitchen.ingredientMap.get(String(route.params.id)))
 const change = computed(() => (ingredient.value ? priceChangePct(ingredient.value) : null))
 const dishes = computed(() =>
-  ingredient.value ? dishesUsing(kitchen.menuItems, ingredient.value.id) : [],
+  ingredient.value ? recipesUsing(kitchen.menuItems, { ingredientId: ingredient.value.id }) : [],
 )
 const receipts = computed(() =>
   ingredient.value ? receiptsForIngredient(invoicesStore.invoices, ingredient.value) : [],
@@ -164,8 +164,8 @@ const suppliers = computed(() => {
       </div>
       <div v-else class="divide-y divide-gray-100">
         <RouterLink
-          v-for="{ item, qty, unit } in dishes"
-          :key="item.id"
+          v-for="({ item, qty, unit }, i) in dishes"
+          :key="item.id + ':' + i"
           :to="`/menu/${item.id}`"
           class="flex items-center justify-between px-4 py-3 hover:bg-gray-50"
         >
