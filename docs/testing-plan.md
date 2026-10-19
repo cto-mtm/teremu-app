@@ -30,7 +30,7 @@ Same three-file scaffold as Dirumed, in `firebase/functions/test/`:
 - **`test/global-setup.ts`** — fail fast with a clear message if the Firestore/Auth/Storage emulators aren't reachable (a `fetch` to each host; any response means it's up), so "emulator not running" never looks like "tests failing".
 - **`test/setup.ts`** — set the Admin SDK emulator env vars **before any `firebase-admin` import** (Vitest runs setupFiles before the module graph): `GCLOUD_PROJECT=demo-app`, `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`, `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`, `FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199`. The test process uses its own Admin SDK to seed and to assert on storage state, so these are required even though requests go over HTTP.
 
-The whole suite runs under one command via **`firebase emulators:exec`** (boots emulators → runs tests → tears down), locally and in CI.
+The whole suite runs under one command via **`firebase emulators:exec`** (boots emulators → runs tests → tears down), locally and as the pre-deploy gate — there is no GitHub CI.
 
 ## Test harness (`test/helpers.ts`)
 
