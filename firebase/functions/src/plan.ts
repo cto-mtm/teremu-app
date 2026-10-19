@@ -29,15 +29,16 @@ export interface PlanLimits {
   members: number; // members + pending invites (owner included)
   historyDays: number; // list-query window cap
   expenseTags: number; // distinct expense tags
-  assistant: boolean;
+  /** Assistant questions per month, per location (the package counts turns, not tokens). */
+  assistantTurns: number;
   mailsPerDay: number; // invites + supplier orders per UTC day (abuse cap, see mail.ts)
   integrations: boolean; // POS connections (docs/pos.md) — per location, like billing
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistant: false, mailsPerDay: 10, integrations: false },
-  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistant: true, mailsPerDay: 50, integrations: true },
-  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistant: true, mailsPerDay: 100, integrations: true },
+  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, integrations: false },
+  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, integrations: true },
+  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, integrations: true },
 };
 
 /** Free locations one person may own. Creating a location costs nothing,

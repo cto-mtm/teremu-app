@@ -140,16 +140,23 @@ describe("assistant", () => {
     expect(t.raw).not.toContain("Proveedor X");
   });
 
-  it("gates the free plan through the quota (0 turns) and hands off scanning", async () => {
+  it("free gets 20 questions a month, counted per turn; Pro lifts the cap", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
-    const free = await turn(owner.token, owner.rid, "hola");
-    expect(free.status).toBe(429);
-    expect((free.body as { error: string }).error).toBe("quota_exceeded");
-
-    await setPlan(owner.rid, "pro");
+    // A free restaurant can use the assistant…
     const t = await turn(owner.token, owner.rid, "Quiero escanear una factura");
     expect(t.status).toBe(200);
     expect(t.toolCalls[0]?.toolName).toBe("openScanner");
+    const usage = (await getFirestore().doc(`restaurants/${owner.rid}`).get()).get("aiUsage") as { used: number };
+    expect(usage.used).toBe(1); // one turn, whatever its tokens
+
+    // …until the month's 20 turns are spent.
+    await getFirestore().doc(`restaurants/${owner.rid}`).set({ aiUsage: { ...usage, used: 20 } }, { merge: true });
+    const capped = await turn(owner.token, owner.rid, "hola");
+    expect(capped.status).toBe(429);
+    expect((capped.body as { error: string }).error).toBe("quota_exceeded");
+
+    await setPlan(owner.rid, "pro");
+    expect((await turn(owner.token, owner.rid, "hola")).status).toBe(200);
   });
 
   it("ranks dishes by highest margin when asked for the most profitable", async () => {

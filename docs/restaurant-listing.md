@@ -189,7 +189,7 @@ The progress on screen is the real step sequence. Leaving mid-import just abando
 
 | Route | Does |
 |---|---|
-| `GET /listing/search?q=&session=` | Autocomplete via the provider. `session` is a client-generated UUID so autocomplete + the final details call bill as one session. Biased to the restaurant's `country` if set. 100/day per restaurant, then 429. |
+| `GET /listing/search?q=&session=` | Autocomplete via the provider. `session` is a client-generated UUID so autocomplete + the final details call bill as one session. Biased to the restaurant's `country` if set. Needs 3+ characters (shorter queries return nothing without calling Google); 30/day per restaurant, then 429. The setup screen searches after a 400 ms pause. |
 | `POST /listing/imports` `{placeId, session}` or `{manual: {name}}` | Creates the job (manual = no Places step). Rate limit: 5 imports per restaurant per day → 429. |
 | `GET /listing/imports/:id` | The job (page texts stay server-side) — to resume. |
 | `POST /listing/imports/:id/website` `{url?}` | Reads the listing's site, or one the owner pasted (`"lalupita.es"` is fine). Candidates from earlier runs are kept. |
@@ -261,7 +261,7 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 - Places: 1 Details (Enterprise + Atmosphere) per import, ~5 photo fetches when media is shown, autocomplete inside the session. Free tier is 1,000 Details/month for that SKU; beyond it $25/1,000 → **$0.025 per import**. Photo SKU pricing to re-verify.
 - LLM: 1–4 text extraction calls + 0–3 vision calls per import — the same order as one menu scan. Quota-free like the rest of menu setup (`business-model.md`), protected by the 5/day/restaurant import cap and owner-only routes.
 - Website fetches: ≤4 per import, capped in size and time by `safeFetch`.
-- Telemetry: every Places request logs `places_usage` (`sku`, `status`, `rid`, auth mode) and every model call logs `llm_usage` (`menu-extract-text` for website menus), so the import's cost is observed per SKU and per restaurant (`docs/business-model.md` §4). Daily caps (`helpers/dailyCap.ts`): 5 imports, 100 searches, 10 media loads, 30 menu-AI calls per restaurant. A per-job `listing_import` funnel line (how many find their place, have a website, get a menu) is not built.
+- Telemetry: every Places request logs `places_usage` (`sku`, `status`, `rid`, auth mode) and every model call logs `llm_usage` (`menu-extract-text` for website menus), so the import's cost is observed per SKU and per restaurant (`docs/business-model.md` §4). Daily caps (`helpers/dailyCap.ts`): 5 imports, 30 searches, 10 media loads, 30 menu-AI calls per restaurant. A per-job `listing_import` funnel line (how many find their place, have a website, get a menu) is not built.
 
 ## Dev & testing
 

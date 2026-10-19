@@ -2,6 +2,7 @@ import type { Manifest } from "@mtmcya/assistant";
 import { defineAssistant } from "@mtmcya/assistant/server";
 import { mockModel } from "@mtmcya/assistant/testing";
 import type { Currency, Locale } from "@teremu/shared";
+import { PLAN_LIMITS } from "../plan.js";
 import prompt from "./prompt.md?raw";
 import { script } from "./script.js";
 import { tools } from "./tools.js";
@@ -58,11 +59,16 @@ export const manifest = {
   },
   conversation: { path: "restaurants/{tenant}/assistantConversations", ttlDays: 7, window: 30 },
   // Monthly turn counter on the restaurant doc, next to plan/scanCount.
-  // free: 0 keeps the assistant Pro+ (the modal shows the upgrade notice).
+  // Free gets a taste (docs/business-model.md §3); at the limit the modal
+  // shows the upgrade notice.
   quota: {
     doc: "restaurants/{tenant}",
     field: "aiUsage",
-    limit: { byPlan: { free: 0, pro: 300, max: 1000 }, default: 0 },
+    // Questions per month per plan live in plan.ts PLAN_LIMITS (one source).
+    limit: {
+      byPlan: { free: PLAN_LIMITS.free.assistantTurns, pro: PLAN_LIMITS.pro.assistantTurns, max: PLAN_LIMITS.max.assistantTurns },
+      default: 0,
+    },
     dailyPerUser: 60,
   },
   usage: "ai_usage",

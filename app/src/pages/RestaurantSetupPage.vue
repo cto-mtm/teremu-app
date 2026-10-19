@@ -52,7 +52,9 @@ let debounce: ReturnType<typeof setTimeout> | undefined
 watch(query, (q) => {
   clearTimeout(debounce)
   searchError.value = ''
-  if (q.trim().length < 2) {
+  // Each pause while typing is a billed Google request: wait for 3
+  // characters and a 400 ms pause (docs/business-model.md §4).
+  if (q.trim().length < 3) {
     searchSeq += 1 // a response still in flight must not refill the list
     results.value = []
     searching.value = false
@@ -66,7 +68,7 @@ watch(query, (q) => {
     searching.value = false
     if (found) results.value = found
     else searchError.value = errorText(listing.error)
-  }, 250)
+  }, 400)
 })
 
 // ── Import ──────────────────────────────────────────────────────
@@ -413,8 +415,8 @@ const initials = (name: string) => {
           </li>
         </TransitionGroup>
 
-        <div v-if="!searching && query.trim().length >= 2" class="space-y-2 text-center">
-          <p v-if="!results.length && !searchError" class="text-sm text-smoke">{{ t('setup.search.noResults') }}</p>
+        <div v-if="!searching && query.trim()" class="space-y-2 text-center">
+          <p v-if="query.trim().length >= 3 && !results.length && !searchError" class="text-sm text-smoke">{{ t('setup.search.noResults') }}</p>
           <button class="text-sm font-semibold text-ember-700 hover:underline" @click="addManually">
             {{ results.length ? t('setup.search.notListed') : t('setup.search.addManually', { name: query.trim() }) }}
           </button>

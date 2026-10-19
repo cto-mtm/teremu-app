@@ -1,6 +1,9 @@
 import type { AssistantContext } from "@mtmcya/assistant";
 import { normalizeName } from "@teremu/shared";
+import { PLAN_LIMITS } from "../../plan.js";
 import type { AppHelpRowT } from "../tools.js";
+
+const turns = (p: keyof typeof PLAN_LIMITS) => PLAN_LIMITS[p].assistantTurns.toLocaleString("en-US");
 
 /**
  * Product help, as a tool the model CHECKS rather than prose in the main
@@ -34,7 +37,7 @@ const TOPICS: Topic[] = [
   { topic: "Pantry", does: "Theoretical stock (purchases − sales) with rolling prices; tap a number for the monthly true-up.", where: "Pantry", aka: ["despensa", "ingredientes", "stock", "inventario", "existencias"] },
   { topic: "Vendors", does: "Spend, deliveries and ingredients supplied per vendor, derived from approved invoices.", where: "Vendors", aka: ["proveedores", "suministradores", "compras"] },
   { topic: "Team", does: "Invite members by email with per-area permissions (none / read / edit).", where: "Settings → Team", aka: ["equipo", "invitar", "miembros", "permisos", "usuarios"] },
-  { topic: "Plan & billing", does: "Your plan, scan allowance, upgrades and payment. Scans are metered monthly; the assistant is Pro-and-up.", where: "Settings", aka: ["plan", "facturacion", "pago", "suscripcion", "tarifa", "precio", "upgrade", "billing"] },
+  { topic: "Plan & billing", does: `Your plan, scan allowance, upgrades and payment. Scans and assistant questions are metered monthly per location (free ${turns("free")} questions, Pro ${turns("pro")}, Max ${turns("max")}).`, where: "Settings", aka: ["plan", "facturacion", "pago", "suscripcion", "tarifa", "precio", "upgrade", "billing"] },
   { topic: "Language & settings", does: "App language, base currency, labor rate, and POS (integrations) connections.", where: "Settings", aka: ["idioma", "ajustes", "configuracion", "moneda", "pos", "integraciones", "settings"] },
   { topic: "Assistant", does: "This chat: it reads your pantry prices, dish margins, invoices, vendors, sales and expenses, and opens app screens for you. It cannot change settings, invite members, upgrade the plan or edit data.", where: "the sidebar", aka: ["asistente", "chat", "ayuda", "que puedes hacer", "help"] },
 ];

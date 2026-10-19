@@ -17,6 +17,7 @@ const es = {
     i7: 'Directorio de proveedores (top 3)',
     i8: '90 días de historial · 3 etiquetas de gasto',
     i9: 'Soporte de la comunidad',
+    i10: 'Asistente: 20 preguntas al mes',
   },
   billing: {
     month: 'Mensual',
@@ -34,7 +35,7 @@ const es = {
     includes: 'Todo lo de Gratis, y además:',
     i1: '500 escaneos con IA al mes',
     i2: 'Hasta 5 miembros con permisos por área',
-    i3: 'Asistente — pregúntale a tus números',
+    i3: 'Asistente — 300 preguntas al mes',
     i4: 'Historial completo, sin ventanas',
     i5: 'Conciliación de albaranes y pedidos a proveedores',
     i6: 'Directorio de proveedores y analítica de gasto completos',
@@ -85,6 +86,7 @@ const en: typeof es = {
     i7: 'Vendor directory (top 3)',
     i8: '90-day history · 3 expense tags',
     i9: 'Community support',
+    i10: 'Assistant: 20 questions a month',
   },
   billing: {
     month: 'Monthly',
@@ -102,7 +104,7 @@ const en: typeof es = {
     includes: 'Everything in Free, plus:',
     i1: '500 AI scans per month',
     i2: 'Up to 5 members with per-area permissions',
-    i3: 'Assistant — ask your numbers anything',
+    i3: 'Assistant — 300 questions a month',
     i4: 'Full history, no windows',
     i5: 'Delivery-note reconciliation and supplier orders',
     i6: 'Full vendor directory and spend analytics',

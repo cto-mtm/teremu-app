@@ -8,8 +8,8 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
  * expired by TTL on `purgeAt` (firestore.indexes.json).
  */
 const DAILY_CAPS = {
-  /** Google Places autocomplete (setup search). */
-  listingSearches: 100,
+  /** Google Places autocomplete (setup search): one lookup is ~3–6 requests. */
+  listingSearches: 30,
   /** Google Places photos + reviews (one per import's review screen). */
   listingMedia: 10,
   /** Menu AI: photo-of-the-menu reads and recipe drafts (2–4 per wizard run). */

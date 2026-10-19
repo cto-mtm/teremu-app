@@ -56,7 +56,7 @@ import { toNodeHandler } from "@mtmcya/assistant/node";
 import { assistant, type AssistantPrincipal } from "./assistant/manifest.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
-import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, planOf } from "./plan.js";
+import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, PLAN_LIMITS, planOf } from "./plan.js";
 import {
   billingConfigured,
   cancelSubscription,
@@ -323,7 +323,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     }
     if (m === "GET" && id === "search" && seg.length === 2) {
       const q = String(req.query.q ?? "").trim().slice(0, 120);
-      if (q.length < 2) return json(res, 200, { results: [] });
+      if (q.length < 3) return json(res, 200, { results: [] }); // free: no Google call
       if (!(await consumeDaily(rid, "listingSearches"))) return json(res, 429, { error: "search_limit" });
       const session = typeof req.query.session === "string" ? req.query.session.slice(0, 64) : undefined;
       const results = await backend.places.autocomplete(q, { session, country: planInfo.country, language });
@@ -1139,7 +1139,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // with no tool call and no extra read — planInfo is already loaded.
       planLabel: planInfo.plan,
       scansLabel: `${planInfo.scanCount} used of ${planInfo.limits.scans} this month (${scansLeft} left); upgrade for more`,
-      assistantLabel: planInfo.limits.assistant ? "included on this plan" : "not on this plan (upgrade to Pro)",
+      assistantLabel: `${planInfo.limits.assistantTurns} questions a month on this plan${planInfo.plan === "free" ? ` (Pro: ${PLAN_LIMITS.pro.assistantTurns})` : ""}`,
       // One line each, ≤ 80 chars (the package's fact limit).
       restaurantLabel: (planInfo.name || "not set").slice(0, 80),
       cuisineLabel: (planInfo.cuisines.join(", ") || "not set").slice(0, 80),

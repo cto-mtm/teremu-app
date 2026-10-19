@@ -167,14 +167,21 @@ describe("daily abuse caps (helpers/dailyCap.ts)", () => {
   const seed = (rid: string, counts: Record<string, number>) =>
     db().doc(`restaurants/${rid}/dailyUsage/${today()}`).set(counts, { merge: true });
 
-  it("search stops at 100 a day, media at 10", async () => {
+  it("search stops at 30 a day, media at 10", async () => {
     const o = await newOwner();
     await post("/listing/imports", o.token, { placeId: "fake-faro" }, o.rid);
-    await seed(o.rid, { listingSearches: 99, listingMedia: 9 });
+    await seed(o.rid, { listingSearches: 29, listingMedia: 9 });
     expect((await get("/listing/search?q=faro", o.token, o.rid)).status).toBe(200);
     expect(await get("/listing/search?q=faro", o.token, o.rid)).toMatchObject({ status: 429, body: { error: "search_limit" } });
     expect((await get("/listing/place/fake-faro/media", o.token, o.rid)).status).toBe(200);
     expect(await get("/listing/place/fake-faro/media", o.token, o.rid)).toMatchObject({ status: 429, body: { error: "media_limit" } });
+  });
+
+  it("a search under 3 characters returns nothing and spends no cap", async () => {
+    const o = await newOwner();
+    await seed(o.rid, { listingSearches: 30 });
+    expect(await get("/listing/search?q=fa", o.token, o.rid)).toMatchObject({ status: 200, body: { results: [] } });
+    expect((await db().doc(`restaurants/${o.rid}/dailyUsage/${today()}`).get()).get("listingSearches")).toBe(30);
   });
 
   it("the menu wizard's AI calls stop at 30 a day per restaurant", async () => {

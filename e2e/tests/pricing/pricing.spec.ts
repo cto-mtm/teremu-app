@@ -1,6 +1,6 @@
 /**
  * Plans: the pricing page reflects the restaurant's plan, and the
- * Pro-only surfaces (POS integrations, the assistant) are gated on Free.
+ * Pro-only surfaces (POS integrations) are gated on Free.
  *
  * Billing is not configured in the emulator, so "upgrade" ends in the
  * checkout placeholder — the spec asserts that hand-off, not a payment.

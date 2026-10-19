@@ -14,7 +14,7 @@ import { createIngredient } from '../../flows/pantry.flow'
 import { createDish } from '../../flows/menu.flow'
 import { setPlanEverywhere } from '../../flows/plan.flow'
 
-// The assistant is Pro+: its monthly quota is 0 turns on the free plan.
+// Pro so the run never meets the free plan's 20-questions-a-month quota.
 
 test.describe('Assistant', () => {
   // The sidebar entry lives in the off-canvas drawer on phones; the

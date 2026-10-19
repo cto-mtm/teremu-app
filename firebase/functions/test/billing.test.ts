@@ -73,11 +73,15 @@ describe("billing", () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
 
     // The assistant (@mtmcya/assistant) gates by plan through its monthly
-    // quota: free = 0 turns → 429 quota_exceeded; the modal shows the
-    // upgrade notice. A turn goes to /assistant/conversation/turn.
+    // quota: free = 20 turns, then 429 quota_exceeded (the modal shows the
+    // upgrade notice). A turn goes to /assistant/conversation/turn.
     const ask = () => post("/assistant/conversation/turn", owner.token, { message: { text: "hola" } });
+    expect((await ask()).status).toBe(200); // free plan: a taste
+    const ref = getFirestore().doc(`restaurants/${owner.rid}`);
+    const usage = (await ref.get()).get("aiUsage") as Record<string, unknown>;
+    await ref.set({ aiUsage: { ...usage, used: 20 } }, { merge: true });
     const before = await ask();
-    expect(before.status).toBe(429); // free plan: no assistant turns
+    expect(before.status).toBe(429); // the free month is spent
     expect(before.body.error).toBe("quota_exceeded");
 
     const flip = await put("/billing/plan", owner.token, { plan: "pro" });

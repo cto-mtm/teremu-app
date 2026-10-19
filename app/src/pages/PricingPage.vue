@@ -21,7 +21,7 @@ const plan = computed(() => auth.profile?.plan)
 const interval = ref<'month' | 'year'>('month')
 const busy = ref(false)
 
-const FREE_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9'] as const
+const FREE_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10'] as const
 const PRO_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10'] as const
 const MAX_ITEMS = ['i1', 'i2'] as const
 

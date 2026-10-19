@@ -54,18 +54,18 @@ If any single task underperforms on the lite tier, bump `LLM_MODEL` (or, if task
 
 ## Usage & cost model (per call, Gemini 3.1 Flash-Lite prices)
 
-Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2560 OCR — sized for the line-item shape including subcategory / 3072 menu / 4096 drafts / 600 assistant), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and the assistant snapshot is capped by its Firestore query limits (300 ingredients, 200 dishes, 40 documents, 90+90 finance rows — `assistant.ts`).
+Low/avg/worst token estimates per call type. The worst cases are not guesses — they are **bounded by the code**: `max_tokens` caps output per call (2560 OCR — sized for the line-item shape including subcategory / 3072 menu / 4096 drafts), the OCR known-ingredients list is capped at 300 names (`pipeline.ts`), and an assistant turn is capped by the package (≤4 tool steps, ≤1,024 output tokens per step, a 30-message window, tool rows capped by each query's `limit` — § Assistant).
 
 | Call | Input tokens (low/avg/worst) | Output (low/avg/cap) | Cost low/avg/worst |
 | --- | --- | --- | --- |
 | Invoice scan | 1K / 2.8K / 8.6K (prompt 800 + catalog 0–1.8K + image 0.3–6K) | 350 / 900 / 2560 | $0.001 / $0.003 / $0.012 |
-| Assistant question | 1.7K / 8K / 30K (system + ≤10 history turns + data snapshot) | ≤600 | $0.0007 / $0.003 / $0.009 |
+| Assistant question (one turn, 1–4 tool steps) | 3K / 6K / 100K (prompt + tools + window + tool rows, summed over steps) | 150 / 300 / 4×1024 | $0.001 / $0.002 / $0.03 |
 | Menu wizard (extract + drafts, one-time) | ~2K / 5K / 12K across both calls | ≤3072 + ≤4096 | $0.002 / $0.005 / $0.02 per full run |
 
 Costs include a ~1.2× retry allowance; worst-case columns assume a retry on top of every cap being hit. **These estimates are the planning prior only**: `chatCompletion` logs a structured `llm_usage` line (label, model, prompt/completion tokens) on every call, so once traffic exists the real per-feature cost distributions (P50/P95/P99) come from Cloud Logging, not this table — see the measurement methodology in `docs/business-model.md` §4. The two variance drivers worth knowing:
 
 1. **Image resolution** dominates scan input. Gemini tokenizes images in 768×768 tiles (~258 tokens each). The app already downscales captures to ≤1600px before upload (`app/src/lib/domain.ts`, `downscaleReceipt`) ≈ ~6 tiles ≈ **~1.5K tokens** — so the "avg" column is the verified normal case, and the 6K worst case only applies to images that bypass the app's scanner (e.g., future direct uploads). Keep that downscale step: it is a cost control, not just a bandwidth one.
-2. **Assistant snapshot scales with restaurant size** (~20× spread between a new restaurant and one hitting every query cap). The caps make the worst case ~$0.009/question; a mature restaurant asking daily questions costs more per month from the assistant than from scanning.
+2. **Assistant steps and history**, not restaurant size: tools fetch only the rows a question needs, so a turn costs about the same in a new restaurant and a mature one. The spread comes from how many tool steps it takes and how long the conversation is; the package's per-turn caps make the worst case ~$0.03/question.
 
 ## Getting JSON back
 
@@ -102,6 +102,6 @@ What lives in this repo is **data**, under `firebase/functions/src/assistant/`: 
 | `GOOGLE_VERTEX_LOCATION` | `functions/.env` | `global` — Gemini 3.x ids 404 on regional endpoints. |
 | `TEREMU_TEST_MOCKS` | test script | Swaps in the scripted model (`src/assistant/script.ts`); the engine refuses a mock on Cloud Run outside the emulator. |
 
-Cost and quota: the package's monthly counter lives on `restaurants/{rid}.aiUsage` (free 0, pro 300, max 1000 turns/month, 60 per person per day — `manifest.ts`), replacing the old 10 s per-member cooldown; every turn is logged to `ai_usage` with `estimatedCostMicros`. Measured in the package on 2026-10-13: a two-step Flash-Lite turn is ≈ $0.0005. Model ids and prices are tables in the package (`src/server/engine/models.ts`), never here. Locally the emulator needs `gcloud auth application-default login`; the integration suite never calls Vertex.
+Cost and quota: the package's monthly counter lives on `restaurants/{rid}.aiUsage` (free 20, pro 300, max 1000 turns/month, 60 per person per day — the numbers live in `plan.ts` `PLAN_LIMITS.assistantTurns`, read by `manifest.ts`; turns, not tokens), replacing the old 10 s per-member cooldown; every turn is logged to `ai_usage` with `estimatedCostMicros`. Measured in the package on 2026-10-13: a two-step Flash-Lite turn is ≈ $0.0005. Model ids and prices are tables in the package (`src/server/engine/models.ts`), never here. Locally the emulator needs `gcloud auth application-default login`; the integration suite never calls Vertex.
 
 Runbook and pitfalls: `../mtmcya-app-assistant/docs/integrations/teremu.md` and `agent/skills/assistant-integrate/SKILL.md`.

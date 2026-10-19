@@ -90,7 +90,7 @@ describe("freemium paywalls", () => {
     expect(body.error).toBe("member_limit");
   });
 
-  it("gates the assistant behind Pro through its monthly quota (free = 0 turns, no cooldown)", async () => {
+  it("meters the assistant by plan through its monthly quota (free = 20 turns, no cooldown)", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     // The assistant is the shared @mtmcya/assistant; a turn is a streamed
     // POST /assistant/conversation/turn (test/assistant.test.ts covers the
@@ -98,6 +98,11 @@ describe("freemium paywalls", () => {
     // turns per month per restaurant plus a daily per-person cap.
     const ask = (text: string) => post("/assistant/conversation/turn", owner.token, { message: { text } });
 
+    expect(PLAN_LIMITS.free.assistantTurns).toBe(20); // guard against the limit silently drifting
+    expect((await ask("hola")).status).toBe(200); // free gets a taste
+    const ref = getFirestore().doc(`restaurants/${owner.rid}`);
+    const usage = (await ref.get()).get("aiUsage") as Record<string, unknown>;
+    await ref.set({ aiUsage: { ...usage, used: 20 } }, { merge: true });
     const blocked = await ask("hola");
     expect(blocked.status).toBe(429);
     expect(blocked.body.error).toBe("quota_exceeded");
