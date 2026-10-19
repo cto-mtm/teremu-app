@@ -182,18 +182,25 @@ const headerRid = (req: Request): string | undefined => {
   return typeof rid === "string" && rid.length > 0 ? rid : undefined;
 };
 
-/** Verify the bearer token and resolve the caller's active membership. */
+/**
+ * Verify the bearer token and resolve the caller's active membership.
+ * null = not authenticated (no token, or one that doesn't verify) → 401.
+ * A failure AFTER the token verified (Firestore unavailable mid-lookup)
+ * is not the caller's fault: it throws, so the router logs it and
+ * answers 500 instead of a 401 that looks like a bad sign-in.
+ */
 export async function requireMember(req: Request): Promise<Member | null> {
   const header = req.headers.authorization ?? "";
   const match = header.match(/^Bearer (.+)$/);
   if (!match) return null;
+  let decoded;
   try {
-    const decoded = await getAuth().verifyIdToken(match[1]);
-    const email = decoded.email ?? `${decoded.uid}@no-email.local`;
-    return await resolveMember(decoded.uid, email, headerRid(req));
+    decoded = await getAuth().verifyIdToken(match[1]);
   } catch {
     return null;
   }
+  const email = decoded.email ?? `${decoded.uid}@no-email.local`;
+  return resolveMember(decoded.uid, email, headerRid(req));
 }
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 };
