@@ -58,3 +58,31 @@ export const SAMPLE_RECEIPT: Record<string, string> = {
   chromium: path.join(SAMPLES, 'receipt-produce.jpg'),
   mobile: path.join(SAMPLES, 'receipt-bakery.jpg'),
 }
+
+/**
+ * One photo per (scanning spec × project) beyond the golden path — same
+ * rule as SAMPLE_RECEIPT: no file is ever uploaded twice into the shared
+ * restaurant. Keyed by what the spec uses it for.
+ */
+export const SCAN_SAMPLES = {
+  /** triage/dismiss-expense.spec.ts */
+  dismiss: {
+    chromium: path.join(SAMPLES, 'receipt-meat.jpg'),
+    mobile: path.join(SAMPLES, 'receipt-seafood.jpg'),
+  },
+  /** triage/reconciliation.spec.ts — approved as the albarán */
+  deliveryNote: {
+    chromium: path.join(SAMPLES, 'delivery-note-albaran.jpg'),
+    mobile: path.join(SAMPLES, 'receipt-thermal-dairy.jpg'),
+  },
+  /** triage/reconciliation.spec.ts — approved as the matching factura */
+  invoice: {
+    chromium: path.join(SAMPLES, 'receipt-beverage.jpg'),
+    mobile: path.join(SAMPLES, 'receipt-spanish-factura.jpg'),
+  },
+  /** vendors/vendor-detail.spec.ts */
+  vendor: {
+    chromium: path.join(SAMPLES, 'receipt-demo-taqueria-produce.jpg'),
+    mobile: path.join(SAMPLES, 'receipt-demo-pastry-fruit.jpg'),
+  },
+} satisfies Record<string, Record<string, string>>

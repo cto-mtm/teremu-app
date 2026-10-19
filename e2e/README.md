@@ -51,14 +51,20 @@ e2e/
 │   ├── auth.flow.ts         # the Auth emulator's fake Google account picker
 │   ├── pantry.flow.ts       # create ingredient, read stock, physical count
 │   ├── menu.flow.ts         # create dish (+ recipe lines)
-│   └── invoice.flow.ts      # upload receipt → wait for OCR → review + approve
+│   ├── plan.flow.ts         # setPlanEverywhere() — specs set the plan they need
+│   └── invoice.flow.ts      # upload → wait for OCR → approve (golden path + per-scan-id helpers)
 └── tests/
     ├── auth.setup.ts        # sign in + first-login tour → saves storageState
     ├── auth/login.spec.ts   # signed-OUT: login page + route guard
     ├── menu/                # dish costing and target-margin flagging
     ├── pantry/              # manual ingredient creation, physical count
     ├── pulse/               # revenue entry → pantry depletion
-    └── scan/                # the golden path: scan → triage → approve
+    ├── scan/                # the golden path: scan → triage → approve
+    ├── triage/              # dismiss → restore → approve as expense; albarán ↔ factura reconciliation
+    ├── vendors/             # directory search, vendor page, ordering contact
+    ├── settings/            # team invite + per-area permissions (second signed-in user),
+    │                        #   location name / labor rate / units / health, new location + POS
+    └── pricing/             # plan page, free vs pro gates
 ```
 
 ## How it works
@@ -105,9 +111,17 @@ Authenticated specs must therefore import `{ test, expect }` from
   for any value a spec later finds by its text: two projects logging the same
   takings on the same day render two identical rows (see `revenue.spec.ts`).
 - **One sample receipt per project.** `POST /invoices` refuses bytes the
-  restaurant already holds (409 `duplicate_image`). `SAMPLE_RECEIPT` in
-  `constants.ts` maps a different `docs/samples/dummy/*.jpg` to each project; a
-  new scanning spec needs a new file, not a shared one. Never reach into
+  restaurant already holds (409 `duplicate_image`). `SAMPLE_RECEIPT` and
+  `SCAN_SAMPLES` in `constants.ts` map a different `docs/samples/dummy/*.jpg` to
+  each (spec × project); a new scanning spec needs new files, not shared ones.
+  Address a scan by the id `uploadScan()` returns, never "the first card".
+- **Set the plan you need.** The plan is shared restaurant state and spec order is
+  not guaranteed — a spec that depends on Free or Pro calls
+  `setPlanEverywhere()` first (`flows/plan.flow.ts`).
+- **One run at a time.** `test:e2e` and `test:integration:exec` both free the
+  emulator ports before booting their own, so two concurrent runs (another
+  terminal, another agent session) kill each other's emulators. The e2e runner's
+  `.run.lock` only guards against a second *e2e* run. Never reach into
   `docs/samples/real/` — that's the gitignored customer corpus.
 - **Structural assertions on OCR.** What a scan comes back with depends on the
   emulator: with no LLM key the pipeline falls back to a *randomized* offline

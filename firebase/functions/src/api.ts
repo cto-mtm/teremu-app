@@ -968,13 +968,23 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "PUT" && id && seg.length === 2) {
       if (!can(member, "pantry", "edit")) return forbidden(res);
       const body = vendorContactSchema.parse(req.body);
-      await col("vendorContacts").doc(id).set({
+      // The vendor key is a normalized NAME ("frutas selectas"), so it
+      // arrives percent-encoded in the path; req.path is not decoded. Stored
+      // raw, the doc id ("frutas%20selectas") would never match the key the
+      // app and POST /orders look it up by.
+      let key: string;
+      try {
+        key = decodeURIComponent(id);
+      } catch {
+        return json(res, 400, { error: "invalid vendor key" });
+      }
+      await col("vendorContacts").doc(key).set({
         name: body.name.trim(),
         email: body.email?.trim() || null,
         phone: body.phone?.trim() || null,
       });
-      const snap = await col("vendorContacts").doc(id).get();
-      return json(res, 200, { vendorKey: id, ...snap.data() });
+      const snap = await col("vendorContacts").doc(key).get();
+      return json(res, 200, { vendorKey: key, ...snap.data() });
     }
   }
 

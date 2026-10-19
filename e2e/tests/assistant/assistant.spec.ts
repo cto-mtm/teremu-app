@@ -9,30 +9,12 @@
  * itself runs for real against the emulator's Firestore.
  */
 import { test, expect } from '../../fixtures'
-import { FIRESTORE_EMULATOR, PROJECT_ID } from '../../constants'
 import { unique } from '../../flows/data'
 import { createIngredient } from '../../flows/pantry.flow'
 import { createDish } from '../../flows/menu.flow'
+import { setPlanEverywhere } from '../../flows/plan.flow'
 
-/**
- * The assistant is Pro+: its monthly quota is 0 turns on the free plan.
- * Flip every restaurant in the (wiped, single-owner) emulator to pro
- * through the Firestore emulator's REST API — the same emulator-only
- * switch the API suite uses, without needing the owner's id token here.
- */
-async function setAllRestaurantsPro(): Promise<void> {
-  const base = `${FIRESTORE_EMULATOR}/v1/projects/${PROJECT_ID}/databases/(default)/documents`
-  const headers = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }
-  const list = (await (await fetch(`${base}/restaurants`, { headers })).json()) as { documents?: Array<{ name: string }> }
-  for (const doc of list.documents ?? []) {
-    const res = await fetch(`${FIRESTORE_EMULATOR}/v1/${doc.name}?updateMask.fieldPaths=plan`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ fields: { plan: { stringValue: 'pro' } } }),
-    })
-    if (!res.ok) throw new Error(`[e2e] could not set plan=pro on ${doc.name}: ${res.status}`)
-  }
-}
+// The assistant is Pro+: its monthly quota is 0 turns on the free plan.
 
 test.describe('Assistant', () => {
   // The sidebar entry lives in the off-canvas drawer on phones; the
@@ -40,7 +22,7 @@ test.describe('Assistant', () => {
   test.skip(({ isMobile }) => !!isMobile, 'desktop-only smoke')
 
   test('answers a margin question with a dish-cost card from the pantry prices', async ({ page }, testInfo) => {
-    await setAllRestaurantsPro()
+    await setPlanEverywhere('pro')
 
     const tomato = unique(testInfo, 'Tomate')
     const dish = unique(testInfo, 'Ensalada')

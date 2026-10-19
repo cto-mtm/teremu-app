@@ -97,3 +97,68 @@ export async function approveInvoice(
 
   return firstItem
 }
+
+// ── Per-scan helpers ────────────────────────────────────────────────
+// The helpers above act on "the first reviewable card", which is right for
+// the golden path but ambiguous once a spec holds several scans at once
+// (or another spec left one behind). These address ONE scan by the id the
+// upload returned.
+
+/**
+ * Upload a photo from /scan and return the new invoice's id. `file` must
+ * be unique per project — see SCAN_SAMPLES in constants.ts.
+ */
+export async function uploadScan(page: Page, file: string): Promise<string> {
+  await page.goto('/scan')
+  await expect(page.getByRole('button', { name: 'Capturar factura' })).toBeVisible()
+  const upload = page.waitForResponse((r) => /\/api\/invoices$/.test(r.url()) && r.request().method() === 'POST')
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles(file)
+  const res = await upload
+  expect(res.status(), 'POST /invoices accepted the upload').toBe(201)
+  const { id } = (await res.json()) as { id: string }
+  expect(id, 'the upload returned an invoice id').toBeTruthy()
+  return id
+}
+
+/** The triage card link of one scan (it only becomes a link once OCR lands). */
+export function scanCard(page: Page, id: string): Locator {
+  return page.locator(`a[href="/triage/${id}"]`)
+}
+
+/** On /triage, wait until this scan has come back from OCR ready to review. */
+export async function waitForScan(page: Page, id: string): Promise<void> {
+  await page.goto('/triage')
+  const card = scanCard(page, id)
+  await expect(card, `scan ${id} finished OCR and is waiting for review`).toContainText('Revisar', {
+    timeout: OCR_TIMEOUT,
+  })
+  await expect(card).toContainText('artículos')
+}
+
+/**
+ * Open one scan in Triage, set vendor/date (and the document type), and
+ * approve it — as a factura (default) or an albarán.
+ */
+export async function approveScan(
+  page: Page,
+  id: string,
+  opts: { vendor: string; date?: string; deliveryNote?: boolean },
+): Promise<void> {
+  await waitForScan(page, id)
+  await scanCard(page, id).click()
+  await expect(page).toHaveURL(new RegExp(`/triage/${id}$`))
+  await fillScanHeader(page, opts)
+  if (opts.deliveryNote) {
+    await page.getByRole('button', { name: 'Albarán', exact: true }).click()
+    await expect(page.getByText('Los albaranes se aprueban solo para conciliación')).toBeVisible()
+  }
+  await page.getByRole('button', { name: /^Aprobar factura/ }).click()
+  await expect(page.getByRole('button', { name: /^Aprobar factura/ })).toBeHidden()
+}
+
+/** Overwrite the OCR's vendor and date guesses on the open detail page. */
+export async function fillScanHeader(page: Page, opts: { vendor: string; date?: string }): Promise<void> {
+  // exact: the sidebar's Vendors tab is labelled "Proveedores".
+  await page.getByLabel('Proveedor', { exact: true }).fill(opts.vendor)
+  await page.locator('input[type="date"]').fill(opts.date ?? new Date().toISOString().slice(0, 10))
+}
