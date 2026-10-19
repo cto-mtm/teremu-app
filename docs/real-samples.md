@@ -39,6 +39,7 @@ are mangled by the filename. `golden.json` overrides it per document id
 | 4. API suite on the month | `npm run test:real` | yes (replay) | no |
 | 5. UI specs on the month | `npm run test:e2e:real` | yes (seeded from recordings) | no |
 | 6. seed an account | `npm run real:seed -- --project … --email …` | yes (from recordings) | writes to that project |
+| 7. reset the demo account | `npm run demo:reset -- --project … --email …` (docs/demo-account.md) | yes (from recordings, per day) | wipes + rewrites that demo location |
 
 **Why record/replay.** The model is non-deterministic and the offline mock
 is random, so neither can back exact assertions. `llm.ts` records each raw
