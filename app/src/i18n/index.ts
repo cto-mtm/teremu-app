@@ -19,6 +19,7 @@ import vendors from './locales/pages/vendors'
 import settings from './locales/pages/settings'
 import pricing from './locales/pages/pricing'
 import notfound from './locales/pages/notfound'
+import setup from './locales/pages/setup'
 
 export const SUPPORTED_LOCALES = LOCALES
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
@@ -41,6 +42,7 @@ const messages = {
     settings: settings.es,
     pricing: pricing.es,
     notfound: notfound.es,
+    setup: setup.es,
   },
   en: {
     common: common.en,
@@ -59,6 +61,7 @@ const messages = {
     settings: settings.en,
     pricing: pricing.en,
     notfound: notfound.en,
+    setup: setup.en,
   },
 } as const
 

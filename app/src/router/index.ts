@@ -43,6 +43,9 @@ const router = createRouter({
     { path: '/settings', name: 'settings', component: page(() => import('../pages/SettingsPage.vue')) },
     { path: '/integrations/:provider', name: 'pos-links', component: page(() => import('../pages/PosLinksPage.vue')) },
     { path: '/pricing', name: 'pricing', component: page(() => import('../pages/PricingPage.vue')) },
+    // Find-your-restaurant first run (docs/restaurant-listing.md). Owners
+    // only (guard below); the import itself is still mocked (Phase 0).
+    { path: '/setup/restaurant', name: 'restaurant-setup', component: page(() => import('../pages/RestaurantSetupPage.vue')) },
     // Catch-all 404. Required because Firebase Hosting rewrites every URL
     // to index.html — without this, typos render an empty RouterView.
     { path: '/:pathMatch(.*)*', name: 'not-found', component: page(() => import('../pages/NotFoundPage.vue')) },
@@ -74,6 +77,7 @@ export const REQUIRED: Record<string, [PermArea, PermLevel] | null> = {
   settings: null,
   'pos-links': ['integrations', 'read'],
   pricing: null,
+  'restaurant-setup': null, // owner-only — checked in the guard
   login: null,
   'not-found': null,
 }
@@ -86,6 +90,9 @@ export const FALLBACK_ORDER: { name: string; area: PermArea }[] = [
   { name: 'pantry', area: 'pantry' },
   { name: 'vendors', area: 'vendors' },
 ]
+
+/** Routes a pending first-run setup doesn't redirect away from. */
+export const SETUP_EXEMPT = new Set(['restaurant-setup', 'settings', 'pricing', 'login', 'not-found'])
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
@@ -104,6 +111,15 @@ router.beforeEach(async (to) => {
   }
   if (auth.user) {
     await auth.whenProfile()
+    // A new owner sets up their restaurant first (or skips it, once).
+    // Settings and pricing stay reachable so nobody is ever trapped.
+    if (auth.listingSetupPending && !SETUP_EXEMPT.has(String(to.name))) {
+      return { name: 'restaurant-setup' }
+    }
+    if (to.name === 'restaurant-setup' && auth.profile?.role !== 'owner') {
+      const allowed = FALLBACK_ORDER.find((f) => auth.can(f.area))
+      return { name: allowed?.name ?? 'settings' }
+    }
     const required = REQUIRED[String(to.name)] ?? null
     if (required && !auth.can(required[0], required[1])) {
       const allowed = FALLBACK_ORDER.find((f) => auth.can(f.area))

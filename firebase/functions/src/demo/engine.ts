@@ -274,6 +274,7 @@ export interface BuiltProfile {
     country: string;
     timezone: string;
     laborRatePerHour: null;
+    setupListing: "done";
   };
   ingredients: Map<string, IngredientDoc>;
   menuItems: Map<string, MenuItemDoc>;
@@ -799,6 +800,8 @@ export function buildProfile(spec: ProfileSpec, opts: BuildOptions): BuiltProfil
       country: spec.country,
       timezone,
       laborRatePerHour: null,
+      // A filmed demo opens on its data, not on "find your restaurant".
+      setupListing: "done",
     },
     ingredients,
     menuItems,

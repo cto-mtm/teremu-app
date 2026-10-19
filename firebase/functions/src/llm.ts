@@ -75,6 +75,9 @@ export function llmEnabled(): boolean {
 // OCR prompt embeds the restaurant's growing ingredient catalog, which
 // would make every key order-dependent. So replay tests the PIPELINE on
 // real model output; measuring a prompt change is the live eval's job.
+// A text-only call has nothing else to key on, so it keys on its text
+// (every message, in order): the text IS its input, and a prompt change
+// is a cache miss by design (docs/restaurant-listing.md — website menus).
 // Never active in a deployed function (K_SERVICE without the emulator).
 
 function cassetteMode(): "record" | "replay" | null {
@@ -93,8 +96,19 @@ function cassetteKey(messages: ChatMessage[], label: string): string | null {
         })
       : [],
   );
-  if (images.length === 0) return null; // text-only calls have no stable key
-  return cassetteKeyForImages(label, images);
+  if (images.length > 0) return cassetteKeyForImages(label, images);
+  return cassetteKeyForText(
+    label,
+    messages.map((m) => `${m.role}:${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`),
+  );
+}
+
+/** Text-only calls: label + every message's role and text, in order.
+ * `text-` keeps them apart from image cassettes under the same label. */
+export function cassetteKeyForText(label: string, texts: string[]): string {
+  const hash = createHash("sha256");
+  for (const text of texts) hash.update(text).update("\n");
+  return `${label}-text-${hash.digest("hex").slice(0, 40)}`;
 }
 
 /** The cassette a call with these image parts (in order) records to —
@@ -147,7 +161,7 @@ export async function chatCompletion(
   if (file && existsSync(file)) return play(JSON.parse(readFileSync(file, "utf8")) as Cassette);
   // A replay miss is a hard failure, never a fallback: silently answering
   // with the random mock is exactly the nondeterminism replay removes.
-  if (mode === "replay") throw new Error(`llm cassette miss: ${key ?? "(text-only call)"}`);
+  if (mode === "replay") throw new Error(`llm cassette miss: ${key}`);
   const apiKey = llmApiKey();
   if (!apiKey) throw new Error("no LLM API key"); // callers mock before reaching here
   const record = (outcome: { content: string } | { error: string }) => {

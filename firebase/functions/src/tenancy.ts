@@ -4,6 +4,7 @@ import type { Request } from "firebase-functions/v2/https";
 import {
   DEFAULT_RESTAURANT_NAME,
   memberDocSchema,
+  newRestaurantSetupFields,
   normalizeName,
   OWNER_PERMS,
   type MemberDoc,
@@ -97,6 +98,7 @@ async function bootstrapRestaurant(uid: string, email: string): Promise<void> {
     plan: "free",
     scanPeriod: null,
     scanCount: 0,
+    ...newRestaurantSetupFields(),
   });
   batch.set(restRef.collection("members").doc(uid), member);
   batch.set(db.collection("users").doc(uid), { restaurantId: restRef.id }, { merge: true });

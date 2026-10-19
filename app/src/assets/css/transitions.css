@@ -67,3 +67,100 @@
 .fade-leave-to {
   opacity: 0;
 }
+
+/* Recipe 6 — restaurant setup (RestaurantSetupPage). Phase swap
+   (<Transition name="setup-phase">), status pop (setup-pop), progress
+   bar, staggered card rise, and two ambient loops (search float,
+   import radar rings) that stop under reduced motion. */
+.setup-phase-enter-active,
+.setup-phase-leave-active {
+  transition:
+    transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.setup-phase-enter-from {
+  transform: translateY(16px) scale(0.98);
+  opacity: 0;
+}
+.setup-phase-leave-to {
+  transform: translateY(-12px);
+  opacity: 0;
+}
+
+.setup-pop-enter-active,
+.setup-pop-leave-active {
+  transition:
+    transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.setup-pop-enter-from,
+.setup-pop-leave-to {
+  transform: scale(0.6);
+  opacity: 0;
+}
+
+.setup-bar {
+  transition: transform 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.setup-rise {
+  animation: setup-rise 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes setup-rise {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+}
+
+.setup-pop-in {
+  animation: setup-pop-in 340ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes setup-pop-in {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+
+.setup-ring {
+  animation: setup-ring 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.setup-ring-late {
+  animation-delay: 0.9s;
+}
+@keyframes setup-ring {
+  from {
+    transform: scale(0.7);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.setup-float {
+  animation: setup-float 3s ease-in-out infinite;
+}
+@keyframes setup-float {
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-phase-enter-active,
+  .setup-phase-leave-active,
+  .setup-pop-enter-active,
+  .setup-pop-leave-active,
+  .setup-bar {
+    transition: none;
+  }
+  .setup-rise,
+  .setup-pop-in,
+  .setup-ring,
+  .setup-float {
+    animation: none;
+  }
+}

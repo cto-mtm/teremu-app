@@ -4,9 +4,11 @@ import {
   currencySchema,
   DEFAULT_CURRENCY,
   fxSourceSchema,
+  setupListingSchema,
   timezoneSchema,
   type Currency,
   type FxSource,
+  type SetupListing,
 } from "./models.js";
 
 /**
@@ -63,6 +65,8 @@ export interface PlanInfo {
   timezone: string | null;
   fxDefaultSource: FxSource | null;
   fxOptIns: FxSource[];
+  /** First-run "find your restaurant" step — same read. Absent = done. */
+  setupListing: SetupListing;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -81,6 +85,7 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     timezone: timezoneSchema.nullable().catch(null).parse(snap.get("timezone") ?? null),
     fxDefaultSource: fxSourceSchema.nullable().catch(null).parse(snap.get("fxDefaultSource") ?? null),
     fxOptIns: fxSourceSchema.array().catch([]).parse(snap.get("fxOptIns") ?? []),
+    setupListing: setupListingSchema.catch("done").parse(snap.get("setupListing")),
   };
 }
 

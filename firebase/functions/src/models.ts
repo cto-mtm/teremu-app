@@ -9,6 +9,7 @@ import {
   isSubcategoryOf,
   localeSchema,
   permsSchema,
+  setupListingSchema,
   subcategorySchema,
   timezoneSchema,
   unitSchema,
@@ -331,10 +332,25 @@ export const restaurantDocSchema = z.object({
   // pack offers more than one / has opt-ins). Empty for the world.
   fxDefaultSource: fxSourceSchema.optional(),
   fxOptIns: z.array(fxSourceSchema).optional(),
+  // "Find your restaurant" first-run step (docs/restaurant-listing.md).
+  // Absent = done: only locations created after it shipped start pending.
+  setupListing: setupListingSchema.optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
 export const DEFAULT_RESTAURANT_NAME = "My restaurant";
+
+/**
+ * The first-run fields a NEW location is created with. While the listing
+ * import is still mocked (Phase 0 of docs/restaurant-listing.md) the step
+ * is gated: on in the emulator unless LISTING_SETUP=off, off when deployed
+ * unless LISTING_SETUP=on — so production owners never land on a mock.
+ */
+export function newRestaurantSetupFields(): { setupListing?: "pending" } {
+  const flag = process.env.LISTING_SETUP;
+  const on = flag === "on" || (flag !== "off" && process.env.FUNCTIONS_EMULATOR === "true");
+  return on ? { setupListing: "pending" } : {};
+}
 
 /** POST /restaurants (create). */
 export const restaurantProfileSchema = z.object({

@@ -62,12 +62,14 @@ watch(
 
 // First-login tour: per DEVICE (localStorage, keyed by uid so shared
 // tablets behave). Skipping counts as seen; closing it marks it seen.
+// It waits for "find your restaurant" (docs/restaurant-listing.md): the
+// tour makes more sense once the owner's own restaurant is in.
 const onboardingOpen = ref(false)
 const onboardingKey = (uid: string) => `teremu-onboarded:${uid}`
 watch(
-  () => [authStore.profile, authStore.user] as const,
-  ([profile, user]) => {
-    if (profile && user && !localStorage.getItem(onboardingKey(user.uid))) {
+  () => [authStore.profile, authStore.user, authStore.listingSetupPending] as const,
+  ([profile, user, setupPending]) => {
+    if (profile && user && !setupPending && !localStorage.getItem(onboardingKey(user.uid))) {
       onboardingOpen.value = true
     }
   },

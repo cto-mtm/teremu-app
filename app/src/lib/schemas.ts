@@ -8,6 +8,7 @@ import {
   invoiceStatusSchema,
   localeSchema,
   permsSchema,
+  setupListingSchema,
   subcategorySchema,
   unitSchema,
 } from '@teremu/shared'
@@ -329,6 +330,9 @@ export const meSchema = z.object({
   fxDefaultSource: fxSourceSchema.nullable().optional().catch(null),
   fxOptIns: z.array(fxSourceSchema).optional().catch([]),
   countryProfile: countryProfileSchema.optional().catch(undefined),
+  // "Find your restaurant" first-run step (docs/restaurant-listing.md);
+  // an API from before it reads as done, so nobody gets redirected.
+  setupListing: setupListingSchema.catch('done'),
   locations: z.array(locationSchema),
 })
 

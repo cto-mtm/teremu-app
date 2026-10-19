@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { User } from 'firebase/auth'
 import { signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
 import { apiFetch } from '../lib/api'
@@ -119,6 +119,20 @@ export const useAuthStore = defineStore('auth', () => {
     await loadProfile()
   }
 
+  // ── "Find your restaurant" first-run step (docs/restaurant-listing.md) ─
+  // Only owners of a location that hasn't done (or skipped) it are sent
+  // there — invited staff join a restaurant someone already set up.
+  const listingSetupPending = computed(
+    () => profile.value?.role === 'owner' && profile.value.setupListing === 'pending',
+  )
+
+  /** One tap, final for this location: import later from Menu / Settings. */
+  async function skipListingSetup(): Promise<boolean> {
+    const res = await apiFetch('/listing/skip', { method: 'POST', body: '{}' })
+    if (res.ok && profile.value) profile.value = { ...profile.value, setupListing: 'skipped' }
+    return res.ok
+  }
+
   /** Granular permission check — owners bypass everything. */
   function can(area: PermArea, level: PermLevel = 'read'): boolean {
     const p = profile.value
@@ -191,6 +205,8 @@ export const useAuthStore = defineStore('auth', () => {
     whenReady,
     whenProfile,
     reloadProfile,
+    listingSetupPending,
+    skipListingSetup,
     can,
     chooseLocale,
     signIn,

@@ -30,6 +30,7 @@ import {
   posLinkActionSchema,
   posProviderSchema,
   reconcileSchema,
+  newRestaurantSetupFields,
   restaurantProfileSchema,
   revenueSchema,
   selectPosLocationSchema,
@@ -249,6 +250,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // Data-only view of the country pack: the client renders from this
       // and carries no per-country code (docs/multi-currency.md).
       countryProfile: profileOf(packFor(planInfo.country)),
+      // "Find your restaurant" first-run step (docs/restaurant-listing.md):
+      // the app sends an owner of a `pending` location to /setup/restaurant.
+      setupListing: planInfo.setupListing,
       locations,
     });
   }
@@ -258,6 +262,16 @@ async function route(req: Request, res: Response): Promise<unknown> {
     const body = updateLocaleSchema.parse(req.body);
     await db.doc(`users/${member.uid}`).set({ locale: body.locale }, { merge: true });
     return json(res, 200, { ok: true });
+  }
+
+  // ── "find your restaurant" first-run step (docs/restaurant-listing.md) ─
+  // Skipping is one tap and final: the owner can import later from the
+  // Menu page or Settings. Never demotes a finished import to skipped.
+  if (m === "POST" && head === "listing" && id === "skip" && seg.length === 2) {
+    if (member.role !== "owner") return forbidden(res);
+    if (planInfo.setupListing === "done") return json(res, 200, { setupListing: "done" });
+    await db.collection("restaurants").doc(rid).set({ setupListing: "skipped" }, { merge: true });
+    return json(res, 200, { setupListing: "skipped" });
   }
 
   // ── invoices ──────────────────────────────────────────────────
@@ -861,6 +875,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         plan: "free",
         scanPeriod: null,
         scanCount: 0,
+        ...newRestaurantSetupFields(),
       });
       batch.set(restRef.collection("members").doc(member.uid), newMember);
       batch.set(db.doc(`users/${member.uid}/memberships/${restRef.id}`), membership);

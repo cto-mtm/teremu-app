@@ -116,11 +116,24 @@ describe("llm cassettes", () => {
     await expect(chatCompletion(image("FFFF"), OPTS)).rejects.toThrow("no LLM API key");
   });
 
-  it("does not record text-only calls (no stable key)", async () => {
+  it("records and replays text-only calls, keyed on their text", async () => {
+    const menu: ChatMessage[] = [
+      { role: "system", content: "extract the menu" },
+      { role: "user", content: "Paella 18,50 · Bravas 6,50" },
+    ];
     process.env.LLM_CASSETTE_MODE = "record";
-    vi.stubGlobal("fetch", provider(200, "hello"));
-    await chatCompletion([{ role: "user", content: "just text" }], OPTS);
-    expect(readdirSync(dir)).toHaveLength(0);
+    vi.stubGlobal("fetch", provider(200, '{"dishes": []}'));
+    await chatCompletion(menu, { maxTokens: 10, label: "listing-menu" });
+    expect(readdirSync(dir)).toEqual([expect.stringMatching(/^listing-menu-text-[0-9a-f]{40}\.json$/)]);
+
+    process.env.LLM_CASSETTE_MODE = "replay";
+    delete process.env.LLM_API_KEY;
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network used during replay"))));
+    expect(await chatCompletion(menu, { maxTokens: 10, label: "listing-menu" })).toBe('{"dishes": []}');
+    // Different text (another site's menu) is a different cassette.
+    await expect(
+      chatCompletion([menu[0], { role: "user", content: "Tacos 9,00" }], { maxTokens: 10, label: "listing-menu" }),
+    ).rejects.toThrow(/llm cassette miss: listing-menu-text-/);
   });
 });
 

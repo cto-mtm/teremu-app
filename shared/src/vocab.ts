@@ -142,6 +142,13 @@ export const REVENUE_SOURCES = ["manual", "pos"] as const;
 export const revenueSourceSchema = z.enum(REVENUE_SOURCES);
 export type RevenueSource = z.infer<typeof revenueSourceSchema>;
 
+/** "Find your restaurant" first-run step (docs/restaurant-listing.md).
+ * `pending` sends a new owner to /setup/restaurant; absent on a stored
+ * restaurant = `done`, so every pre-existing location is untouched. */
+export const SETUP_LISTING_STATES = ["pending", "done", "skipped"] as const;
+export const setupListingSchema = z.enum(SETUP_LISTING_STATES);
+export type SetupListing = z.infer<typeof setupListingSchema>;
+
 // ── Granular permissions ────────────────────────────────────────────
 // Per-area access levels instead of fixed roles. Owners bypass all
 // checks (enforced server-side). Sharing this shape means adding a new

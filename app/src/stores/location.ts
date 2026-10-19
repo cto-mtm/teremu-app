@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import router, { FALLBACK_ORDER, REQUIRED } from '../router'
+import router, { FALLBACK_ORDER, REQUIRED, SETUP_EXEMPT } from '../router'
 import { setActiveRid } from '../lib/activeLocation'
 import { apiFetch } from '../lib/api'
 import { createdRestaurantSchema } from '../lib/schemas'
@@ -39,6 +39,12 @@ export const useLocationStore = defineStore('location', () => {
     await auth.reloadProfile() // re-reads /me for the new rid's role/perms
 
     const current = router.currentRoute.value
+    // A brand-new location (addLocation switches straight into it) gets
+    // its own "find your restaurant" step, like the first one did.
+    if (auth.listingSetupPending && !SETUP_EXEMPT.has(String(current.name))) {
+      await router.replace({ name: 'restaurant-setup' })
+      return
+    }
     const required = REQUIRED[String(current.name)] ?? null
     const stillAllowed = !required || auth.can(required[0], required[1])
     if (DETAIL_ROUTES.has(String(current.name)) || !stillAllowed) {
