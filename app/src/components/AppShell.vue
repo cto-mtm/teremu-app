@@ -4,6 +4,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
+import { useListingStore } from '../stores/listing'
 import { useAuthStore } from '../stores/auth'
 import { AssistantModal, useAssistant } from '@mtmcya/assistant/vue'
 import BootLoader from './BootLoader.vue'
@@ -18,6 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const invoicesStore = useInvoicesStore()
 const kitchenStore = useKitchenStore()
+const listingStore = useListingStore()
 const authStore = useAuthStore()
 
 // Chromeless routes: the scanner owns the viewport, login has no nav.
@@ -69,13 +71,15 @@ const onboardingKey = (uid: string) => `teremu-onboarded:${uid}`
 // Also not while the owner is still ON the setup page: finishing it marks
 // setup done, and the tour must not cover the "¡Listo!" screen.
 watch(
-  () => [authStore.profile, authStore.user, authStore.listingSetupPending, route.name] as const,
-  ([profile, user, setupPending, routeName]) => {
+  () => [authStore.profile, authStore.user, authStore.listingSetupPending, route.name, listingStore.handoff] as const,
+  ([profile, user, setupPending, routeName, handoff]) => {
     if (
       profile &&
       user &&
       !setupPending &&
       routeName !== 'restaurant-setup' &&
+      // …nor over the recipe wizard the setup hands off to (MenuPage).
+      !handoff &&
       !localStorage.getItem(onboardingKey(user.uid))
     ) {
       onboardingOpen.value = true

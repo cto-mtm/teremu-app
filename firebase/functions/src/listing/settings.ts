@@ -1,7 +1,9 @@
 import { getFirestore } from "firebase-admin/firestore";
 import type { Cuisine } from "../models.js";
 import { claimRef, releaseClaim, type PlaceClaim } from "./commit.js";
+import { RequestError } from "../pipeline.js";
 import { readNotes, writeNotes } from "./notes.js";
+import { normalizeWebsite } from "./website.js";
 
 /**
  * The Settings card "Tu restaurante" (docs/restaurant-listing.md): the
@@ -55,7 +57,11 @@ export async function updateListing(
 ): Promise<void> {
   const batch = db().batch();
   const patch: Record<string, unknown> = {};
-  if (body.website !== undefined) patch.website = body.website;
+  if (body.website !== undefined) {
+    const website = body.website === null || body.website === "" ? null : normalizeWebsite(body.website);
+    if (body.website && !website) throw new RequestError("bad_website");
+    patch.website = website;
+  }
   if (body.cuisines !== undefined) patch.cuisines = body.cuisines;
   if (Object.keys(patch).length) {
     batch.set(db().collection("restaurants").doc(rid), { listing: patch }, { merge: true });

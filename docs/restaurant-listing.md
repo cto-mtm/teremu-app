@@ -68,28 +68,31 @@ setupListing?: "pending" | "done" | "skipped"
 - Extra locations created with `POST /restaurants` also get `"pending"`: a new location is a new place with its own listing.
 - **Name collision:** `restaurantProfileSchema` already exists in `models.ts` (the `{name}` body of `POST /restaurants`). Don't reuse "profile" for this feature — hence `listing`.
 - `Cuisine` goes in `shared/src/vocab.ts` (per the schemas rule), with i18n keys `setup.cuisine.*` (already in the prototype).
-- The restaurant `name` (bootstrapped as "My restaurant") is overwritten with the confirmed name. `country` and `timezone` come from the place's address, through `packFor` (country literals outside `countries/` fail `boundaries.test.ts`). Careful: `prefillRegion` (`app/src/stores/auth.ts`) already writes a **device-region guess** on the owner's first load, before setup runs, so "only if unset" would mean the real address never wins. Add `regionSource: "device" | "listing" | "owner"` next to them: `prefillRegion` writes `device`, the Settings form writes `owner`, and commit overwrites only when the source is `device` (and the review screen shows the country it will set). Base currency follows the country only while `currencyLocked` is false.
+- The restaurant `name` (bootstrapped as "My restaurant") is overwritten with the confirmed name. `country` comes from the place's address (country literals outside `countries/` fail `boundaries.test.ts`). `prefillRegion` (`app/src/stores/auth.ts`) already writes a **device-region guess** on the owner's first load, before setup runs, so "only if unset" would mean the real address never wins. Hence `regionSource: "device" | "listing" | "owner"`: `prefillRegion` writes `device`, the Settings form writes `owner`, and commit overwrites the country unless the source is `owner`. **Timezone is not set**: Places (New) returns no IANA zone, and the device's guess is usually right. **Base currency** follows the new country only if it was never the owner's own pick: `currencySource: "owner" | "country"` (`baseCurrency.ts`, shared with `PUT /restaurants`). Unset or `country` may move; `owner`, or a pre-existing currency with no source, never does; and only while no invoice is approved.
 
 **`restaurants/{rid}/listingImports/{id}` — the job doc** (transient, TTL 7 days):
 
 ```ts
 {
-  status: "running" | "ready" | "failed"
-  createdBy: uid, createdAt, expiresAt
-  placeId: string | null
+  status: "open" | "committing" | "committed"   // "committing" = commit's short lease
+  createdBy: uid, createdAt, expiresAt (TTL), committingAt?, committedAt?
+  placeId: string | null, manualName: string | null
   steps: Record<"profile" | "photos" | "website" | "menu" | "reviews",
-    { state: "pending" | "running" | "done" | "not_found" | "failed", count?: number }>
-  place?: { name, address, country, timezone, phone, website, hours, rating, reviewCount, priceLevel, types, googleMapsUri }
-  candidates: Candidate[]           // dishes found, see below
-  websiteTried: string[]            // URLs crawled, for the "no menu on that site" message
+    { state: "pending" | "done" | "not_found" | "failed", count?: number }>
+  place: PlaceDetails | null        // listing/types.ts; cleared at commit
+  website: string | null, websiteTried: string[]
+  menuNote: "pdf" | null            // only a PDF menu was found
+  pages: { url, kind: "text" | "image" | "pdf", text? }[]   // server-side only; image bytes are re-fetched
+  menuRuns: number                  // at most 4 extraction runs per job
+  candidates: Candidate[]
 }
 
 Candidate = {
-  key: string                       // stable id for the client list
+  key: string                       // folded-name token key, stable within the import
   name: string; price: number | null; section: string | null
-  source: "website" | "website_pdf" | "website_image"
-  altPrice?: number                 // a second source disagreed
-  match?: { menuItemId: string; kind: "exact" | "fuzzy"; price: number }   // already on the menu
+  source: "website" | "website_image"
+  altPrice?: number                 // another page printed a different price
+  match?: { menuItemId; kind: "exact" | "fuzzy"; name; price }   // already on the menu
 }
 ```
 
@@ -100,10 +103,10 @@ Photos and reviews are **not** on the job doc — the client asks for them live 
 - `section?: string | null` — the menu heading; the review screen and the Menu page can group by it.
 - `origin?: "manual" | "menu_scan" | "listing" | "pos"` — provenance, `.catch("manual")`. Used for "imported dishes still need recipes" and for analytics on how menus get built.
 
-**`restaurants/{rid}/assistant/notes` — one doc** (owner-approved context for the assistant):
+**`restaurants/{rid}/assistantNotes/{n<i>}` — one doc per note** (owner-approved context for the assistant; a collection so the assistant reads it with a declarative `query` row):
 
 ```ts
-{ items: { id: string; text: string; origin: "suggested" | "owner" }[], updatedAt }
+{ text: string; origin: "suggested" | "owner"; order: number; updatedAt }
 ```
 
 Cap: 20 notes × 200 chars. Suggested notes come from the menu and listing only (cuisine, price band, average price, opening pattern), never from review text — see Compliance.
@@ -186,15 +189,20 @@ The progress on screen is the real step sequence. Leaving mid-import just abando
 
 | Route | Does |
 |---|---|
-| `GET /listing/search?q=&session=` | Autocomplete via the provider. `session` is a client-generated UUID so autocomplete + the final details call bill as one session. Biased to the restaurant's `country` if set. |
+| `GET /listing/search?q=&session=` | Autocomplete via the provider. `session` is a client-generated UUID so autocomplete + the final details call bill as one session. Biased to the restaurant's `country` if set. 300/day per restaurant, then 429. |
 | `POST /listing/imports` `{placeId, session}` or `{manual: {name}}` | Creates the job (manual = no Places step). Rate limit: 5 imports per restaurant per day → 429. |
 | `GET /listing/imports/:id` | The job (page texts stay server-side) — to resume. |
 | `POST /listing/imports/:id/website` `{url?}` | Reads the listing's site, or one the owner pasted (`"lalupita.es"` is fine). Candidates from earlier runs are kept. |
 | `POST /listing/imports/:id/menu` | Extracts, merges and matches the stored pages. |
-| `GET /listing/place/:placeId/media` | Live photos (proxied URLs, never the key) + reviews with attribution fields. Never stored. |
+| `GET /listing/place/:placeId/media` | Live photos (Google's short-lived photo URLs; the key never reaches the browser) + reviews with attribution. Never stored. Only for a place this restaurant is linked to, contests, or has a live import for (else 403); 30/day. |
 | `POST /listing/imports/:id/commit` | The single write. See below. |
 | `POST /listing/skip` | `setupListing: "skipped"`. |
-| `GET /listing` / `PUT /listing` | Settings card: read and edit the confirmed listing + notes. |
+| `GET /listing` / `PUT /listing` | Settings card: the confirmed listing, claim state and notes; edit website (normalized), cuisines, notes. |
+| `POST /listing/unlink` | Release the place (data stays). |
+| `POST /listing/verify` `{email}` / `POST /listing/verify/confirm` `{code}` | Claim verification (see Claims). |
+| `POST /listing/review` `{note?}` | Ask for manual review of a claim. |
+
+Every listing route is owner-only (401 signed out, 403 for staff); a job id from another restaurant is 404. `GET /me` carries `listingAvailable` so the app hides the entry points where no Places backend is configured.
 
 Menu photos added during review use the **existing** `POST /menu/scan` (and its 5s cooldown) and are merged client-side; no new upload path.
 
@@ -202,17 +210,17 @@ Menu photos added during review use the **existing** `POST /menu/scan` (and its 
 
 ```ts
 {
-  restaurant: { name, website, phone, address, cuisines, priceLevel },
-  dishes: { candidateKey?: string; name; price; section; action: "create" | "update_price" | "skip_existing"; menuItemId?: string }[],   // ≤150
+  restaurant: { name, website, cuisines, priceLevel },     // website normalized (bad = 400)
+  dishes: { name; price; section; action: "create" | "update_price" | "skip_existing"; menuItemId?: string }[],   // ≤150
   notes: { text; origin }[]                                                                                                         // ≤20
 }
 ```
 
-One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []`, `targetMarginPct: 70`, `active: true` — the wizard's defaults), patch the restaurant (`name`, `listing`, `setupListing: "done"`, country/timezone/currency prefill), write the notes doc, mark the job `committed`. The **place claim** (see Claims) is decided in a transaction that runs first; the batch carries its result (`listing.placeId` linked, or null plus `contested`). Then **one** `rematchAfterMenuChange(rid)` for the whole batch, not one per dish. Returns the created `menuItemId`s. Idempotent on the job id: a second commit returns 409.
+One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []`, `targetMarginPct: 70`, `active: true` — the wizard's defaults), patch the restaurant (`name`, `listing`, `setupListing: "done"`, country/timezone/currency prefill), write the notes, mark the job `committed` (new dishes get deterministic ids `<jobId>-d<i>`, so even a retried commit can't duplicate them). The **place claim** (see Claims) is decided in a transaction that runs first; the batch carries its result (`listing.placeId` linked, or null plus `contested`). Then **one** `rematchAfterMenuChange(rid)` for the whole batch, not one per dish. Returns the created `menuItemId`s. Idempotent on the job id: the link transaction first claims the job (`committing`, 60s lease), so a second commit returns 409. Re-importing a **different** place never releases a **verified** one (409 `verified_place_linked`; "Desvincular" first).
 
 **Assistant integration.** The assistant engine runs on Vertex Gemini via `@mtmcya/assistant` and does not use `llm.ts`. Two hooks, both server-side:
 
-- **Facts** (the system prompt's `Label: value.` tail; scalar, one line, ≤80 chars each): `Restaurante`, `Cocina` (cuisines joined), `Rango de precio`. Added to `AssistantPrincipal` in `api.ts` (one extra read of `restaurants/{rid}`, or fold into `getPlanInfo`) and declared in `manifest.facts`.
+- **Facts** (the system prompt's `Label: value.` tail; scalar, one line, ≤80 chars each): `Restaurant`, `Cuisine` (cuisines joined), `Price range`, from `getPlanInfo`'s existing read of `restaurants/{rid}`, put on `AssistantPrincipal` in `api.ts` and declared in `manifest.facts`.
 - **Tool** `getRestaurantNotes` (`query` row, `permission: "app:read"`) returning the notes doc, plus one rule line in `prompt.md` ("check the owner's notes before answering about opening hours, specialties or policies"). Built with the `assistant-tool` skill: row + fixtures + mock script keys + eval case + conformance.
 
 **Secrets & config.** `GOOGLE_PLACES_API_KEY = defineSecret(...)` is exported from `listing/google.ts` but **not yet in the `api` function's `secrets` array**: a deploy that references a secret missing from Secret Manager fails, so binding it is the go-live step (after the secret exists). Until then the key is read from the environment — put it in `firebase/functions/.env.local` to try real Google locally; tests always use the fake (`TEREMU_TEST_MOCKS`). `PLACES_API_URL` overrides the base URL. Set in prod with a script modeled on `scripts/pos-secrets.mjs` (refuses `demo-*`, checks state first, stdin only, `--dry-run`). In Google Cloud: restrict the key to Places API (New) only. **Never let a script or test reach the prod project without explicit OK.**
@@ -225,7 +233,7 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 
 - state: `phase`, `query`, `results`, `session`, `importId`, `job`, `dishes` (the editable review list: `{key, name, price, section, source, altPrice?, match?, selected, confirmed}`), `notes`, `restaurantDraft`, `media` (live photos/reviews), `error`.
 - actions: `search(q)` (200ms debounce + sequence guard, from the prototype), `start(placeId | manualName)`, `poll()` (setTimeout loop; stops on terminal state or `stop()` on unmount; after 90s with no step change shows a retry like Triage's `STALE_MS`), `readWebsite(url)`, `addMenuPhoto(file)` (`compressReceipt` → `apiUpload('/menu/scan')` → merge into `dishes`), `commit()`, `skip()`, `reset()`.
-- Draft survival: the review list is saved to `sessionStorage` under `teremu-listing-draft:${rid}:${importId}` so an accidental reload mid-review doesn't lose edits; the job doc itself is resumable (`GET /listing/imports/:id`). Location switch (`location.ts`) calls `listing.reset()` alongside `kitchen.reset()`.
+- Location switch (`location.ts`) calls `listing.reset()` alongside `kitchen.reset()`, and the page restarts on a restaurant change. Every async step checks an epoch that `reset()` bumps, so a step still in flight can't write into a newer import. (A review draft in `sessionStorage` is not built.)
 - `schemas.ts`: lenient `listingSearchSchema`, `listingImportSchema`, `listingMediaSchema`, `listingCommitResponseSchema`; types via `z.infer` in `types.ts`.
 
 **Page split.** `RestaurantSetupPage.vue` is ~700 lines in the prototype. Split into `components/setup/`: `SetupSearch.vue`, `SetupProgress.vue`, `SetupHero.vue` (identity + live photos + attribution), `SetupMenu.vue` + `SetupDishRow.vue` (editing, conflicts, matches against the existing menu: "ya en tu carta" / "precio cambió de X a Y"), `SetupReviews.vue` (attribution, ordering notice), `SetupNotes.vue`. Delete `restaurantLookupMock.ts` once the fake provider exists server-side.
@@ -240,9 +248,9 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 - Invited staff never see it: they join an existing restaurant (`role: member`), and the guard only redirects owners.
 - Re-entry points: the Menu page empty state ("Importar desde tu web o Google") and a Settings card.
 
-**Settings card "Tu restaurante"** (owner, after the location-name card): the linked place (with "Google Maps" attribution), editable website/phone/cuisines, the notes list (same editor as the setup screen), and "Volver a importar". Saves through `PUT /listing`.
+**Settings card "Tu restaurante"** (owner, after the location-name card): the linked place (with "Google Maps" attribution), editable website and cuisines, the claim (verify / review / unlink), the notes list (same editor as the setup screen), and "Volver a importar". Saves through `PUT /listing`.
 
-**Rules that apply unchanged.** Every string in `setup.ts` / `settings.ts`, `es` first, `en` typed against it; animations stay in Recipe 6 (transform/opacity, 200–350ms, reduced-motion off); money through `n(x, 'currency')` — a menu found in a foreign currency is not converted in v1, the review screen warns and the owner edits (base currency isn't locked yet at onboarding).
+**Rules that apply unchanged.** Every string in `setup.ts` / `settings.ts`, `es` first, `en` typed against it; animations stay in Recipe 6 (transform/opacity, 200–350ms, reduced-motion off); money through `n(x, 'currency')`. A menu found in a foreign currency is not converted in v1, and no warning is built yet: the owner edits the prices. Recipe 6's radar rings are a loading indicator, the one kind of loop `docs/animations.md` §4 allows.
 
 ## Money: the IVA question
 
@@ -283,7 +291,7 @@ Where Phase 1 as built differs from the design above, and why:
 - **Dishes:** `menuItems` gained `section` and `origin` (both sides; the app schema carries them through `PUT /menu-items/:id`, which replaces the whole doc). Commit creates dishes with an empty recipe at a 70% target, like the menu-scan wizard.
 - **Matching** uses `pos/matching.ts` tiers 1–2 (exact; fuzzy ≥ 0.8). A matched row commits as `update_price` when the price changed, else `skip_existing`.
 - **Assistant notes are a collection** — `restaurants/{rid}/assistantNotes/{n<i>}` (`text`, `origin`, `order`), not one doc: the assistant reads them with a declarative `query` row (`getRestaurantNotes`, `menu:read`), which can only read collections. `listing/notes.ts` owns reads/writes. Facts on the principal: `Restaurant`, `Cuisine`, `Price range` (from `getPlanInfo`'s existing read). `prompt.md` says notes are data, never instructions; `test/assistant.test.ts` has an injection-canary note.
-- **Verification as built:** email-at-domain only (domain from the LIVE listing's website; platform domains like facebook.com/wixsite.com excluded → manual review); 6-digit code hashed at rest, 15 min, 5 tries, 3 sends/hour, plus a per-address mail cap (`claim-verify` kind in `mail.ts`). Takeover moves the link in one transaction and mails the previous owner (`claim-transferred`). Manual review only records `placeClaims/{placeId}/reviews/{rid}` — there is no admin UI; support handles it in the console. Phone and Business Profile OAuth are not built.
+- **Verification as built:** email-at-domain only. The domain comes from the LIVE listing's website; site-builder, social and free-mail domains (facebook.com, wixsite.com, gmail.com, …) are excluded and go to manual review; the mailbox must be at that domain or a subdomain of it, never a parent (no public-suffix list, so strict on purpose). 6-digit code hashed at rest, 15 min, 5 tries counted in a transaction before the comparison, 3 sends/hour per restaurant and 6/hour per place across all restaurants, plus a per-address mail cap (`claim-verify` in `mail.ts`); stale verification docs expire by TTL (`purgeAt`). Takeover moves the link in one transaction and mails the previous owner (`claim-transferred`). Manual review only records `placeClaims/{placeId}/reviews/{rid}`: there is no admin UI, support handles it in the console. Phone and Business Profile OAuth are not built.
 - **Recipe hand-off:** `MenuScanWizard` takes seed entries with a `menuItemId` and updates those dishes in place; the Menu page shows "N platos importados sin receta → Estimar recetas" and the setup done screen deep-links to `/menu?recipes=listing`. `kitchen.saveMenuItem` now carries `section`/`origin` through a PUT.
 - **Not built:** PDF text, the review draft in sessionStorage, the split into `components/setup/`, the location name in the same-owner 409 copy, Phase 3, phone / Business Profile verification, a support UI for reviews, and a live `assistant:eval` run for `getRestaurantNotes` (this repo has no eval harness).
 

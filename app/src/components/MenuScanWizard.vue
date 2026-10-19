@@ -232,6 +232,12 @@ async function saveAll(withRecipes: boolean): Promise<void> {
       }
     }
     const existing = dish.menuItemId ? kitchen.menuItems.find((m) => m.id === dish.menuItemId) : undefined
+    // An existing dish that's gone (deleted meanwhile) is skipped — never
+    // re-created as a duplicate.
+    if (dish.menuItemId && !existing) {
+      saveProgress.value += 1
+      continue
+    }
     const saved = existing
       ? // Update in place: keep its target and other fields; a recipe only
         // replaces the old one when drafts were requested.

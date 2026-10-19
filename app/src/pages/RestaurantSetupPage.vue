@@ -6,7 +6,7 @@ import BaseButton from '../components/BaseButton.vue'
 import { parseAmount } from '../lib/csv'
 import { useAuthStore } from '../stores/auth'
 import { useKitchenStore } from '../stores/kitchen'
-import { useListingStore, type ReviewDish } from '../stores/listing'
+import { priceChanged, useListingStore, type ReviewDish } from '../stores/listing'
 
 /**
  * "Find your restaurant" — the first-run step for a new owner
@@ -23,7 +23,10 @@ const router = useRouter()
 
 type Phase = 'search' | 'importing' | 'review' | 'done'
 const phase = ref<Phase>('search')
-onBeforeUnmount(() => listing.reset())
+onBeforeUnmount(() => {
+  clearTimeout(debounce)
+  listing.reset()
+})
 
 /** API error code → copy. */
 function errorText(code: string | null): string {
@@ -31,6 +34,8 @@ function errorText(code: string | null): string {
   if (code.includes('import_limit')) return t('setup.errors.importLimit')
   if (code.includes('listing_unavailable')) return t('setup.errors.unavailable')
   if (code.includes('place_linked_to_your_location')) return t('setup.errors.linkedToYourLocation')
+  if (code.includes('verified_place_linked')) return t('setup.errors.verifiedPlaceLinked')
+  if (code.includes('search_limit')) return t('setup.errors.searchLimit')
   if (code.includes('not_a_menu')) return t('menu.scan.notMenu')
   if (code.includes('unreadable')) return t('menu.scan.unreadable')
   return t('setup.errors.generic')
@@ -48,6 +53,7 @@ watch(query, (q) => {
   clearTimeout(debounce)
   searchError.value = ''
   if (q.trim().length < 2) {
+    searchSeq += 1 // a response still in flight must not refill the list
     results.value = []
     searching.value = false
     return
@@ -106,6 +112,13 @@ function restart(): void {
  * can import later). Skipping first is what stops the router sending them
  * straight back here.
  */
+watch(
+  () => auth.profile?.restaurantId,
+  (rid, prev) => {
+    if (prev && rid !== prev) restart()
+  },
+)
+
 const leaving = ref(false)
 async function leave(to: string): Promise<void> {
   leaving.value = true
@@ -120,6 +133,10 @@ const place = computed(() => listing.job?.place ?? null)
 const restaurantName = computed(() => place.value?.name ?? listing.job?.manualName ?? '')
 const isManual = computed(() => !listing.job?.placeId)
 const photos = computed(() => listing.media?.photos ?? [])
+/** Places policies: photo authors are credited visibly, not just on hover. */
+const photoCredits = computed(() =>
+  [...new Set(photos.value.slice(0, 5).flatMap((p) => p.attributions.map((a) => a.name)).filter(Boolean))].join(', '),
+)
 const reviews = computed(() => listing.media?.reviews ?? [])
 /** Places' weekday lines start on Monday. */
 const hoursToday = computed(() => place.value?.weekHours[(new Date().getDay() + 6) % 7] ?? null)
@@ -147,7 +164,6 @@ function toggleSection(list: ReviewDish[]): void {
 
 const money = (x: number) => n(x, 'currency')
 const plainPrice = (x: number) => n(x, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false })
-const priceChanged = (d: ReviewDish) => !!d.match && d.price !== null && Math.abs(d.match.price - d.price) > 0.009
 
 // Inline edit — one row at a time.
 const editingKey = ref<string | null>(null)
@@ -244,25 +260,29 @@ function initialLearnings(): Learning[] {
   const p = place.value
   const priced = listing.dishes.filter((d) => d.price !== null)
   const avg = priced.length ? priced.reduce((s, d) => s + (d.price ?? 0), 0) / priced.length : 0
-  const sectionCount = new Set(listing.dishes.map((d) => d.section).filter(Boolean)).size
   return [
     p && p.cuisines.length
-      ? t('setup.review.learn.identity', {
-          cuisine: p.cuisines.map((c) => t('setup.cuisine.' + c)).join(' · '),
-          city: p.city ?? '',
-          price: p.priceLevel ? t('setup.priceLevel.' + p.priceLevel) : '—',
-        })
+      ? p.priceLevel
+        ? t('setup.review.learn.identity', {
+            cuisine: p.cuisines.map((c) => t('setup.cuisine.' + c)).join(' · '),
+            city: p.city ?? '',
+            price: t('setup.priceLevel.' + p.priceLevel),
+          })
+        : t('setup.review.learn.identityNoPrice', {
+            cuisine: p.cuisines.map((c) => t('setup.cuisine.' + c)).join(' · '),
+            city: p.city ?? '',
+          })
       : null,
     avg ? t('setup.review.learn.ticket', { avg: money(avg) }) : null,
-    listing.dishes.length && sectionCount
-      ? t('setup.review.learn.size', { n: listing.dishes.length, s: sectionCount }, listing.dishes.length)
-      : null,
+    listing.dishes.length ? t('setup.review.learn.size', { n: listing.dishes.length }, listing.dishes.length) : null,
   ]
     .filter((x): x is string => !!x)
     .map((text) => ({ id: learningId++, text, origin: 'suggested' as const }))
 }
 
+let learningBefore = ''
 async function editLearning(l: Learning): Promise<void> {
+  learningBefore = l.text
   editingLearning.value = l.id
   await nextTick()
   ;(document.getElementById(`learning-${l.id}`) as HTMLInputElement | null)?.focus()
@@ -270,7 +290,7 @@ async function editLearning(l: Learning): Promise<void> {
 
 function saveLearning(l: Learning): void {
   l.text = l.text.trim()
-  l.origin = 'owner'
+  if (l.text !== learningBefore) l.origin = 'owner'
   if (!l.text) removeLearning(l)
   editingLearning.value = null
 }
@@ -305,7 +325,11 @@ async function confirmImport(): Promise<void> {
     notes: learnings.value.filter((l) => l.text.trim()).map((l) => ({ text: l.text.trim(), origin: l.origin })),
   })
   if (!res.ok) {
-    alert(res.error.includes('place_linked_to_your_location') ? t('setup.errors.linkedToYourLocation') : t('setup.errors.commitFailed'))
+    alert(
+      res.error.includes('place_linked_to_your_location') || res.error.includes('verified_place_linked')
+        ? errorText(res.error)
+        : t('setup.errors.commitFailed'),
+    )
     return
   }
   outcome.value = { link: res.link, saved: res.created.length + res.updated, created: res.created.length }
@@ -313,6 +337,12 @@ async function confirmImport(): Promise<void> {
   await auth.reloadProfile()
   void kitchen.refresh()
   phase.value = 'done'
+}
+
+/** Hand off to the recipe wizard; the first-login tour waits for it. */
+function estimateRecipes(): void {
+  listing.handoff = true
+  void router.replace({ path: '/menu', query: { recipes: 'listing' } })
 }
 
 /** First + last capitalised word: "Taberna El Faro" → "TF". */
@@ -328,7 +358,7 @@ const initials = (name: string) => {
       <!-- ── 1. Search ─────────────────────────────────────── -->
       <section v-if="phase === 'search'" key="search" class="space-y-6 pt-4 sm:pt-10">
         <div class="space-y-2 text-center">
-          <div class="setup-float mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-ember-50 text-3xl" aria-hidden="true">
+          <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-ember-50 text-3xl" aria-hidden="true">
             🏪
           </div>
           <h1 class="text-3xl font-bold">{{ t('setup.search.title') }}</h1>
@@ -438,7 +468,7 @@ const initials = (name: string) => {
             </span>
             <Transition name="setup-pop" mode="out-in" type="transition">
               <span v-if="rowState(s) === 'not_found' || rowState(s) === 'failed'" key="none" class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-smoke">
-                {{ t('setup.importing.notFound') }}
+                {{ rowState(s) === 'failed' ? t('setup.importing.failed') : t('setup.importing.notFound') }}
               </span>
               <span v-else-if="rowState(s) === 'done'" key="done" class="chip-down">
                 ✓ {{ listing.job?.steps[s].count !== undefined ? t('setup.importing.' + s + '.found', { n: listing.job?.steps[s].count }, listing.job?.steps[s].count ?? 0) : t('setup.importing.' + s + '.ready') }}
@@ -470,14 +500,19 @@ const initials = (name: string) => {
               :key="ph.url"
               :src="ph.url"
               :alt="''"
-              :title="ph.attributions[0]?.name ? t('setup.review.photoBy', { name: ph.attributions[0].name }) : undefined"
               class="h-full w-full object-cover"
               :class="i === 0 && photos.length >= 5 ? 'col-span-2 row-span-2' : ''"
               loading="lazy"
               referrerpolicy="no-referrer"
             />
           </div>
-          <div v-else class="flex h-28 items-center justify-center bg-gradient-to-br from-ember-100 to-ember-200" aria-hidden="true">
+          <p v-if="photoCredits" class="px-4 pt-2 text-[10px] text-smoke">
+            {{ t('setup.review.photoBy', { name: photoCredits }) }}
+            <a v-if="listing.media?.googleMapsUri" :href="listing.media.googleMapsUri" target="_blank" rel="noopener" class="underline">
+              {{ t('setup.review.seeOnMaps') }}
+            </a>
+          </p>
+          <div v-else-if="!photos.length" class="flex h-28 items-center justify-center bg-gradient-to-br from-ember-100 to-ember-200" aria-hidden="true">
             <span class="flex h-16 w-16 items-center justify-center rounded-full bg-ember text-xl font-bold text-white shadow-card">
               {{ initials(restaurantName) }}
             </span>
@@ -488,7 +523,7 @@ const initials = (name: string) => {
                 <h1 class="truncate text-2xl font-bold">{{ restaurantName }}</h1>
                 <div v-if="place?.rating" class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-smoke">
                   <span class="font-semibold text-ink">★ {{ n(place.rating, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }}</span>
-                  <span v-if="place.reviewCount">{{ t('setup.review.reviewCount', { n: n(place.reviewCount) }) }}</span>
+                  <span v-if="place.reviewCount">{{ t('setup.review.reviewCount', { n: n(place.reviewCount) }, place.reviewCount) }}</span>
                   <template v-if="place.priceLevel">
                     <span aria-hidden="true">·</span>
                     <span>{{ t('setup.priceLevel.' + place.priceLevel) }}</span>
@@ -567,7 +602,8 @@ const initials = (name: string) => {
                       :placeholder="plainPrice(0)"
                       :aria-label="t('setup.review.pricePlaceholder')"
                     />
-                    <button type="submit" class="btn-primary !px-3 !py-1.5" :aria-label="t('setup.review.save')">✓</button>
+                    <button type="submit" class="btn-primary !px-3 !py-1.5" :aria-label="t('common.action.save')">✓</button>
+                    <button type="button" class="btn-ghost !px-3 !py-1.5" :aria-label="t('common.action.cancel')" @click="cancelEdit">✕</button>
                   </form>
 
                   <!-- Display -->
@@ -683,7 +719,7 @@ const initials = (name: string) => {
             <blockquote class="text-sm leading-relaxed">“{{ r.text }}”</blockquote>
             <figcaption class="flex flex-wrap items-center gap-1.5 text-[11px] text-smoke">
               <img v-if="r.author.photoUri" :src="r.author.photoUri" alt="" class="h-4 w-4 rounded-full" referrerpolicy="no-referrer" />
-              <span class="text-ember" :aria-label="t('setup.review.stars', { n: r.rating })">{{ '★'.repeat(Math.round(r.rating)) }}</span>
+              <span class="text-ember" role="img" :aria-label="t('setup.review.stars', { n: r.rating })">{{ '★'.repeat(Math.round(r.rating)) }}</span>
               <a v-if="r.author.uri" :href="r.author.uri" target="_blank" rel="noopener" class="hover:underline">{{ r.author.name }}</a>
               <span v-else>{{ r.author.name }}</span>
               <span v-if="r.relativeTime">· {{ r.relativeTime }}</span>
@@ -707,7 +743,7 @@ const initials = (name: string) => {
                 :id="`learning-${l.id}`"
                 v-model="l.text"
                 class="min-w-0 flex-1 rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-white focus:border-ember focus:outline-none"
-                :aria-label="t('setup.review.learnEdit')"
+                :aria-label="t('common.action.edit')"
                 @keydown.enter="saveLearning(l)"
                 @blur="saveLearning(l)"
               />
@@ -730,7 +766,7 @@ const initials = (name: string) => {
               :placeholder="t('setup.review.learnAddPlaceholder')"
               :aria-label="t('setup.review.learnAddPlaceholder')"
             />
-            <button type="submit" class="shrink-0 rounded-lg bg-white/10 px-3 text-sm font-semibold hover:bg-white/20 disabled:opacity-40" :disabled="!newLearning.trim()">
+            <button type="submit" class="shrink-0 rounded-lg bg-white/10 px-3 text-sm font-semibold hover:bg-white/20 disabled:opacity-40" :disabled="!newLearning.trim()" :aria-label="t('setup.review.learnAdd')">
               ＋
             </button>
           </form>
@@ -742,11 +778,11 @@ const initials = (name: string) => {
           </p>
           <div class="flex items-center justify-between gap-2">
             <BaseButton variant="ghost" :disabled="listing.busy === 'commit'" @click="restart">
-              {{ isManual ? t('setup.review.back') : t('setup.review.notMine') }}
+              {{ isManual ? t('common.action.back') : t('setup.review.notMine') }}
             </BaseButton>
             <BaseButton :disabled="!!listing.busy" @click="confirmImport">
               <span v-if="listing.busy === 'commit'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-              {{ listing.busy === 'commit' ? t('setup.review.saving') : selectedCount ? t('setup.review.confirm', { n: selectedCount }, selectedCount) : t('setup.review.confirmNoDishes') }}
+              {{ listing.busy === 'commit' ? t('common.action.saving') : selectedCount ? t('setup.review.confirm', { n: selectedCount }, selectedCount) : t('setup.review.confirmNoDishes') }}
             </BaseButton>
           </div>
         </div>
@@ -767,7 +803,7 @@ const initials = (name: string) => {
         <div class="flex gap-2">
           <BaseButton variant="ghost" @click="router.replace('/')">{{ t('setup.done.toPulse') }}</BaseButton>
           <!-- New dishes have prices but no recipes yet: draft them next -->
-          <BaseButton v-if="outcome.created" variant="herb" @click="router.replace({ path: '/menu', query: { recipes: 'listing' } })">
+          <BaseButton v-if="outcome.created" variant="herb" @click="estimateRecipes">
             ✨ {{ t('setup.done.estimate') }}
           </BaseButton>
           <BaseButton v-else variant="herb" @click="router.replace('/menu')">{{ t('setup.done.toMenu') }}</BaseButton>

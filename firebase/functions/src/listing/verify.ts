@@ -1,5 +1,5 @@
 import { createHash, randomInt } from "node:crypto";
-import { getFirestore, type Transaction } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, type Transaction } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
 import { claimCodeEmail, claimTransferredEmail, consumeMailQuota, mailAccepted, mailKeyHash, sendMail } from "../mail.js";
 import { DEFAULT_LOCALE, localeSchema, type Locale } from "../models.js";
@@ -25,17 +25,20 @@ import type { ListingBackend } from "./types.js";
 const CODE_TTL_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 5;
 const MAX_SENDS_PER_HOUR = 3;
+/** Across ALL restaurants contesting one place — the per-restaurant cap
+ * alone would let several accounts pool their guesses. */
+const MAX_PLACE_SENDS_PER_HOUR = 6;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
-/** Hosts where the listing's "website" is someone else's platform: an
- * address at that domain proves nothing about the restaurant. */
-const PLATFORM_DOMAINS = [
+/** Hosts where the listing's "website" is someone else's platform or a
+ * free mail provider: an address at that domain proves nothing about the
+ * restaurant (anyone can get one). */
+const SHARED_DOMAINS = [
+  // social / listings / delivery
   "facebook.com",
   "instagram.com",
-  "google.com",
-  "business.site",
   "linktr.ee",
-  "wixsite.com",
   "tripadvisor.com",
   "tripadvisor.es",
   "thefork.com",
@@ -43,10 +46,36 @@ const PLATFORM_DOMAINS = [
   "ubereats.com",
   "glovoapp.com",
   "just-eat.es",
+  // site builders that host on their own domain
+  "google.com",
+  "business.site",
+  "negocio.site",
+  "wixsite.com",
+  "square.site",
+  "wordpress.com",
+  "blogspot.com",
+  "webnode.es",
+  "webnode.com",
+  "jimdosite.com",
+  "carrd.co",
+  // free mail
+  "gmail.com",
+  "googlemail.com",
+  "hotmail.com",
+  "hotmail.es",
+  "outlook.com",
+  "outlook.es",
+  "live.com",
+  "yahoo.com",
+  "yahoo.es",
+  "icloud.com",
+  "proton.me",
+  "protonmail.com",
 ];
 
 const db = () => getFirestore();
 const verificationRef = (placeId: string, rid: string) => claimRef(placeId).collection("verifications").doc(rid);
+const placeSendsRef = (placeId: string) => claimRef(placeId).collection("verifyMeta").doc("sends");
 const event = (tx: Transaction, placeId: string, data: Record<string, unknown>) =>
   tx.set(claimRef(placeId).collection("events").doc(), { ...data, at: Date.now() });
 
@@ -67,16 +96,23 @@ export function verifiableDomain(website: string | null): string | null {
   } catch {
     return null;
   }
-  if (!host.includes(".") || PLATFORM_DOMAINS.some((p) => under(host, p))) return null;
+  if (!host.includes(".") || SHARED_DOMAINS.some((p) => under(host, p))) return null;
   return host;
 }
 
-/** "info@tabernaelfaro.es" matches tabernaelfaro.es (and its subdomains). */
+/**
+ * "info@tabernaelfaro.es" matches tabernaelfaro.es, and a mailbox on a
+ * subdomain of it does too — but never a PARENT of the listing's domain:
+ * "x@co.uk" must not verify "faro.co.uk". A listing on a subdomain
+ * ("carta.faro.es") therefore needs a mailbox at that subdomain or goes to
+ * manual review — strict on purpose (no public-suffix list to tell
+ * "faro.es" from "co.uk").
+ */
 export function emailMatchesDomain(email: string, domain: string): boolean {
   const at = email.lastIndexOf("@");
   if (at < 1) return false;
   const emailDomain = domainOf(email.slice(at + 1));
-  return emailDomain === domain || under(domain, emailDomain) || under(emailDomain, domain);
+  return under(emailDomain, domain);
 }
 
 /** The place this restaurant may verify: the one it's contesting, else its own. */
@@ -104,11 +140,21 @@ export async function startVerification(
   if (!emailMatchesDomain(email, domain)) throw new RequestError("email_domain_mismatch");
 
   const ref = verificationRef(placeId, ctx.rid);
-  const prev = (await ref.get()).data();
   const now = Date.now();
-  const windowStart = prev && now - (prev.windowStart as number) < HOUR_MS ? (prev.windowStart as number) : now;
-  const sends = windowStart === prev?.windowStart ? ((prev?.sends as number) ?? 0) : 0;
-  if (sends >= MAX_SENDS_PER_HOUR) throw new RequestError("verify_rate_limited", 429);
+  // Both send caps (this restaurant, this place) in one transaction so
+  // parallel requests can't each read "under the cap".
+  const windowed = (d: FirebaseFirestore.DocumentData | undefined) => {
+    const start = d && now - (d.windowStart as number) < HOUR_MS ? (d.windowStart as number) : now;
+    return { start, sends: start === d?.windowStart ? ((d?.sends as number) ?? 0) : 0 };
+  };
+  const mine = await db().runTransaction(async (tx) => {
+    const [own, place] = await Promise.all([tx.get(ref), tx.get(placeSendsRef(placeId))]);
+    const o = windowed(own.data());
+    const p = windowed(place.data());
+    if (o.sends >= MAX_SENDS_PER_HOUR || p.sends >= MAX_PLACE_SENDS_PER_HOUR) throw new RequestError("verify_rate_limited", 429);
+    tx.set(placeSendsRef(placeId), { windowStart: p.start, sends: p.sends + 1 });
+    return o;
+  });
 
   const quota = await consumeMailQuota(ctx.rid, ctx.uid, email, "claim-verify");
   if (!quota.ok) throw new RequestError("mail_limit", 429);
@@ -120,8 +166,10 @@ export async function startVerification(
     codeHash: codeHash(placeId, ctx.rid, code),
     expiresAt: now + CODE_TTL_MS,
     attempts: 0,
-    windowStart,
-    sends: sends + 1,
+    windowStart: mine.start,
+    sends: mine.sends + 1,
+    // TTL (firestore.indexes.json): stale codes don't linger.
+    purgeAt: Timestamp.fromMillis(now + DAY_MS),
   });
   if (process.env.FUNCTIONS_EMULATOR === "true") logger.info("claim verification code (emulator only)", { code });
 
@@ -143,12 +191,16 @@ export async function confirmVerification(
   const ref = verificationRef(placeId, ctx.rid);
   const restRef = db().collection("restaurants").doc(ctx.rid);
 
-  // Count the attempt BEFORE checking, outside the transaction, so a
-  // failed guess is never rolled back.
-  const v = (await ref.get()).data();
-  if (!v || (v.expiresAt as number) < Date.now()) throw new RequestError("code_expired", 410);
-  if ((v.attempts as number) >= MAX_ATTEMPTS) throw new RequestError("too_many_attempts", 429);
-  await ref.update({ attempts: (v.attempts as number) + 1 });
+  // Spend the attempt in its own committed transaction BEFORE comparing:
+  // parallel guesses serialize on the counter, so at most MAX_ATTEMPTS of
+  // them ever reach the comparison, and a wrong guess is never rolled back.
+  const v = await db().runTransaction(async (tx) => {
+    const d = (await tx.get(ref)).data();
+    if (!d || (d.expiresAt as number) < Date.now()) throw new RequestError("code_expired", 410);
+    if ((d.attempts as number) >= MAX_ATTEMPTS) throw new RequestError("too_many_attempts", 429);
+    tx.update(ref, { attempts: (d.attempts as number) + 1 });
+    return d;
+  });
   if (v.codeHash !== codeHash(placeId, ctx.rid, code)) throw new RequestError("wrong_code");
 
   const transferredFrom = await db().runTransaction(async (tx) => {
@@ -172,7 +224,9 @@ export async function confirmVerification(
       verifiedAt: now,
       verification: { method: "email_domain", at: now },
     });
-    event(tx, placeId, { type: holder ? "transferred" : "verified", rid: ctx.rid, uid: ctx.uid, from: holder });
+    event(tx, placeId, holderSnap?.exists
+      ? { type: "transferred", rid: ctx.rid, uid: ctx.uid, from: holder }
+      : { type: "verified", rid: ctx.rid, uid: ctx.uid });
     tx.set(restRef, { listing: { placeId, contestedPlaceId: null } }, { merge: true });
     // The old holder keeps everything it has — only the link moves.
     if (holderSnap?.exists) tx.set(holderSnap.ref, { listing: { placeId: null, contestedPlaceId: placeId } }, { merge: true });
@@ -207,7 +261,9 @@ async function notifyPreviousHolder(rid: string, placeId: string): Promise<void>
       to: email,
       ...claimTransferredEmail({ locale, placeName }),
       kind: "claim-transferred",
-      idempotencyKey: `claim-transferred-${mailKeyHash(placeId, rid)}`,
+      // One takeover is one event: a later takeover of the same place from
+      // the same restaurant is a new message, not a dedupe.
+      idempotencyKey: `claim-transferred-${mailKeyHash(placeId, rid, Date.now())}`,
     });
   } catch (err) {
     logger.warn("claim transfer notice failed", { placeId, err: String(err) });

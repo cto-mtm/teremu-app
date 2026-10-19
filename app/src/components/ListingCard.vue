@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { apiFetch } from '../lib/api'
 import { CUISINES, listingStatusSchema, type Cuisine } from '../lib/schemas'
+import { useAuthStore } from '../stores/auth'
 import BaseButton from './BaseButton.vue'
 import type { z } from 'zod'
 
@@ -17,6 +18,7 @@ import type { z } from 'zod'
 type Status = z.infer<typeof listingStatusSchema>
 
 const { t } = useI18n()
+const auth = useAuthStore()
 const status = ref<Status | null>(null)
 const loading = ref(true)
 
@@ -150,12 +152,12 @@ async function requestReview(): Promise<void> {
       <span v-if="status?.listing" :class="claimChip" class="shrink-0">{{ t('settings.listing.status.' + status.claim) }}</span>
     </div>
 
-    <p v-if="loading" class="text-xs text-smoke">…</p>
+    <p v-if="loading" class="text-xs text-smoke">{{ t('common.loading') }}</p>
 
     <!-- Not linked yet -->
     <div v-else-if="!status?.listing" class="space-y-2">
       <p class="text-xs text-smoke">{{ t('settings.listing.none') }}</p>
-      <RouterLink :to="{ name: 'restaurant-setup' }" class="btn-primary">🏪 {{ t('settings.listing.find') }}</RouterLink>
+      <RouterLink v-if="auth.profile?.listingAvailable" :to="{ name: 'restaurant-setup' }" class="btn-primary">🏪 {{ t('settings.listing.find') }}</RouterLink>
     </div>
 
     <template v-else>
@@ -246,15 +248,15 @@ async function requestReview(): Promise<void> {
       </ul>
       <form v-if="notes.length < 20" class="flex gap-2" @submit.prevent="addNote">
         <input v-model="newNote" class="input !py-1.5 text-sm" maxlength="200" :placeholder="t('settings.listing.notesPlaceholder')" :aria-label="t('settings.listing.notesPlaceholder')" />
-        <button type="submit" class="btn-ghost shrink-0" :disabled="!newNote.trim()">＋</button>
+        <button type="submit" class="btn-ghost shrink-0" :disabled="!newNote.trim()" :aria-label="t('setup.review.learnAdd')">＋</button>
       </form>
     </div>
 
     <div v-if="!loading" class="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
-      <BaseButton :disabled="saving" @click="save">{{ saving ? t('common.action.saving') : t('settings.listing.save') }}</BaseButton>
-      <span v-if="saved" class="chip-down">{{ t('settings.listing.saved') }}</span>
+      <BaseButton :disabled="saving" @click="save">{{ saving ? t('common.action.saving') : t('common.action.save') }}</BaseButton>
+      <span v-if="saved" class="chip-down">{{ t('common.action.saved') }}</span>
       <span class="flex-1" />
-      <RouterLink v-if="status?.listing" :to="{ name: 'restaurant-setup' }" class="btn-ghost">{{ t('settings.listing.reimport') }}</RouterLink>
+      <RouterLink v-if="status?.listing && auth.profile?.listingAvailable" :to="{ name: 'restaurant-setup' }" class="btn-ghost">{{ t('settings.listing.reimport') }}</RouterLink>
       <BaseButton v-if="status?.listing?.placeId || status?.listing?.contestedPlaceId" variant="ghost" @click="unlink">
         {{ t('settings.listing.unlink') }}
       </BaseButton>

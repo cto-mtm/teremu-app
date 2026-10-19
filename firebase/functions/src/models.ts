@@ -330,6 +330,10 @@ export const restaurantDocSchema = z.object({
   // it; foreign documents are converted into it once, at approval.
   // Locked once any invoice is approved. Absent = default.
   currency: currencySchema.optional(),
+  // "owner" = picked in Settings (never overwritten); "country" = adopted
+  // from the country's default, so a later country change may move it
+  // (baseCurrency.ts). Absent on an existing currency = the owner's.
+  currencySource: z.enum(["owner", "country"]).optional(),
   // ISO 3166-1 alpha-2 — selects the country pack (countries/). Prefilled
   // from the device region by the app, shown, editable, never asked.
   country: countryCodeSchema.optional(),
@@ -364,10 +368,10 @@ export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 export const DEFAULT_RESTAURANT_NAME = "My restaurant";
 
 /**
- * The first-run fields a NEW location is created with. While the listing
- * import is still mocked (Phase 0 of docs/restaurant-listing.md) the step
- * is gated: on in the emulator unless LISTING_SETUP=off, off when deployed
- * unless LISTING_SETUP=on — so production owners never land on a mock.
+ * The first-run fields a NEW location is created with. Gated until the
+ * listing import goes live (docs/restaurant-listing.md — the Places key
+ * must be bound first): on in the emulator unless LISTING_SETUP=off, off
+ * when deployed unless LISTING_SETUP=on.
  */
 export function newRestaurantSetupFields(): { setupListing?: "pending" } {
   const flag = process.env.LISTING_SETUP;

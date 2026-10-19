@@ -216,7 +216,6 @@ const photoUri = ({ hue, emoji }: { hue: number; emoji: string }) =>
   );
 
 const fakePlaces: ListingProvider = {
-  id: "fake",
   async autocomplete(input) {
     const q = fold(input.trim());
     if (q.length < 2) return [];

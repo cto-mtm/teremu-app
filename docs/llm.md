@@ -82,7 +82,7 @@ Two fallbacks behind that, because "the provider honors it" is not guaranteed:
 
 ## Record / replay (cassettes)
 
-`LLM_CASSETTE_MODE` + `LLM_CASSETTE_DIR` make model calls reproducible: `record` stores every raw reply keyed by label + image bytes (text-only calls, which have no image, key on label + their full message text — a prompt change is a miss by design) (reusing what is already recorded, so interrupted evals resume), `replay` serves them back with no key and no network (a miss throws — never a silent mock). Requests the provider refuses for their content (400/422) are recorded and replay as the same error; auth, retired-model, rate-limit and network failures never are. Ignored in a deployed function. Callers pick their offline mock with `llmEnabled()`, which is true under replay. Used by the real-corpus eval, suite and seed — see `docs/real-samples.md`.
+`LLM_CASSETTE_MODE` + `LLM_CASSETTE_DIR` make model calls reproducible: `record` stores every raw reply keyed by label + image bytes (reusing what is already recorded, so interrupted evals resume), `replay` serves them back with no key and no network (a miss throws — never a silent mock). A text-only call has no image, so it keys on label + its full message text; a prompt change is a miss by design. Requests the provider refuses for their content (400/422) are recorded and replay as the same error; auth, retired-model, rate-limit and network failures never are. Ignored in a deployed function. Callers pick their offline mock with `llmEnabled()`, which is true under replay. Used by the real-corpus eval, suite and seed — see `docs/real-samples.md`.
 
 ## Caveats
 

@@ -22,7 +22,7 @@ import { crawlForMenu, normalizeWebsite } from "./website.js";
  * (firestore.indexes.json) and stripped at commit.
  */
 
-export const STEPS = ["profile", "photos", "website", "menu", "reviews"] as const;
+const STEPS = ["profile", "photos", "website", "menu", "reviews"] as const;
 export type Step = (typeof STEPS)[number];
 export type StepState = "pending" | "done" | "not_found" | "failed";
 
@@ -36,7 +36,9 @@ export interface ImportJob {
   createdBy: string;
   createdAt: number;
   expiresAt: Timestamp;
-  status: "open" | "committed";
+  /** "committing" while commit.ts holds the job (a short lease). */
+  status: "open" | "committing" | "committed";
+  committingAt?: number;
   placeId: string | null;
   manualName: string | null;
   place: PlaceDetails | null;
@@ -133,7 +135,7 @@ export async function createImport(
 /** Read the site (the listing's, or one the owner pasted). */
 export async function readWebsite(backend: ListingBackend, rid: string, id: string, pasted?: string): Promise<ImportJob> {
   const job = await loadImport(rid, id);
-  if (job.status === "committed") throw new RequestError("already_committed", 409);
+  if (job.status !== "open") throw new RequestError("already_committed", 409);
   const url = pasted !== undefined ? normalizeWebsite(pasted) : job.website;
   if (!url) throw new RequestError(pasted !== undefined ? "bad_website" : "no_website");
 
@@ -162,7 +164,7 @@ export async function readWebsite(backend: ListingBackend, rid: string, id: stri
 /** Extract dishes from the pages the website step kept. */
 export async function readMenu(backend: ListingBackend, rid: string, id: string): Promise<ImportJob> {
   const job = await loadImport(rid, id);
-  if (job.status === "committed") throw new RequestError("already_committed", 409);
+  if (job.status !== "open") throw new RequestError("already_committed", 409);
   if (job.menuRuns >= MAX_MENU_RUNS) throw new RequestError("menu_limit", 429);
   const home = job.website?.replace(/\/+$/, "");
   // Dedicated menu pages first: their price wins; the home page's
@@ -187,6 +189,8 @@ export async function readMenu(backend: ListingBackend, rid: string, id: string)
     ...images.map(async (p): Promise<FoundDish[]> => {
       try {
         const res = await backend.fetchPage(p.url);
+        // The URL was an image when the website step read it; it may not be now.
+        if (!res.contentType.startsWith("image/")) return [];
         const r = await extractMenu(res.body.toString("base64"));
         return r.dishes.map((d) => ({ ...d, source: "website_image" as const }));
       } catch (err) {
@@ -213,4 +217,31 @@ export async function readMenu(backend: ListingBackend, rid: string, id: string)
   };
   await importsCol(rid).doc(id).update(patch);
   return { ...job, ...patch };
+}
+
+// ── Cost guards (Places is billed per call) ─────────────────────────
+
+const SEARCHES_PER_DAY = 300;
+const MEDIA_PER_DAY = 30;
+
+/** Photos/reviews are only served for a place this restaurant is working
+ * with: its linked or contested place, or one of its live imports. */
+export async function placeInUse(rid: string, placeId: string): Promise<boolean> {
+  const rest = await db().collection("restaurants").doc(rid).get();
+  if (rest.get("listing.placeId") === placeId || rest.get("listing.contestedPlaceId") === placeId) return true;
+  const snap = await importsCol(rid).where("placeId", "==", placeId).limit(1).get();
+  return snap.docs.some((d) => (d.get("expiresAt") as Timestamp).toMillis() > Date.now());
+}
+
+/** One daily counter per restaurant (TTL on purgeAt). False = over the cap. */
+export async function consumeListingCall(rid: string, kind: "searches" | "media"): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  const ref = db().doc(`restaurants/${rid}/listingUsage/${day}`);
+  const cap = kind === "searches" ? SEARCHES_PER_DAY : MEDIA_PER_DAY;
+  return db().runTransaction(async (tx) => {
+    const used = ((await tx.get(ref)).get(kind) as number | undefined) ?? 0;
+    if (used >= cap) return false;
+    tx.set(ref, { [kind]: used + 1, purgeAt: Timestamp.fromMillis(Date.now() + 2 * DAY_MS) }, { merge: true });
+    return true;
+  });
 }

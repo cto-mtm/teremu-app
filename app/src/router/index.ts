@@ -44,7 +44,7 @@ const router = createRouter({
     { path: '/integrations/:provider', name: 'pos-links', component: page(() => import('../pages/PosLinksPage.vue')) },
     { path: '/pricing', name: 'pricing', component: page(() => import('../pages/PricingPage.vue')) },
     // Find-your-restaurant first run (docs/restaurant-listing.md). Owners
-    // only (guard below); the import itself is still mocked (Phase 0).
+    // only (guard below).
     { path: '/setup/restaurant', name: 'restaurant-setup', component: page(() => import('../pages/RestaurantSetupPage.vue')) },
     // Catch-all 404. Required because Firebase Hosting rewrites every URL
     // to index.html — without this, typos render an empty RouterView.
@@ -92,7 +92,9 @@ export const FALLBACK_ORDER: { name: string; area: PermArea }[] = [
 ]
 
 /** Routes a pending first-run setup doesn't redirect away from. */
-export const SETUP_EXEMPT = new Set(['restaurant-setup', 'settings', 'pricing', 'login', 'not-found'])
+// pos-links is reached FROM Settings (POS catalog review) — trapping it
+// would send a new location's owner back to setup mid-task.
+export const SETUP_EXEMPT = new Set(['restaurant-setup', 'settings', 'pricing', 'pos-links', 'login', 'not-found'])
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()

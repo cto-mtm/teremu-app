@@ -63,6 +63,18 @@ export interface MenuScanResult {
   unreadable?: boolean;
 }
 
+/** Shared by the photo and text extractors: one reply shape, one cleanup. */
+function toResult(raw: string): MenuScanResult {
+  const parsed = menuResponseSchema.parse(parseModelJson(raw));
+  if (parsed.error) return { dishes: [], unreadable: true };
+  if (!parsed.isMenu) return { dishes: [], notMenu: true };
+  return {
+    dishes: parsed.dishes
+      .filter((d) => d.name.trim().length > 0)
+      .map((d) => ({ ...d, name: d.name.trim() })),
+  };
+}
+
 export async function extractMenu(imageBase64: string): Promise<MenuScanResult> {
   if (!llmApiKey()) {
     logger.warn("LLM API key not set — returning mock menu extraction");
@@ -77,14 +89,7 @@ export async function extractMenu(imageBase64: string): Promise<MenuScanResult> 
     "menu-extract",
     { name: "menu_extraction", schema: menuResponseSchema },
   );
-  const parsed = menuResponseSchema.parse(parseModelJson(raw));
-  if (parsed.error) return { dishes: [], unreadable: true };
-  if (!parsed.isMenu) return { dishes: [], notMenu: true };
-  return {
-    dishes: parsed.dishes
-      .filter((d) => d.name.trim().length > 0)
-      .map((d) => ({ ...d, name: d.name.trim() })),
-  };
+  return toResult(raw);
 }
 
 function mockMenu(): MenuScanResult {
@@ -141,14 +146,7 @@ export async function extractMenuFromText(text: string): Promise<MenuScanResult>
     label: "menu-extract-text",
     json: { name: "menu_extraction", schema: menuResponseSchema },
   });
-  const parsed = menuResponseSchema.parse(parseModelJson(raw));
-  if (parsed.error) return { dishes: [], unreadable: true };
-  if (!parsed.isMenu) return { dishes: [], notMenu: true };
-  return {
-    dishes: parsed.dishes
-      .filter((d) => d.name.trim().length > 0)
-      .map((d) => ({ ...d, name: d.name.trim() })),
-  };
+  return toResult(raw);
 }
 
 /**

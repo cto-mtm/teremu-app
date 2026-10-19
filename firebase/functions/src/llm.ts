@@ -105,7 +105,7 @@ function cassetteKey(messages: ChatMessage[], label: string): string | null {
 
 /** Text-only calls: label + every message's role and text, in order.
  * `text-` keeps them apart from image cassettes under the same label. */
-export function cassetteKeyForText(label: string, texts: string[]): string {
+function cassetteKeyForText(label: string, texts: string[]): string {
   const hash = createHash("sha256");
   for (const text of texts) hash.update(text).update("\n");
   return `${label}-text-${hash.digest("hex").slice(0, 40)}`;

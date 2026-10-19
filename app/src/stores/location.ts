@@ -7,6 +7,7 @@ import type { Location } from '../lib/types'
 import { useAuthStore } from './auth'
 import { useInvoicesStore } from './invoices'
 import { useKitchenStore } from './kitchen'
+import { useListingStore } from './listing'
 
 /**
  * Detail routes carry an id that belongs to one specific location's
@@ -35,6 +36,8 @@ export const useLocationStore = defineStore('location', () => {
     // restaurant flashes on screen while the reload is in flight.
     useKitchenStore().reset()
     useInvoicesStore().reset()
+    // An import in progress belongs to the location it started in.
+    useListingStore().reset()
 
     await auth.reloadProfile() // re-reads /me for the new rid's role/perms
 

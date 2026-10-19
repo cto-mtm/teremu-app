@@ -60,7 +60,6 @@ export interface PlaceMedia {
 }
 
 export interface ListingProvider {
-  readonly id: "google" | "fake";
   autocomplete(input: string, opts: { session?: string; country?: string | null; language: string }): Promise<PlaceSuggestion[]>;
   details(placeId: string, opts: { session?: string; language: string }): Promise<PlaceDetails | null>;
   /** Live only — the result is shown, never stored (Places policies). */

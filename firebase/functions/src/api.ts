@@ -77,7 +77,8 @@ import {
 import { toBaseTotal } from "./fx/convert.js";
 import { packFor, profileOf } from "./countries/index.js";
 import { listingBackend } from "./listing/index.js";
-import { createImport, importView, loadImport, readMenu, readWebsite } from "./listing/jobs.js";
+import { adoptedCurrency } from "./baseCurrency.js";
+import { consumeListingCall, createImport, importView, loadImport, placeInUse, readMenu, readWebsite } from "./listing/jobs.js";
 import { commitImport, PlaceLinkedToYourLocation, releaseClaim } from "./listing/commit.js";
 import { listingStatus, unlinkListing, updateListing } from "./listing/settings.js";
 import { confirmVerification, requestReview, startVerification } from "./listing/verify.js";
@@ -265,6 +266,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // "Find your restaurant" first-run step (docs/restaurant-listing.md):
       // the app sends an owner of a `pending` location to /setup/restaurant.
       setupListing: planInfo.setupListing,
+      // Whether the import can run here (a Places backend is configured):
+      // the app hides its entry points otherwise instead of a 501.
+      listingAvailable: listingBackend() !== null,
       locations,
     });
   }
@@ -319,12 +323,15 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "GET" && id === "search" && seg.length === 2) {
       const q = String(req.query.q ?? "").trim().slice(0, 120);
       if (q.length < 2) return json(res, 200, { results: [] });
+      if (!(await consumeListingCall(rid, "searches"))) return json(res, 429, { error: "search_limit" });
       const session = typeof req.query.session === "string" ? req.query.session.slice(0, 64) : undefined;
       const results = await backend.places.autocomplete(q, { session, country: planInfo.country, language });
       return json(res, 200, { results });
     }
     // Photos + reviews, live: shown during review, never stored.
     if (m === "GET" && id === "place" && action && seg[3] === "media" && seg.length === 4) {
+      if (!(await placeInUse(rid, action))) return forbidden(res);
+      if (!(await consumeListingCall(rid, "media"))) return json(res, 429, { error: "media_limit" });
       return json(res, 200, await backend.places.media(action, { language }));
     }
     if (id === "imports") {
@@ -978,24 +985,25 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) patch.name = body.name.trim();
       if (body.laborRatePerHour !== undefined) patch.laborRatePerHour = body.laborRatePerHour;
-      if (body.currency !== undefined && body.currency !== planInfo.currency) {
+      if (body.currency !== undefined) {
         // Base currency is the restaurant's UTC: every approved amount is
         // in it, so it cannot move once one exists (a migration, later).
-        const approved = await col("invoices").where("status", "==", "approved").limit(1).get();
-        if (!approved.empty) return json(res, 409, { error: "currency_locked" });
+        if (body.currency !== planInfo.currency) {
+          const approved = await col("invoices").where("status", "==", "approved").limit(1).get();
+          if (!approved.empty) return json(res, 409, { error: "currency_locked" });
+        }
+        // Recorded even when it equals the default: an explicit pick that
+        // nothing adopts over (baseCurrency.ts).
         patch.currency = body.currency;
+        patch.currencySource = "owner";
       }
       if (body.country !== undefined) {
         patch.country = body.country;
-        // A restaurant that never chose a base currency adopts its
-        // country's default (Spain → EUR) — only while nothing is
-        // approved and only when the doc really has no explicit choice.
+        // A restaurant that never picked a base currency adopts its
+        // country's default (Spain → EUR) — see baseCurrency.ts.
         if (body.currency === undefined) {
-          const raw = await db.collection("restaurants").doc(rid).get();
-          if (raw.get("currency") === undefined) {
-            const approved = await col("invoices").where("status", "==", "approved").limit(1).get();
-            if (approved.empty) patch.currency = packFor(body.country).defaultCurrency;
-          }
+          const raw = (await db.collection("restaurants").doc(rid).get()).data() ?? {};
+          Object.assign(patch, await adoptedCurrency(rid, body.country, raw));
         }
       }
       if (body.timezone !== undefined) patch.timezone = body.timezone;

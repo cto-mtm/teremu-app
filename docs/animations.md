@@ -46,6 +46,7 @@ Use `<TransitionGroup name="list">` around the `v-for` and the Recipe 4 classes 
 
 - Animate **only `transform` and `opacity`** (compositor-friendly).
 - Durations **200–350ms**, easing `cubic-bezier(0.4, 0, 0.2, 1)`.
+- **One exception: loading indicators.** Something shown only while the app waits (a spinner, a pulse, the setup import's radar rings) may loop longer than 350ms — it is a progress signal, not a transition. It still animates only `transform`/`opacity`, stops when the wait ends, and is off under reduced motion. Decorative loops (a floating icon, a breathing card) are not loading indicators.
 - `view-transition-name`s must be **unique per page**.
 - Always test with **reduced motion** enabled (the wrapper and Recipe 3 both disable animation).
 - Never nest `startViewTransition` calls — the router wrapper is the only call site.

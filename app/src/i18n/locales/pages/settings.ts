@@ -53,8 +53,6 @@ const es = {
     notes: 'Lo que sabe tu asistente',
     notesHelp: 'El asistente usa estas notas para responder. Son tuyas: edítalas cuando quieras.',
     notesPlaceholder: 'Algo que deba saber (p. ej.: cerramos los lunes)',
-    save: 'Guardar',
-    saved: 'Guardado',
     unlink: 'Desvincular',
     unlinkConfirm: '¿Desvincular tu local de esta ficha de Google? Tus platos y datos se quedan; la ficha quedará libre.',
     verify: {
@@ -179,8 +177,6 @@ const en: typeof es = {
     notes: 'What your assistant knows',
     notesHelp: 'The assistant answers from these notes. They are yours: edit them anytime.',
     notesPlaceholder: 'Something it should know (e.g. closed on Mondays)',
-    save: 'Save',
-    saved: 'Saved',
     unlink: 'Unlink',
     unlinkConfirm: 'Unlink your location from this Google listing? Your dishes and data stay; the listing becomes free.',
     verify: {

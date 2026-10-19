@@ -132,7 +132,7 @@ const NoteRow = z.object({
   text: z.string().max(200).meta(card({ label: "Nota" })),
 });
 
-const str =(v: unknown): string | null => (typeof v === "string" ? v : null);
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
 
 export const tools: ToolRow[] = [

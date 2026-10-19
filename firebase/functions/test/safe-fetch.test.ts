@@ -36,6 +36,12 @@ describe("isPublicAddress", () => {
     "::ffff:7f00:1", // hex form of the same
     "::ffff:169.254.169.254",
     "64:ff9b::a00:1",
+    "::7f00:1", // IPv4-compatible loopback
+    "::127.0.0.1",
+    "2002:a9fe:a9fe::", // 6to4 wrapping the metadata server
+    "2001:0:4136:e378::1", // Teredo
+    "64:ff9b:1::1",
+    "fec0::1",
     "not-an-ip",
   ])("blocks %s", (ip) => {
     expect(isPublicAddress(ip)).toBe(false);

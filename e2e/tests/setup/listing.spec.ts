@@ -40,7 +40,24 @@ test('a new owner imports their restaurant and its menu', async ({ page }, testI
   // in place, with the menu wizard seeded from the imported dishes.
   await page.getByRole('button', { name: /Estimar recetas/ }).click()
   await expect(page).toHaveURL(/\/menu$/)
-  await expect(page.getByRole('heading', { name: 'Recetas de tu carta importada', level: 2 })).toBeVisible()
+  const wizard = page.getByRole('heading', { name: 'Recetas de tu carta importada', level: 2 })
+  await expect(wizard).toBeVisible()
   await expect(page.getByText('Paella de marisco').first()).toBeVisible()
   await expect(page.getByText('Tarta de queso').first()).toBeVisible()
+
+  // This owner never saw the first-login tour: it waits for the wizard
+  // instead of stacking on top of it…
+  const tour = page.getByRole('heading', { name: 'Bienvenido a Teremu', level: 2 })
+  await expect(tour).toBeHidden()
+  await page.getByRole('button', { name: 'Cancelar' }).first().click()
+  await expect(wizard).toBeHidden()
+  // …and opens once it's closed.
+  await expect(tour).toBeVisible()
+  await page.getByRole('button', { name: 'Omitir' }).click()
+
+  // The imported dishes are on the menu, the "needs recipes" banner offers
+  // the wizard again, and search/sort are still there next to it.
+  await expect(page.getByText('7 platos importados aún no tienen receta.')).toBeVisible()
+  await expect(page.getByPlaceholder('Buscar')).toBeVisible()
+  await expect(page.getByText('Paella de marisco').first()).toBeVisible()
 })

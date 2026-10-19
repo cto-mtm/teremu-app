@@ -113,6 +113,9 @@ describe("claim verification domains", () => {
     ["https://www.facebook.com/tabernaelfaro", null], // someone else's platform
     ["https://faro.wixsite.com/inicio", null],
     ["https://sites.google.com/view/faro", null],
+    ["https://faro.negocio.site/", null],
+    ["https://faro.gmail.com/", null], // a free-mail domain as "website"
+    ["https://gmail.com/", null],
     [null, null],
   ])("verifiableDomain(%j) → %j", (website, domain) => {
     expect(verifiableDomain(website)).toBe(domain);
@@ -122,7 +125,9 @@ describe("claim verification domains", () => {
     ["info@tabernaelfaro.es", "tabernaelfaro.es", true],
     ["INFO@TabernaElFaro.es", "tabernaelfaro.es", true],
     ["chef@carta.tabernaelfaro.es", "tabernaelfaro.es", true],
-    ["info@tabernaelfaro.es", "carta.tabernaelfaro.es", true],
+    // Never a PARENT of the listing's domain (x@co.uk must not verify faro.co.uk).
+    ["info@tabernaelfaro.es", "carta.tabernaelfaro.es", false],
+    ["x@co.uk", "faro.co.uk", false],
     ["faro@gmail.com", "tabernaelfaro.es", false],
     ["info@eltabernaelfaro.es", "tabernaelfaro.es", false],
     ["not-an-email", "tabernaelfaro.es", false],

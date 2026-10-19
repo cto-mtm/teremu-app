@@ -87,7 +87,7 @@ const PRICE_LEVELS: Record<string, 1 | 2 | 3 | 4> = {
   PRICE_LEVEL_VERY_EXPENSIVE: 4,
 };
 
-export class PlacesError extends Error {
+class PlacesError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -178,8 +178,6 @@ function toDetails(p: GPlace, placeId: string): PlaceDetails {
 
 export function googleProvider(key: string): ListingProvider {
   return {
-    id: "google",
-
     async autocomplete(input, { session, country, language }): Promise<PlaceSuggestion[]> {
       const body = {
         input,

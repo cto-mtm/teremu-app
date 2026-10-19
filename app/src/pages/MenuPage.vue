@@ -6,6 +6,7 @@ import { armHero, heroStyle } from '../composables/useHero'
 import { currencySymbol } from '../i18n'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
+import { useListingStore } from '../stores/listing'
 import { useSettingsStore } from '../stores/settings'
 import { actualMarginPct } from '../lib/domain'
 import { compatibleUnits } from '../lib/units'
@@ -23,6 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const kitchen = useKitchenStore()
 const auth = useAuthStore()
+const listing = useListingStore()
 
 // Photo-of-the-menu import wizard (see MenuScanWizard.vue)
 const wizardOpen = ref(false)
@@ -38,7 +40,9 @@ function estimateImported(): void {
   wizardOpen.value = true
 }
 watch(wizardOpen, (isOpen) => {
-  if (!isOpen) recipeSeed.value = undefined
+  if (isOpen) return
+  recipeSeed.value = undefined
+  listing.handoff = false // the first-login tour may open now (AppShell)
 })
 // Deep link from the setup "done" screen: /menu?recipes=listing.
 watch(
@@ -238,9 +242,8 @@ async function save(): Promise<void> {
       </div>
     </div>
 
-    <PageLoader v-if="kitchen.loading && !kitchen.menuItems.length" :cards="0" :lines="4" />
-
-    <!-- Imported dishes still without a recipe → draft them -->
+    <!-- Imported dishes still without a recipe → draft them. Kept OUT of
+         the loader/toolbar v-if chain below so search and sort stay. -->
     <div
       v-if="needRecipes.length && auth.can('menu', 'edit')"
       class="card flex flex-wrap items-center justify-between gap-3 !py-3"
@@ -251,6 +254,8 @@ async function save(): Promise<void> {
       </p>
       <BaseButton @click="estimateImported">✨ {{ t('menu.listing.estimate') }}</BaseButton>
     </div>
+
+    <PageLoader v-if="kitchen.loading && !kitchen.menuItems.length" :cards="0" :lines="4" />
 
     <div v-else-if="kitchen.activeMenuItems.length > 0" class="flex flex-wrap gap-2">
       <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
@@ -273,7 +278,7 @@ async function save(): Promise<void> {
         </span>
       </BaseButton>
       <!-- Owners can bring their menu in from their website / Google listing -->
-      <div v-if="auth.profile?.role === 'owner'">
+      <div v-if="auth.profile?.role === 'owner' && auth.profile.listingAvailable">
         <RouterLink :to="{ name: 'restaurant-setup' }" class="text-xs font-semibold text-ember-700 hover:underline">
           🌐 {{ t('menu.listing.importCta') }}
         </RouterLink>

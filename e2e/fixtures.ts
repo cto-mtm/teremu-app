@@ -46,8 +46,14 @@ export const test = base.extend({
     await use(context)
   },
   page: async ({ page }, use) => {
-    // After every navigation, close the tour if it leaked through.
+    // After every navigation, close the tour if it leaked through. SPA
+    // navigations fire no `load`: the tour can also open after an in-app
+    // route change (it waits for "find your restaurant" and its recipe
+    // hand-off — AppShell.vue), so main-frame navigations count too.
     page.on('load', () => dismissOnboarding(page).catch(() => {}))
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) dismissOnboarding(page).catch(() => {})
+    })
     await use(page)
   },
 })

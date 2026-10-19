@@ -68,8 +68,8 @@ export interface SafeFetchOptions {
   ports?: readonly number[];
 }
 
-export const PAGE_TYPES = ["text/html", "application/xhtml+xml", "text/plain"] as const;
-export const MENU_TYPES = [...PAGE_TYPES, "application/pdf", "image/jpeg", "image/png", "image/webp"] as const;
+const PAGE_TYPES = ["text/html", "application/xhtml+xml", "text/plain"] as const;
+const MENU_TYPES = [...PAGE_TYPES, "application/pdf", "image/jpeg", "image/png", "image/webp"] as const;
 
 const DEFAULTS = {
   timeoutMs: 10_000,
@@ -103,9 +103,12 @@ for (const [net, prefix] of [
   blocked.addSubnet(net, prefix, "ipv4");
 }
 for (const [net, prefix] of [
-  ["::", 128], // unspecified
-  ["::1", 128],
+  ["::", 96], // unspecified, loopback and IPv4-compatible (::a.b.c.d)
   ["64:ff9b::", 96], // NAT64 — embeds an arbitrary v4 address
+  ["64:ff9b:1::", 48], // local-use NAT64
+  ["2001::", 32], // Teredo — embeds a v4 address
+  ["2002::", 16], // 6to4 — embeds a v4 address
+  ["fec0::", 10], // deprecated site-local
   ["100::", 64], // discard
   ["2001:db8::", 32], // documentation
   ["fc00::", 7], // unique local

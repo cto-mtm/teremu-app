@@ -70,8 +70,9 @@
 
 /* Recipe 6 — restaurant setup (RestaurantSetupPage). Phase swap
    (<Transition name="setup-phase">), status pop (setup-pop), progress
-   bar, staggered card rise, and two ambient loops (search float,
-   import radar rings) that stop under reduced motion. */
+   bar, staggered card rise, and the import radar rings — a LOADING
+   indicator, the one kind of loop §4 of docs/animations.md allows
+   (shown only while the import works; off under reduced motion). */
 .setup-phase-enter-active,
 .setup-phase-leave-active {
   transition:
@@ -140,14 +141,6 @@
   }
 }
 
-.setup-float {
-  animation: setup-float 3s ease-in-out infinite;
-}
-@keyframes setup-float {
-  50% {
-    transform: translateY(-4px);
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .setup-phase-enter-active,
@@ -159,8 +152,7 @@
   }
   .setup-rise,
   .setup-pop-in,
-  .setup-ring,
-  .setup-float {
+  .setup-ring {
     animation: none;
   }
 }

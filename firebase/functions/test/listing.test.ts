@@ -52,7 +52,9 @@ describe("listing search", () => {
 
   it("serves photos and reviews live", async () => {
     const o = await newOwner();
+    await post("/listing/imports", o.token, { placeId: "fake-faro" }, o.rid); // media is per place in use
     const media = await get("/listing/place/fake-faro/media", o.token, o.rid);
+    expect(media.status).toBe(200);
     expect(media.body.photos).toHaveLength(5);
     expect(media.body.reviews[0]).toMatchObject({ author: { name: "Marta G." }, rating: 5 });
   });

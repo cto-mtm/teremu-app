@@ -54,7 +54,7 @@ e2e/
 │   ├── plan.flow.ts         # setPlanEverywhere() — specs set the plan they need
 │   └── invoice.flow.ts      # upload → wait for OCR → approve (golden path + per-scan-id helpers)
 └── tests/
-    ├── auth.setup.ts        # sign in + first-login tour → saves storageState
+    ├── auth.setup.ts        # sign in → skip "find your restaurant" → first-login tour → saves storageState
     ├── auth/login.spec.ts   # signed-OUT: login page + route guard
     ├── menu/                # dish costing and target-margin flagging
     ├── pantry/              # manual ingredient creation, physical count
@@ -64,7 +64,9 @@ e2e/
     ├── vendors/             # directory search, vendor page, ordering contact
     ├── settings/            # team invite + per-area permissions (second signed-in user),
     │                        #   location name / labor rate / units / health, new location + POS
-    └── pricing/             # plan page, free vs pro gates
+    ├── pricing/             # plan page, free vs pro gates
+    └── setup/               # "find your restaurant": a FRESH owner imports a listing (fake Places
+                             #   backend + fixture websites) → review → save → recipe hand-off
 ```
 
 ## How it works
@@ -73,7 +75,9 @@ e2e/
    the `api` function is actually being served (a functions emulator that failed
    to load the code still answers port 5001), then wipes Auth + Firestore.
 2. **`auth.setup.ts`** signs in through the Auth emulator's Google picker →
-   server bootstraps the restaurant → walks the onboarding tour → saves the
+   server bootstraps the restaurant → lands on "find your restaurant" (a new
+   owner's first step, docs/restaurant-listing.md) and skips it, for good →
+   walks the onboarding tour → saves the
    session to `STORAGE_STATE` (`playwright/.auth/owner.json`, gitignored).
 3. **All other specs** reuse that session (storageState) — they start signed in
    as the owner of one empty restaurant.

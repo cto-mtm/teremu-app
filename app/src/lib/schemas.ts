@@ -339,6 +339,7 @@ export const meSchema = z.object({
   // "Find your restaurant" first-run step (docs/restaurant-listing.md);
   // an API from before it reads as done, so nobody gets redirected.
   setupListing: setupListingSchema.catch('done'),
+  listingAvailable: z.boolean().catch(false),
   locations: z.array(locationSchema),
 })
 

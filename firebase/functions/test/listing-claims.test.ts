@@ -146,3 +146,45 @@ describe("claim verification", () => {
     expect((await db().doc(`placeClaims/fake-lupita/reviews/${o.rid}`).get()).data()).toMatchObject({ status: "open", note: "Tengo el CIF" });
   });
 });
+
+describe("claim verification limits", () => {
+  it("an expired code is refused", async () => {
+    const o = await newOwner();
+    await claim(o, "fake-faro");
+    await startWithKnownCode(o, "fake-faro");
+    await db().doc(`placeClaims/fake-faro/verifications/${o.rid}`).update({ expiresAt: Date.now() - 1 });
+    expect(await post("/listing/verify/confirm", o.token, { code: "123456" }, o.rid)).toMatchObject({ status: 410, body: { error: "code_expired" } });
+  });
+
+  it("parallel guesses can't get past the five-try limit", async () => {
+    const o = await newOwner();
+    await claim(o, "fake-faro");
+    await startWithKnownCode(o, "fake-faro");
+    const guesses = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => post("/listing/verify/confirm", o.token, { code: String(100000 + i) }, o.rid)),
+    );
+    // Contended transactions may give up (500) — what matters is that no
+    // more than five guesses ever reached the comparison, and none won.
+    const compared = guesses.filter((g) => g.body.error === "wrong_code").length;
+    expect(compared).toBeLessThanOrEqual(5);
+    expect(guesses.every((g) => g.status !== 200)).toBe(true);
+    const attempts = (await db().doc(`placeClaims/fake-faro/verifications/${o.rid}`).get()).get("attempts") as number;
+    expect(attempts).toBe(compared);
+    // Use up whatever tries contention left, then even the right code is refused.
+    for (let i = attempts; i < 5; i++) await post("/listing/verify/confirm", o.token, { code: "000000" }, o.rid);
+    // Even the right code is locked out now.
+    expect((await post("/listing/verify/confirm", o.token, { code: "123456" }, o.rid)).body.error).toBe("too_many_attempts");
+  });
+
+  it("a restaurant can ask for three codes an hour", async () => {
+    const o = await newOwner();
+    await claim(o, "fake-faro");
+    for (const box of ["a", "b", "c"]) {
+      expect((await post("/listing/verify", o.token, { email: `${box}@tabernaelfaro.example` }, o.rid)).status).toBe(200);
+    }
+    expect(await post("/listing/verify", o.token, { email: "d@tabernaelfaro.example" }, o.rid)).toMatchObject({
+      status: 429,
+      body: { error: "verify_rate_limited" },
+    });
+  });
+});

@@ -1,10 +1,11 @@
 import { getFirestore, type DocumentReference, type Transaction } from "firebase-admin/firestore";
-import { packFor } from "../countries/index.js";
+import { adoptedCurrency } from "../baseCurrency.js";
 import { countryCodeSchema, type ListingCommit } from "../models.js";
 import { RequestError } from "../pipeline.js";
 import { rematchAfterMenuChange } from "../pos/catalog.js";
 import { importsCol, loadImport, type ImportJob } from "./jobs.js";
 import { writeNotes } from "./notes.js";
+import { normalizeWebsite } from "./website.js";
 
 /**
  * Commit a reviewed import (docs/restaurant-listing.md §Claims, §Commit).
@@ -40,6 +41,8 @@ export class PlaceLinkedToYourLocation extends RequestError {
 }
 
 const db = () => getFirestore();
+/** A commit that crashed mid-way may be retried after this long. */
+const COMMIT_LEASE_MS = 60_000;
 export const claimRef = (placeId: string) => db().collection("placeClaims").doc(placeId);
 const event = (tx: Transaction, placeId: string, data: Record<string, unknown>) =>
   tx.set(claimRef(placeId).collection("events").doc(), { ...data, at: Date.now() });
@@ -47,12 +50,21 @@ const event = (tx: Transaction, placeId: string, data: Record<string, unknown>) 
 async function decideLink(
   rid: string,
   uid: string,
+  jobId: string,
   job: ImportJob,
   restaurant: Record<string, unknown>,
 ): Promise<{ outcome: LinkOutcome; contestedPlaceId: string | null }> {
   const placeId = job.placeId;
   const restRef = db().collection("restaurants").doc(rid);
+  const jobRef = importsCol(rid).doc(jobId);
   return db().runTransaction(async (tx) => {
+    // Claim the job first: a second commit of the same import (double
+    // click, retry) stops here instead of writing everything twice.
+    const jobSnap = await tx.get(jobRef);
+    const status = jobSnap.get("status") as string | undefined;
+    const committingAt = (jobSnap.get("committingAt") as number | undefined) ?? 0;
+    if (status === "committed") throw new RequestError("already_committed", 409);
+    if (status === "committing" && Date.now() - committingAt < COMMIT_LEASE_MS) throw new RequestError("commit_in_progress", 409);
     const rest = await tx.get(restRef);
     const myOwner = rest.get("ownerUid") as string | undefined;
     const previous = (rest.get("listing.placeId") as string | null | undefined) ?? null;
@@ -89,12 +101,15 @@ async function decideLink(
       }
     }
 
-    // Re-imported as a different place: the old one is free again.
+    // Re-imported as a different place: the old one is free again — unless
+    // it was VERIFIED, which only an explicit "Desvincular" gives up.
     if (prevClaim?.exists && prevClaim.get("rid") === rid && linkedPlaceId !== previous) {
+      if (prevClaim.get("status") === "verified") throw new RequestError("verified_place_linked", 409);
       tx.update(prevClaim.ref, { status: "released", rid: null });
       event(tx, previous!, { type: "released", rid, uid });
     }
 
+    tx.update(jobRef, { status: "committing", committingAt: Date.now() });
     tx.set(restRef, { ...restaurant, listing: { ...(restaurant.listing as object), placeId: linkedPlaceId, contestedPlaceId } }, { merge: true });
     return { outcome, contestedPlaceId };
   });
@@ -125,14 +140,18 @@ export async function commitImport(
 
   const restRef = db().collection("restaurants").doc(ctx.rid);
   const current = (await restRef.get()).data() ?? {};
+  const website = body.restaurant.website === null ? null : normalizeWebsite(body.restaurant.website);
+  if (body.restaurant.website !== null && !website) throw new RequestError("bad_website");
 
-  // Country (and with it the base currency) from the real address — unless
-  // the owner set it themselves in Settings, or the currency is locked.
+  // Country from the real address — unless the owner set it in Settings.
+  // The base currency follows only if it was never the owner's own pick
+  // and nothing is approved (baseCurrency.ts). Timezone stays as is: the
+  // listing has no timezone, and the device's guess is usually right.
   const restaurant: Record<string, unknown> = {
     name: body.restaurant.name,
     setupListing: "done",
     listing: {
-      website: body.restaurant.website,
+      website,
       cuisines: body.restaurant.cuisines,
       priceLevel: body.restaurant.priceLevel,
       confirmedAt: Date.now(),
@@ -142,10 +161,7 @@ export async function commitImport(
   if (country.success && current.regionSource !== "owner") {
     restaurant.country = country.data;
     restaurant.regionSource = "listing";
-    if (current.currency === undefined) {
-      const approved = await restRef.collection("invoices").where("status", "==", "approved").limit(1).get();
-      if (approved.empty) restaurant.currency = packFor(country.data).defaultCurrency;
-    }
+    Object.assign(restaurant, await adoptedCurrency(ctx.rid, country.data, current));
   }
 
   // Updates must point at this restaurant's own dishes.
@@ -155,13 +171,15 @@ export async function commitImport(
     : [];
   if (owned.some((s) => !s.exists)) throw new RequestError("unknown_menu_item", 400);
 
-  const { outcome, contestedPlaceId } = await decideLink(ctx.rid, ctx.uid, job, restaurant);
+  const { outcome, contestedPlaceId } = await decideLink(ctx.rid, ctx.uid, id, job, restaurant);
 
   const batch = db().batch();
   const created: string[] = [];
-  for (const d of body.dishes) {
+  for (const [i, d] of body.dishes.entries()) {
     if (d.action === "create") {
-      const ref = restRef.collection("menuItems").doc();
+      // Deterministic per job: even a commit retried after its lease
+      // expired rewrites the same dishes instead of adding copies.
+      const ref = restRef.collection("menuItems").doc(`${id}-d${i}`);
       created.push(ref.id);
       batch.set(ref, {
         name: d.name,
@@ -177,7 +195,7 @@ export async function commitImport(
     }
   }
   await writeNotes(batch, ctx.rid, body.notes);
-  // The job keeps its steps for the record; the Google content goes now.
+  // Google content goes now; the rest of the job goes with its TTL.
   batch.update(importsCol(ctx.rid).doc(id), {
     status: "committed",
     committedAt: Date.now(),
