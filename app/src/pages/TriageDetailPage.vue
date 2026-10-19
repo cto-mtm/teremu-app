@@ -121,16 +121,27 @@ async function confirmAsExpense(): Promise<void> {
 // fetch it as a blob and render the object URL instead. Multi-page
 // scans re-fetch per page (?page=N, 1-based).
 const imageUrl = ref<string | null>(null)
+// null while fetching too — the loader, not "no image", covers that gap.
+const imageLoading = ref(true)
+let imageSeq = 0
 const page = ref(1)
 const pageCount = computed(() => invoice.value?.imagePaths?.length ?? 1)
 watch(invoiceId, () => (page.value = 1))
 watch(
   [invoiceId, page],
   async ([idVal, pageVal]) => {
+    const seq = ++imageSeq
     if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
-    imageUrl.value = await fetchBlobUrl(
-      `/invoices/${idVal}/image${pageVal > 1 ? `?page=${pageVal}` : ''}`,
-    )
+    imageUrl.value = null
+    imageLoading.value = true
+    const url = await fetchBlobUrl(`/invoices/${idVal}/image${pageVal > 1 ? `?page=${pageVal}` : ''}`)
+    // A slower response for a page/invoice we already left must not win.
+    if (seq !== imageSeq) {
+      if (url) URL.revokeObjectURL(url)
+      return
+    }
+    imageUrl.value = url
+    imageLoading.value = false
   },
   { immediate: true },
 )
@@ -359,6 +370,14 @@ async function approve(): Promise<void> {
           :alt="t('triage.detail.receiptAlt')"
           class="w-full rounded-xl"
         />
+        <div
+          v-else-if="imageLoading"
+          class="flex h-40 items-center justify-center"
+          role="status"
+          :aria-label="t('triage.detail.imageLoading')"
+        >
+          <span class="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-smoke" aria-hidden="true" />
+        </div>
         <div v-else class="flex h-40 items-center justify-center text-xs text-smoke">
           {{ t('triage.detail.noImage') }}
         </div>
