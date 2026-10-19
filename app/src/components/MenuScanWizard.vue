@@ -24,9 +24,11 @@ const open = defineModel<boolean>({ required: true })
 
 // Other sources of dishes (a POS catalog — see PosLinksPage) skip the
 // photo: they open the wizard straight at "pick" with their own list,
-// and get back which dish each of their entries became.
+// and get back which dish each of their entries became. A seed entry with
+// a menuItemId is a dish that ALREADY exists (an imported menu — see
+// docs/restaurant-listing.md): saving updates its recipe in place.
 const props = defineProps<{
-  seed?: { key: string; name: string; price: number | null }[]
+  seed?: { key: string; name: string; price: number | null; menuItemId?: string }[]
   title?: string
 }>()
 const emit = defineEmits<{ saved: [created: { key: string; menuItemId: string }[]] }>()
@@ -40,6 +42,7 @@ watch(open, (isOpen) => {
     name: s.name,
     price: s.price != null ? String(s.price) : '',
     section: null,
+    menuItemId: s.menuItemId,
     selected: true,
     lines: [],
   }))
@@ -54,6 +57,7 @@ const errorMsg = ref('')
 
 interface WizardDish {
   key?: string // the seed entry this dish came from, if any
+  menuItemId?: string // an existing dish: update instead of create
   name: string
   price: string // editable as text
   section: string | null
@@ -227,13 +231,28 @@ async function saveAll(withRecipes: boolean): Promise<void> {
         if (line.qty > 0) recipe.push({ ingredientId, qty: line.qty, unit: line.unit })
       }
     }
-    const saved = await kitchen.saveMenuItem({
-      name: dish.name,
-      price: Number(dish.price) || 0,
-      targetMarginPct: 70,
-      recipe,
-      active: true,
-    })
+    const existing = dish.menuItemId ? kitchen.menuItems.find((m) => m.id === dish.menuItemId) : undefined
+    const saved = existing
+      ? // Update in place: keep its target and other fields; a recipe only
+        // replaces the old one when drafts were requested.
+        await kitchen.saveMenuItem(
+          {
+            name: dish.name,
+            price: Number(dish.price) || 0,
+            targetMarginPct: existing.targetMarginPct,
+            prepMinutes: existing.prepMinutes,
+            recipe: withRecipes ? recipe : existing.recipe,
+            active: existing.active,
+          },
+          existing.id,
+        )
+      : await kitchen.saveMenuItem({
+          name: dish.name,
+          price: Number(dish.price) || 0,
+          targetMarginPct: 70,
+          recipe,
+          active: true,
+        })
     if (saved) {
       ok += 1
       if (dish.key) createdFromSeed.push({ key: dish.key, menuItemId: saved.id })

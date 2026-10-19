@@ -40,9 +40,10 @@ describe("currency-layer module boundaries", () => {
   it("(a) no country literal outside src/countries/", () => {
     // demo/profiles/* are seed DATA (a fake restaurant's country), not
     // country-branching core logic — the seepage this guard prevents. They
-    // are exempt like src/countries/ itself.
+    // are exempt like src/countries/ itself. So is listing/fake.ts: the
+    // offline Places fixtures are invented restaurants with an address.
     const offenders = outside("countries")
-      .filter((f) => !rel(f).startsWith("demo/profiles/"))
+      .filter((f) => !rel(f).startsWith("demo/profiles/") && rel(f) !== "listing/fake.ts")
       .filter((f) => {
         const text = code(f);
         return COUNTRY_LITERAL.test(text) || COUNTRY_COMPARE.test(text);

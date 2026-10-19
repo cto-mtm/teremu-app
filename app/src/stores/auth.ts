@@ -101,6 +101,8 @@ export const useAuthStore = defineStore('auth', () => {
     if (!me.timezone && detected.timezone) patch.timezone = detected.timezone
     if (typeof localStorage !== 'undefined') localStorage.setItem(flag, '1')
     if (Object.keys(patch).length === 0) return
+    // A guess: an imported listing's real address may replace it.
+    patch.regionSource = 'device'
     const res = await apiFetch(`/restaurants/${me.restaurantId}`, { method: 'PUT', body: JSON.stringify(patch) })
     if (res.ok) await loadProfile()
   }

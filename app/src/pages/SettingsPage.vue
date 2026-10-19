@@ -15,6 +15,7 @@ import { useLocationStore } from '../stores/location'
 import type { PermArea, Perms } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import IntegrationsCard from '../components/IntegrationsCard.vue'
+import ListingCard from '../components/ListingCard.vue'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 // Settings. The health check proves the app → Cloud Function wiring end
@@ -124,6 +125,8 @@ async function saveRegion(): Promise<void> {
   if (countryInput.value) patch.country = countryInput.value
   if (timezoneInput.value.trim()) patch.timezone = timezoneInput.value.trim()
   if (Object.keys(patch).length === 0) return
+  // The owner's own choice — an imported listing never overwrites it.
+  patch.regionSource = 'owner'
   regionBusy.value = true
   regionSaved.value = false
   const res = await apiFetch(`/restaurants/${rid}`, { method: 'PUT', body: JSON.stringify(patch) })
@@ -322,6 +325,8 @@ async function cancelInvite(emailKey: string): Promise<void> {
         <span v-if="locationNameSaved" class="chip-down">{{ t('settings.location.saved') }}</span>
       </div>
     </div>
+
+    <ListingCard v-if="isOwner" :key="auth.profile?.restaurantId" />
 
     <div class="card space-y-3">
       <div class="text-sm font-semibold">{{ t('settings.language') }}</div>

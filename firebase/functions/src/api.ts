@@ -30,6 +30,13 @@ import {
   posLinkActionSchema,
   posProviderSchema,
   reconcileSchema,
+  listingCommitSchema,
+  listingImportCreateSchema,
+  listingReviewSchema,
+  listingUpdateSchema,
+  listingVerifyConfirmSchema,
+  listingVerifyStartSchema,
+  listingWebsiteSchema,
   newRestaurantSetupFields,
   restaurantProfileSchema,
   revenueSchema,
@@ -69,6 +76,11 @@ import {
 } from "./pipeline.js";
 import { toBaseTotal } from "./fx/convert.js";
 import { packFor, profileOf } from "./countries/index.js";
+import { listingBackend } from "./listing/index.js";
+import { createImport, importView, loadImport, readMenu, readWebsite } from "./listing/jobs.js";
+import { commitImport, PlaceLinkedToYourLocation, releaseClaim } from "./listing/commit.js";
+import { listingStatus, unlinkListing, updateListing } from "./listing/settings.js";
+import { confirmVerification, requestReview, startVerification } from "./listing/verify.js";
 import { POS_SECRETS } from "./pos/index.js";
 import {
   completeOAuth,
@@ -272,6 +284,75 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (planInfo.setupListing === "done") return json(res, 200, { setupListing: "done" });
     await db.collection("restaurants").doc(rid).set({ setupListing: "skipped" }, { merge: true });
     return json(res, 200, { setupListing: "skipped" });
+  }
+
+  // ── listing import: search → import → website → menu → commit ──
+  // Owner-only (staff join a restaurant someone already set up). The
+  // client drives one short call per step — see listing/jobs.ts.
+  if (head === "listing") {
+    if (member.role !== "owner") return forbidden(res);
+    // The Settings card — the owner's own data, no Google call needed.
+    if (m === "GET" && seg.length === 1) return json(res, 200, await listingStatus(rid));
+    if (m === "PUT" && seg.length === 1) {
+      await updateListing(rid, listingUpdateSchema.parse(req.body));
+      return json(res, 200, await listingStatus(rid));
+    }
+    if (m === "POST" && id === "unlink" && seg.length === 2) {
+      await unlinkListing(rid, member.uid);
+      return json(res, 200, await listingStatus(rid));
+    }
+    if (m === "POST" && id === "review" && seg.length === 2) {
+      const { note } = listingReviewSchema.parse(req.body ?? {});
+      return json(res, 200, await requestReview({ rid, uid: member.uid }, note));
+    }
+    if (m === "POST" && id === "verify" && action === "confirm" && seg.length === 3) {
+      const { code } = listingVerifyConfirmSchema.parse(req.body);
+      return json(res, 200, await confirmVerification({ rid, uid: member.uid }, code));
+    }
+    const backend = listingBackend();
+    if (!backend) return json(res, 501, { error: "listing_unavailable" });
+    const language = await userLocale();
+    if (m === "POST" && id === "verify" && seg.length === 2) {
+      const { email } = listingVerifyStartSchema.parse(req.body);
+      return json(res, 200, await startVerification(backend, { rid, uid: member.uid, language }, email));
+    }
+    if (m === "GET" && id === "search" && seg.length === 2) {
+      const q = String(req.query.q ?? "").trim().slice(0, 120);
+      if (q.length < 2) return json(res, 200, { results: [] });
+      const session = typeof req.query.session === "string" ? req.query.session.slice(0, 64) : undefined;
+      const results = await backend.places.autocomplete(q, { session, country: planInfo.country, language });
+      return json(res, 200, { results });
+    }
+    // Photos + reviews, live: shown during review, never stored.
+    if (m === "GET" && id === "place" && action && seg[3] === "media" && seg.length === 4) {
+      return json(res, 200, await backend.places.media(action, { language }));
+    }
+    if (id === "imports") {
+      if (m === "POST" && seg.length === 2) {
+        const body = listingImportCreateSchema.parse(req.body);
+        const created = await createImport(backend, { rid, uid: member.uid, language }, body);
+        return json(res, 201, importView(created.id, created.job));
+      }
+      const sub = seg[3];
+      if (action && m === "GET" && seg.length === 3) return json(res, 200, importView(action, await loadImport(rid, action)));
+      if (action && m === "POST" && seg.length === 4) {
+        if (sub === "website") {
+          const { url } = listingWebsiteSchema.parse(req.body ?? {});
+          return json(res, 200, importView(action, await readWebsite(backend, rid, action, url)));
+        }
+        if (sub === "menu") return json(res, 200, importView(action, await readMenu(backend, rid, action)));
+        if (sub === "commit") {
+          try {
+            return json(res, 200, await commitImport({ rid, uid: member.uid }, action, listingCommitSchema.parse(req.body)));
+          } catch (err) {
+            if (err instanceof PlaceLinkedToYourLocation) {
+              return json(res, 409, { error: err.code, locationName: err.locationName });
+            }
+            throw err;
+          }
+        }
+      }
+    }
   }
 
   // ── invoices ──────────────────────────────────────────────────
@@ -918,6 +999,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
         }
       }
       if (body.timezone !== undefined) patch.timezone = body.timezone;
+      // Who chose the region (docs/restaurant-listing.md): an owner's pick
+      // is never overwritten by an imported listing; a device guess is.
+      if (body.regionSource !== undefined && (body.country !== undefined || body.timezone !== undefined)) {
+        patch.regionSource = body.regionSource;
+      }
       if (body.fxDefaultSource !== undefined) patch.fxDefaultSource = body.fxDefaultSource;
       if (body.fxOptIns !== undefined) patch.fxOptIns = body.fxOptIns;
       if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
@@ -947,6 +1033,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // POS connections live outside the rid (one per merchant) — drop
       // this restaurant's reference, revoking the grant if it was the last.
       await detachRestaurant(rid);
+      // Its Google place is free for whoever really runs it now.
+      await releaseClaim(rid, member.uid);
       await db.recursiveDelete(db.collection("restaurants").doc(rid));
       try {
         await getStorage().bucket().deleteFiles({ prefix: `receipts/${rid}/` });
@@ -1041,6 +1129,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
       planLabel: planInfo.plan,
       scansLabel: `${planInfo.scanCount} used of ${planInfo.limits.scans} this month (${scansLeft} left); upgrade for more`,
       assistantLabel: planInfo.limits.assistant ? "included on this plan" : "not on this plan (upgrade to Pro)",
+      // One line each, ≤ 80 chars (the package's fact limit).
+      restaurantLabel: (planInfo.name || "not set").slice(0, 80),
+      cuisineLabel: (planInfo.cuisines.join(", ") || "not set").slice(0, 80),
+      priceLabel: planInfo.priceLevel ? `${["budget", "moderate", "upscale", "premium"][planInfo.priceLevel - 1]} (${planInfo.priceLevel} of 4)` : "not set",
     };
     await toNodeHandler(assistant.fetch, () => principal)(req, res);
     return;

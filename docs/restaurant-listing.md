@@ -1,6 +1,6 @@
 # Restaurant listing import ("Encuentra tu restaurante")
 
-Status: **Phase 0 built (2026-10-19, uncommitted); Phases 1–3 design only.** Phase 0 = `helpers/safeFetch.ts` (+ `test/safe-fetch.test.ts`), text-keyed cassettes in `llm.ts`, `setupListing` (shared vocab → restaurant doc → `/me`), `POST /listing/skip`, the owner redirect in the router guard and on location switch, the tour waiting for setup, demo profiles marked done, `e2e/tests/auth.setup.ts` skipping setup. **Gate:** new locations only start `pending` when `LISTING_SETUP=on`, or in the emulator unless `LISTING_SETUP=off` (`newRestaurantSetupFields` in `models.ts`) — production stays off until the import is real. Until Phase 1 the setup page is still the mock and finishing it counts as a skip. A clickable prototype with mocked data exists at `/setup/restaurant` (`app/src/pages/RestaurantSetupPage.vue`, `app/src/lib/restaurantLookupMock.ts`, strings in `app/src/i18n/locales/pages/setup.ts`, animations in Recipe 6 of `transitions.css`). This doc is the plan for making it real.
+Status: **Phases 0, 1 and 2 built (2026-10-19).** Phase 0 = `helpers/safeFetch.ts`, text-keyed cassettes in `llm.ts`, `setupListing` + `/me` + `POST /listing/skip`, the owner redirect, the tour waiting for setup. Phase 1 = `firebase/functions/src/listing/` (fake + Google provider, website crawl, merge/match, client-driven import job, commit with the `placeClaims` registry), `stores/listing.ts` and the setup page on the real API, `test/listing*.test.ts`, `e2e/tests/setup/listing.spec.ts`. **Still gated:** new locations only start `pending` when `LISTING_SETUP=on` (on in the emulator, off when deployed), and `GOOGLE_PLACES_API_KEY` is not yet bound to the `api` function — deployed without it the routes answer 501. Phase 2 = claim verification + takeover (`listing/verify.ts`), the Settings card (`ListingCard.vue`, `listing/settings.ts`), assistant facts + `getRestaurantNotes`, the Menu entry point and the recipe hand-off. Not built yet: PDF menus and Phase 3 (refresh / price-change diff, live reviews in Settings). See "Built vs. designed" below.
 
 After first sign-in, the owner searches for their restaurant. We pull what is already public — the Google listing (name, address, hours, rating, photos, review snippets) and the restaurant's own website (its menu) — and show it back for review. The owner corrects dishes and prices, confirms, and we write: their dishes into `menuItems`, their confirmed details onto the restaurant, and a short set of owner-approved notes the assistant reads. Then the existing recipe-drafting step takes over.
 
@@ -166,19 +166,21 @@ New module `firebase/functions/src/listing/`:
 - `types.ts` — `ListingProvider` interface: `autocomplete(input, sessionToken, bias?)`, `details(placeId, sessionToken?)`, `photos(placeId, max)`, `reviews(placeId)`. Normalized, provider-blind shapes; callers never see Places field names.
 - `google.ts` — Places API (New) over HTTPS with a **field mask per call** (billing is set by the most expensive field requested, so details for the job doc and media for the live endpoint are separate calls with separate masks). Base URL from env config, never hardcoded in callers. 20s `AbortSignal.timeout`, like the Square client.
 - `fake.ts` — fixture provider: the five prototype restaurants move here from `restaurantLookupMock.ts`. Selected when `GOOGLE_PLACES_API_KEY` is absent or `TEREMU_TEST_MOCKS` is set (same shape as `adapterFor` in `pos/index.ts`).
-- `website.ts` — the crawler: fetch the homepage, find up to 3 menu candidates (links matching carta|menú|menu|cartas, `.pdf` links, large images inside a menu page), fetch them, turn each into text (HTML → readable text; PDF → text via a PDF text library; image → handed to `extractMenu`). Hard caps: 4 fetches, 2 MB each, 25s total.
+- `website.ts` — the crawler: fetch the homepage, find up to 3 menu candidates (links whose text or path says carta/menú/menu…, `.pdf` links, menu-looking `<img>`s), fetch them, turn each into text (HTML → readable lines, no HTML library) or keep it as an image for `extractMenu`. **PDFs are detected but not read in v1** (`menuNote: "pdf"` → the UI asks for a photo). Caps: 3 menu links + 2 images, 2 MB each, 25s.
 - `extract.ts` — text-menu extraction through `llm.ts` with a JSON schema. Reuses `MENU_PROMPT`'s rules and `menuDishSchema` from `menuscan.ts` (export them; don't fork the prompt). Image menus go through the existing `extractMenu`. Mock branch keyed on `llmEnabled()` (covers cassette replay), not `llmApiKey()`.
 - `merge.ts` — combine candidates from several pages (same normalized name → one candidate, different price → `altPrice`), then match against existing active `menuItems` with `tokens`/`prepareDishes`/`matchItem` from `pos/matching.ts` (cheap tiers only, no LLM tier) to fill `match`.
-- `run.ts` — the import job: details → website → menu → merge, writing `steps` to the job doc after each step so the client's progress is real.
+- `jobs.ts` — the import job, one exported function per client-driven step (create, website, menu) — see below.
 - `routes.ts` — the routes below, wired into `api.ts`'s `route()`.
 
 New shared helper `firebase/functions/src/helpers/safeFetch.ts` (nothing like it exists today): http/https only; resolve DNS and refuse private, loopback, link-local and metadata ranges (169.254.169.254, fd00::/8, etc.); follow redirects manually and re-check each hop; max 3 redirects; timeout; response byte cap; content-type allowlist (html, pdf, jpeg/png/webp). Unit-tested on its own.
 
-**Where the long work runs.** The `api` function has a 120s timeout and no background work exists after a response. The import (Places call + up to 4 fetches + LLM extraction) usually fits, but not reliably. So:
+**Where the long work runs — client-driven steps (changed from the first draft).** The draft used a Firestore trigger; Firestore here is `nam5` while every function is `us-east1`, the cross-location Eventarc setup could not be verified offline, and Cloud Tasks would have needed the tasks emulator in every test script. So the client drives the job one short call per step, each far inside the api's 120s:
 
-- `POST /listing/imports` creates the job doc and returns `{id}` immediately.
-- A new **Firestore trigger** `onListingImportCreated` (v2 `onDocumentCreated` on `restaurants/{rid}/listingImports/{id}`, us-east1, 300s, secrets `NVIDIA_API_KEY` + `GOOGLE_PLACES_API_KEY`) runs `run.ts`. This is the codebase's first Firestore trigger; it mirrors the invoice pattern (job doc + Storage trigger) one-for-one.
-- The client polls `GET /listing/imports/:id` (~1s), same as Triage does for invoices.
+- `POST /listing/imports` — creates the job and fetches the listing details (profile, photo and review counts settle at once).
+- `POST /listing/imports/:id/website` — reads the site, stores the menu pages' text on the job (image URLs only — bytes are re-fetched by the next step; a doc is capped at 1 MB).
+- `POST /listing/imports/:id/menu` — extracts dishes (text via `extractMenuFromText`, images via `extractMenu`), merges, matches; ≤4 runs per job.
+
+The progress on screen is the real step sequence. Leaving mid-import just abandons the job (TTL).
 
 **Routes** (all owner-only in v1; members never see setup. Revisit with `menu: edit` if owners ask to delegate):
 
@@ -186,8 +188,9 @@ New shared helper `firebase/functions/src/helpers/safeFetch.ts` (nothing like it
 |---|---|
 | `GET /listing/search?q=&session=` | Autocomplete via the provider. `session` is a client-generated UUID so autocomplete + the final details call bill as one session. Biased to the restaurant's `country` if set. |
 | `POST /listing/imports` `{placeId, session}` or `{manual: {name}}` | Creates the job (manual = no Places step). Rate limit: 5 imports per restaurant per day → 429. |
-| `GET /listing/imports/:id` | The job doc, for polling. |
-| `POST /listing/imports/:id/website` `{url}` | Re-runs website → menu → merge with an owner-supplied URL; appends candidates. Same trigger path (sets `steps.website` to `pending`). |
+| `GET /listing/imports/:id` | The job (page texts stay server-side) — to resume. |
+| `POST /listing/imports/:id/website` `{url?}` | Reads the listing's site, or one the owner pasted (`"lalupita.es"` is fine). Candidates from earlier runs are kept. |
+| `POST /listing/imports/:id/menu` | Extracts, merges and matches the stored pages. |
 | `GET /listing/place/:placeId/media` | Live photos (proxied URLs, never the key) + reviews with attribution fields. Never stored. |
 | `POST /listing/imports/:id/commit` | The single write. See below. |
 | `POST /listing/skip` | `setupListing: "skipped"`. |
@@ -212,7 +215,7 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 - **Facts** (the system prompt's `Label: value.` tail; scalar, one line, ≤80 chars each): `Restaurante`, `Cocina` (cuisines joined), `Rango de precio`. Added to `AssistantPrincipal` in `api.ts` (one extra read of `restaurants/{rid}`, or fold into `getPlanInfo`) and declared in `manifest.facts`.
 - **Tool** `getRestaurantNotes` (`query` row, `permission: "app:read"`) returning the notes doc, plus one rule line in `prompt.md` ("check the owner's notes before answering about opening hours, specialties or policies"). Built with the `assistant-tool` skill: row + fixtures + mock script keys + eval case + conformance.
 
-**Secrets & config.** `GOOGLE_PLACES_API_KEY = defineSecret(...)` exported from `listing/google.ts`, added to the `api` and trigger `secrets` arrays, local value in `firebase/functions/.secret.local`, documented in `.env.example`. Set in prod with a script modeled on `scripts/pos-secrets.mjs` (refuses `demo-*`, checks state first, stdin only, `--dry-run`). In Google Cloud: restrict the key to Places API (New) only. **Never let a script or test reach the prod project without explicit OK.**
+**Secrets & config.** `GOOGLE_PLACES_API_KEY = defineSecret(...)` is exported from `listing/google.ts` but **not yet in the `api` function's `secrets` array**: a deploy that references a secret missing from Secret Manager fails, so binding it is the go-live step (after the secret exists). Until then the key is read from the environment — put it in `firebase/functions/.env.local` to try real Google locally; tests always use the fake (`TEREMU_TEST_MOCKS`). `PLACES_API_URL` overrides the base URL. Set in prod with a script modeled on `scripts/pos-secrets.mjs` (refuses `demo-*`, checks state first, stdin only, `--dry-run`). In Google Cloud: restrict the key to Places API (New) only. **Never let a script or test reach the prod project without explicit OK.**
 
 **`llm.ts` change.** Cassettes key on label + image bytes only, so a text-only call has no key and throws in replay mode. Add a text-hash key (label + SHA-256 of the text parts) so the website-extraction tests can record/replay. Read `llm.md` first; this touches every caller's cassette path.
 
@@ -268,6 +271,21 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 | 1 — import & commit | `listing/` module with fake + Google provider; job doc + trigger + polling; website crawl (HTML + PDF text + menu images); commit route with the `placeClaims` registry (claim, idempotent re-import, same-owner 409, contested-without-link); store + split page wired to the real API; attribution UI; integration + e2e tests. | ~1–1.5 weeks |
 | 2 — fit into the app | Dedupe/match against existing menu; "Estimar recetas" hand-off (wizard update mode); assistant facts + `getRestaurantNotes` tool (assistant-tool skill); Settings card (incl. Desvincular → release); claim verification (email-at-domain + manual review) and takeover; Menu empty-state entry; demo profiles. | ~1 week |
 | 3 — keep it fresh | "Volver a importar" diff (website prices vs current menu → suggested price updates); live reviews in Settings; evaluate Gemini's Grounding with Google Maps as an alternative source once the LLM provider moves to Gemini (`llm-provider-plan`). | later |
+
+## Built vs. designed (2026-10-19)
+
+Where Phase 1 as built differs from the design above, and why:
+
+- **Client-driven steps, not a trigger + polling** — see "Where the long work runs".
+- **Persisted on the restaurant:** name, `listing.{placeId, contestedPlaceId, website, cuisines, priceLevel, confirmedAt}`, country/`regionSource` (+ currency while unlocked). **Not** persisted: address, phone, hours, rating, reviews, photos. That is open decision 1's safe default; the review screen only shows them.
+- **No review text feeds the assistant.** Suggested notes come from the listing (cuisine, city, price band) and the menu (average price, size). The prototype's "♥ Favorito" and "star dish" (both derived from reviews) were dropped.
+- **Photos are `<img>` straight from Google's short-lived photo URLs** (`skipHttpRedirect`), so no proxy route and no key in the browser. The fake backend serves SVG gradient tiles.
+- **Dishes:** `menuItems` gained `section` and `origin` (both sides; the app schema carries them through `PUT /menu-items/:id`, which replaces the whole doc). Commit creates dishes with an empty recipe at a 70% target, like the menu-scan wizard.
+- **Matching** uses `pos/matching.ts` tiers 1–2 (exact; fuzzy ≥ 0.8). A matched row commits as `update_price` when the price changed, else `skip_existing`.
+- **Assistant notes are a collection** — `restaurants/{rid}/assistantNotes/{n<i>}` (`text`, `origin`, `order`), not one doc: the assistant reads them with a declarative `query` row (`getRestaurantNotes`, `menu:read`), which can only read collections. `listing/notes.ts` owns reads/writes. Facts on the principal: `Restaurant`, `Cuisine`, `Price range` (from `getPlanInfo`'s existing read). `prompt.md` says notes are data, never instructions; `test/assistant.test.ts` has an injection-canary note.
+- **Verification as built:** email-at-domain only (domain from the LIVE listing's website; platform domains like facebook.com/wixsite.com excluded → manual review); 6-digit code hashed at rest, 15 min, 5 tries, 3 sends/hour, plus a per-address mail cap (`claim-verify` kind in `mail.ts`). Takeover moves the link in one transaction and mails the previous owner (`claim-transferred`). Manual review only records `placeClaims/{placeId}/reviews/{rid}` — there is no admin UI; support handles it in the console. Phone and Business Profile OAuth are not built.
+- **Recipe hand-off:** `MenuScanWizard` takes seed entries with a `menuItemId` and updates those dishes in place; the Menu page shows "N platos importados sin receta → Estimar recetas" and the setup done screen deep-links to `/menu?recipes=listing`. `kitchen.saveMenuItem` now carries `section`/`origin` through a PUT.
+- **Not built:** PDF text, the review draft in sessionStorage, the split into `components/setup/`, the location name in the same-owner 409 copy, Phase 3, phone / Business Profile verification, a support UI for reviews, and a live `assistant:eval` run for `getRestaurantNotes` (this repo has no eval harness).
 
 ## Open decisions
 

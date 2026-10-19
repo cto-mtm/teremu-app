@@ -127,7 +127,12 @@ const ExpenseRow = z.object({
   vendorName: z.string().nullable().meta(card({ label: "Proveedor" })),
 });
 
-const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+/** One owner-written note (getRestaurantNotes) — free text, capped. */
+const NoteRow = z.object({
+  text: z.string().max(200).meta(card({ label: "Nota" })),
+});
+
+const str =(v: unknown): string | null => (typeof v === "string" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
 
 export const tools: ToolRow[] = [
@@ -288,6 +293,23 @@ export const tools: ToolRow[] = [
       map: (d) => ({ date: String(d.date), amount: num(d.amount) ?? 0, tag: String(d.tag ?? ""), vendorName: str(d.vendorName) }),
     },
     output: z.array(ExpenseRow),
+  },
+  {
+    // What the owner told the assistant at setup or in Settings
+    // (docs/restaurant-listing.md): closing days, specialties, policies.
+    // Owner-written text, never review text; capped and plain.
+    kind: "query",
+    name: "getRestaurantNotes",
+    description: "The owner's own notes about the restaurant (opening days, specialties, policies, anything they asked you to know).",
+    permission: "menu:read",
+    input: z.object({}),
+    query: {
+      collection: "restaurants/{tenant}/assistantNotes",
+      orderBy: ["order", "asc"],
+      limit: 20,
+      map: (d) => ({ text: String(d.text ?? "").slice(0, 200) }),
+    },
+    output: z.array(NoteRow),
   },
   {
     kind: "handoff",

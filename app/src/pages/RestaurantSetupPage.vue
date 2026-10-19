@@ -1,44 +1,52 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
-import { useAuthStore } from '../stores/auth'
 import { parseAmount } from '../lib/csv'
-import {
-  importRestaurant,
-  manualProfile,
-  readMenuPhoto,
-  readWebsite,
-  searchRestaurants,
-  type FoundDish,
-  type ImportSource,
-  type RestaurantCandidate,
-  type RestaurantProfile,
-} from '../lib/restaurantLookupMock'
+import { useAuthStore } from '../stores/auth'
+import { useKitchenStore } from '../stores/kitchen'
+import { useListingStore, type ReviewDish } from '../stores/listing'
 
 /**
- * PROTOTYPE — "find your restaurant" onboarding. Search → import (one
- * source at a time, animated) → review and correct what we found →
- * confirm. All data comes from lib/restaurantLookupMock.ts; nothing is
- * saved yet.
+ * "Find your restaurant" — the first-run step for a new owner
+ * (docs/restaurant-listing.md). Search the Google listing → import it
+ * (listing, website, menu — one API step at a time, so the progress is
+ * real) → review and correct what was found → commit. The store holds the
+ * import; this page is presentation and the review edits.
  */
 const { t, n, locale } = useI18n()
 const auth = useAuthStore()
+const kitchen = useKitchenStore()
+const listing = useListingStore()
 const router = useRouter()
 
 type Phase = 'search' | 'importing' | 'review' | 'done'
 const phase = ref<Phase>('search')
+onBeforeUnmount(() => listing.reset())
+
+/** API error code → copy. */
+function errorText(code: string | null): string {
+  if (!code) return ''
+  if (code.includes('import_limit')) return t('setup.errors.importLimit')
+  if (code.includes('listing_unavailable')) return t('setup.errors.unavailable')
+  if (code.includes('place_linked_to_your_location')) return t('setup.errors.linkedToYourLocation')
+  if (code.includes('not_a_menu')) return t('menu.scan.notMenu')
+  if (code.includes('unreadable')) return t('menu.scan.unreadable')
+  return t('setup.errors.generic')
+}
 
 // ── Search ──────────────────────────────────────────────────────
 const query = ref('')
 const searching = ref(false)
-const results = ref<RestaurantCandidate[]>([])
+const searchError = ref('')
+const results = ref<{ placeId: string; name: string; address: string }[]>([])
 let searchSeq = 0
 let debounce: ReturnType<typeof setTimeout> | undefined
 
 watch(query, (q) => {
   clearTimeout(debounce)
+  searchError.value = ''
   if (q.trim().length < 2) {
     results.value = []
     searching.value = false
@@ -47,65 +55,56 @@ watch(query, (q) => {
   searching.value = true
   debounce = setTimeout(async () => {
     const seq = ++searchSeq
-    const found = await searchRestaurants(q)
+    const found = await listing.search(q.trim())
     if (seq !== searchSeq) return // a newer keystroke won
-    results.value = found
     searching.value = false
-  }, 200)
+    if (found) results.value = found
+    else searchError.value = errorText(listing.error)
+  }, 250)
 })
 
 // ── Import ──────────────────────────────────────────────────────
-const SOURCES: ImportSource[] = ['profile', 'photos', 'website', 'menu', 'reviews']
-const ICONS: Record<ImportSource, string> = { profile: '📍', photos: '📸', website: '🌐', menu: '📖', reviews: '💬' }
-const chosen = ref<RestaurantCandidate | null>(null)
-const counts = ref<Partial<Record<ImportSource, number>>>({})
-const profile = ref<RestaurantProfile | null>(null)
+const SOURCES = ['profile', 'photos', 'website', 'menu', 'reviews'] as const
+type Source = (typeof SOURCES)[number]
+const ICONS: Record<Source, string> = { profile: '📍', photos: '📸', website: '🌐', menu: '📖', reviews: '💬' }
+const chosen = ref<{ name: string; address: string } | null>(null)
 
-const doneCount = computed(() => Object.keys(counts.value).length)
-const activeSource = computed(() => SOURCES[doneCount.value])
-const progress = computed(() => doneCount.value / SOURCES.length)
+/** What each checklist row shows right now. */
+function rowState(s: Source): 'busy' | 'wait' | 'done' | 'not_found' | 'failed' {
+  const job = listing.job
+  if (!job) return s === 'profile' && listing.busy === 'import' ? 'busy' : 'wait'
+  const state = job.steps[s].state
+  if (state === 'pending') return listing.busy === s ? 'busy' : 'wait'
+  return state
+}
+const settled = computed(() => SOURCES.filter((s) => !['busy', 'wait'].includes(rowState(s))).length)
+const activeSource = computed(() => SOURCES.find((s) => rowState(s) === 'busy'))
 
-async function choose(c: RestaurantCandidate): Promise<void> {
-  chosen.value = c
-  counts.value = {}
+async function begin(input: { placeId: string } | { manualName: string }, shown: { name: string; address: string }): Promise<void> {
+  chosen.value = shown
   phase.value = 'importing'
-  const run = importRestaurant(c.placeId)
-  for (;;) {
-    const step = await run.next()
-    if (step.done) {
-      enterReview(step.value)
-      return
-    }
-    counts.value = { ...counts.value, [step.value.source]: step.value.count }
+  const ok = await listing.start(input)
+  if (!ok) {
+    phase.value = 'search'
+    searchError.value = errorText(listing.error)
+    return
   }
+  enterReview()
 }
 
-/** Not on Google → start from a bare profile with just the typed name. */
-function addManually(): void {
-  enterReview(manualProfile(query.value))
-}
-
-function enterReview(p: RestaurantProfile): void {
-  profile.value = p
-  dishes.value = p.dishes.map(toDish)
-  editingId.value = null
-  websiteUrl.value = ''
-  websiteError.value = false
-  learnings.value = initialLearnings(p)
-  phase.value = 'review'
-}
+const choose = (r: { placeId: string; name: string; address: string }) => begin({ placeId: r.placeId }, r)
+const addManually = () => begin({ manualName: query.value.trim() }, { name: query.value.trim(), address: '' })
 
 function restart(): void {
-  phase.value = 'search'
-  profile.value = null
+  listing.reset()
   chosen.value = null
+  phase.value = 'search'
 }
 
 /**
- * Leave setup. The import is still mocked (Phase 0 of
- * docs/restaurant-listing.md) and saves nothing, so finishing counts as a
- * skip too — "done" is only ever set by the real commit (Phase 1).
- * Skipping first is what stops the router sending the owner straight back.
+ * Leave without importing: the skip is final for this location (the owner
+ * can import later). Skipping first is what stops the router sending them
+ * straight back here.
  */
 const leaving = ref(false)
 async function leave(to: string): Promise<void> {
@@ -116,66 +115,65 @@ async function leave(to: string): Promise<void> {
   else alert(t('common.action.saveFailed'))
 }
 
-// ── Review: dishes ──────────────────────────────────────────────
-interface Dish extends Omit<FoundDish, 'source'> {
-  id: number
-  source: FoundDish['source'] | 'manual'
-  selected: boolean
-  /** The owner looked at this price (edited it, picked a source, or OK'd it). */
-  confirmed: boolean
+// ── Review ──────────────────────────────────────────────────────
+const place = computed(() => listing.job?.place ?? null)
+const restaurantName = computed(() => place.value?.name ?? listing.job?.manualName ?? '')
+const isManual = computed(() => !listing.job?.placeId)
+const photos = computed(() => listing.media?.photos ?? [])
+const reviews = computed(() => listing.media?.reviews ?? [])
+/** Places' weekday lines start on Monday. */
+const hoursToday = computed(() => place.value?.weekHours[(new Date().getDay() + 6) % 7] ?? null)
+
+function enterReview(): void {
+  editingKey.value = null
+  websiteUrl.value = ''
+  websiteMessage.value = ''
+  learnings.value = initialLearnings()
+  phase.value = 'review'
 }
-let nextId = 0
-const toDish = (d: FoundDish): Dish => ({
-  ...d,
-  id: nextId++,
-  selected: true,
-  // Website prices without a conflicting source are trusted; photo
-  // prices (often an old menu) and conflicts ask for a look.
-  confirmed: d.source === 'website' && d.altPrice === undefined,
-})
-const dishes = ref<Dish[]>([])
 
-const selectedCount = computed(() => dishes.value.filter((d) => d.selected).length)
-const toReview = computed(() => dishes.value.filter((d) => d.selected && !d.confirmed).length)
-
-/** Dishes grouped by menu section, keeping menu order; owner-added last. */
+/** Dishes grouped by menu section, keeping menu order; sectionless last. */
 const sections = computed(() => {
-  const out = new Map<string | null, Dish[]>()
-  for (const d of dishes.value) out.set(d.section, [...(out.get(d.section) ?? []), d])
+  const out = new Map<string | null, ReviewDish[]>()
+  for (const d of listing.dishes) out.set(d.section, [...(out.get(d.section) ?? []), d])
   return [...out.entries()].sort(([a], [b]) => Number(a === null) - Number(b === null))
 })
+const selectedCount = computed(() => listing.dishes.filter((d) => d.selected && d.name.trim()).length)
 
-function toggleSection(list: Dish[]): void {
+function toggleSection(list: ReviewDish[]): void {
   const all = list.every((d) => d.selected)
   for (const d of list) d.selected = !all
 }
 
+const money = (x: number) => n(x, 'currency')
+const plainPrice = (x: number) => n(x, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false })
+const priceChanged = (d: ReviewDish) => !!d.match && d.price !== null && Math.abs(d.match.price - d.price) > 0.009
+
 // Inline edit — one row at a time.
-const editingId = ref<number | null>(null)
+const editingKey = ref<string | null>(null)
 const draftName = ref('')
 const draftPrice = ref('')
 const draftInvalid = ref(false)
+const parseDraft = () => parseAmount(draftPrice.value, locale.value === 'es' ? ',' : '.')
 
-const plainPrice = (x: number) => n(x, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false })
-
-async function startEdit(d: Dish, field: 'name' | 'price'): Promise<void> {
-  if (editingId.value !== null && editingId.value !== d.id && !saveEdit()) return
-  editingId.value = d.id
+async function startEdit(d: ReviewDish, field: 'name' | 'price'): Promise<void> {
+  if (editingKey.value !== null && editingKey.value !== d.key && !saveEdit()) return
+  editingKey.value = d.key
   draftName.value = d.name
-  draftPrice.value = d.price ? plainPrice(d.price) : ''
+  draftPrice.value = d.price !== null ? plainPrice(d.price) : ''
   draftInvalid.value = false
   await nextTick()
-  const el = document.getElementById(`dish-${field}-${d.id}`) as HTMLInputElement | null
+  const el = document.getElementById(`dish-${field}-${d.key}`) as HTMLInputElement | null
   el?.focus()
   el?.select()
 }
 
 /** Returns false (and keeps the row open) when the draft isn't valid. */
 function saveEdit(): boolean {
-  const d = dishes.value.find((x) => x.id === editingId.value)
+  const d = listing.dishes.find((x) => x.key === editingKey.value)
   if (!d) return true
-  const price = parseAmount(draftPrice.value, locale.value === 'es' ? ',' : '.')
-  if (!draftName.value.trim() || !(price > 0)) {
+  const price = parseDraft()
+  if (!draftName.value.trim() || !(price >= 0)) {
     draftInvalid.value = true
     return false
   }
@@ -183,97 +181,85 @@ function saveEdit(): boolean {
   d.price = Math.round(price * 100) / 100
   d.confirmed = true
   d.selected = true
-  editingId.value = null
+  editingKey.value = null
   return true
 }
 
 function cancelEdit(): void {
-  const d = dishes.value.find((x) => x.id === editingId.value)
+  const d = listing.dishes.find((x) => x.key === editingKey.value)
   // A brand-new row abandoned before it had a name just goes away.
-  if (d && d.source === 'manual' && !d.name) dishes.value = dishes.value.filter((x) => x !== d)
-  editingId.value = null
+  if (d && d.source === 'manual' && !d.name) listing.removeDish(d.key)
+  editingKey.value = null
 }
 
-function pickPrice(d: Dish, price: number): void {
+function pickPrice(d: ReviewDish, price: number): void {
   d.price = price
   d.confirmed = true
 }
 
 function addDish(): void {
-  const d: Dish = { id: nextId++, name: '', price: 0, section: null, source: 'manual', emoji: '🍽️', selected: true, confirmed: true }
-  dishes.value = [...dishes.value, d]
-  void startEdit(d, 'name')
+  void startEdit(listing.addManualDish(), 'name')
 }
 
-// Fallbacks: menu photo, website link.
+// Fallbacks: the owner's own website link, a photo of the printed menu.
 const photoInput = ref<HTMLInputElement | null>(null)
-const readingPhoto = ref(false)
+const photoMessage = ref('')
 async function onPhoto(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
-  if (!input.files?.length) return
-  readingPhoto.value = true
-  const found = await readMenuPhoto()
-  dishes.value = [...dishes.value, ...found.map(toDish)]
-  readingPhoto.value = false
+  const file = input.files?.[0]
   input.value = ''
+  if (!file) return
+  photoMessage.value = ''
+  if (!(await listing.addMenuPhoto(file))) photoMessage.value = errorText(listing.error)
 }
 
 const websiteUrl = ref('')
-const readingWebsite = ref(false)
-const websiteError = ref(false)
+const websiteMessage = ref('')
 async function onWebsite(): Promise<void> {
-  if (!profile.value || !websiteUrl.value.trim()) return
-  readingWebsite.value = true
-  websiteError.value = false
-  const found = await readWebsite(profile.value, websiteUrl.value)
-  readingWebsite.value = false
-  if (!found.length) {
-    websiteError.value = true
-    return
-  }
-  profile.value.website = websiteUrl.value.trim().replace(/^https?:\/\//, '')
-  dishes.value = [...dishes.value, ...found.map(toDish)]
+  if (!websiteUrl.value.trim()) return
+  websiteMessage.value = ''
+  const before = listing.dishes.length
+  const ok = await listing.readWebsite(websiteUrl.value)
+  const job = listing.job
+  if (!ok) websiteMessage.value = listing.error?.includes('bad_website') ? t('setup.review.websiteBad') : errorText(listing.error)
+  else if (job?.steps.website.state !== 'done') websiteMessage.value = t('setup.review.websiteUnreachable')
+  else if (job.menuNote === 'pdf') websiteMessage.value = t('setup.review.pdfMenu')
+  else if (listing.dishes.length === before) websiteMessage.value = t('setup.review.websiteNoMenu')
 }
 
-// ── Review: other bits ──────────────────────────────────────────
-/** Dishes customers mention, most mentioned first. */
-const loved = computed(() => {
-  const tally = new Map<string, number>()
-  for (const r of profile.value?.reviews ?? []) for (const m of r.mentions) tally.set(m, (tally.get(m) ?? 0) + 1)
-  return [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name)
-})
-
-const money = (x: number) => n(x, { key: 'currency', currency: profile.value?.currency ?? 'EUR' })
-
-const isManual = computed(() => profile.value?.placeId === 'manual')
-
-// ── Review: what the assistant learns (editable) ────────────────
+// ── What the assistant learns (editable; the owner has the last word) ─
 interface Learning {
   id: number
   text: string
+  origin: 'suggested' | 'owner'
 }
 const learnings = ref<Learning[]>([])
 const editingLearning = ref<number | null>(null)
 const newLearning = ref('')
+let learningId = 0
 
-/** The real one is an LLM summary; here it's templated from the profile. */
-function initialLearnings(p: RestaurantProfile): Learning[] {
-  const avg = p.dishes.length ? p.dishes.reduce((s, d) => s + d.price, 0) / p.dishes.length : 0
-  const star = loved.value[0]
+/** From the listing and the menu only — never from review text
+ * (docs/restaurant-listing.md §Compliance). */
+function initialLearnings(): Learning[] {
+  const p = place.value
+  const priced = listing.dishes.filter((d) => d.price !== null)
+  const avg = priced.length ? priced.reduce((s, d) => s + (d.price ?? 0), 0) / priced.length : 0
+  const sectionCount = new Set(listing.dishes.map((d) => d.section).filter(Boolean)).size
   return [
-    p.cuisines.length
+    p && p.cuisines.length
       ? t('setup.review.learn.identity', {
           cuisine: p.cuisines.map((c) => t('setup.cuisine.' + c)).join(' · '),
-          city: p.city,
-          price: t('setup.priceLevel.' + p.priceLevel),
+          city: p.city ?? '',
+          price: p.priceLevel ? t('setup.priceLevel.' + p.priceLevel) : '—',
         })
       : null,
     avg ? t('setup.review.learn.ticket', { avg: money(avg) }) : null,
-    star ? t('setup.review.learn.star', { dish: star }) : null,
-    p.placeId !== 'manual' ? t('setup.review.learn.peak', { day: t('setup.days.' + p.peak.day), time: p.peak.time }) : null,
+    listing.dishes.length && sectionCount
+      ? t('setup.review.learn.size', { n: listing.dishes.length, s: sectionCount }, listing.dishes.length)
+      : null,
   ]
     .filter((x): x is string => !!x)
-    .map((text) => ({ id: nextId++, text }))
+    .map((text) => ({ id: learningId++, text, origin: 'suggested' as const }))
 }
 
 async function editLearning(l: Learning): Promise<void> {
@@ -284,6 +270,7 @@ async function editLearning(l: Learning): Promise<void> {
 
 function saveLearning(l: Learning): void {
   l.text = l.text.trim()
+  l.origin = 'owner'
   if (!l.text) removeLearning(l)
   editingLearning.value = null
 }
@@ -295,12 +282,36 @@ function removeLearning(l: Learning): void {
 function addLearning(): void {
   const text = newLearning.value.trim()
   if (!text) return
-  learnings.value = [...learnings.value, { id: nextId++, text }]
+  learnings.value = [...learnings.value, { id: learningId++, text, origin: 'owner' }]
   newLearning.value = ''
 }
 
-function confirmImport(): void {
-  if (editingId.value !== null && !saveEdit()) return
+// ── Commit ──────────────────────────────────────────────────────
+const outcome = ref<{ link: string; saved: number; created: number } | null>(null)
+
+async function confirmImport(): Promise<void> {
+  if (editingKey.value !== null && !saveEdit()) return
+  if (listing.missingPrice) {
+    alert(t('setup.review.missingPrices', { n: listing.missingPrice }, listing.missingPrice))
+    return
+  }
+  const res = await listing.commit({
+    restaurant: {
+      name: restaurantName.value,
+      website: listing.job?.website ?? null,
+      cuisines: place.value?.cuisines ?? [],
+      priceLevel: place.value?.priceLevel ?? null,
+    },
+    notes: learnings.value.filter((l) => l.text.trim()).map((l) => ({ text: l.text.trim(), origin: l.origin })),
+  })
+  if (!res.ok) {
+    alert(res.error.includes('place_linked_to_your_location') ? t('setup.errors.linkedToYourLocation') : t('setup.errors.commitFailed'))
+    return
+  }
+  outcome.value = { link: res.link, saved: res.created.length + res.updated, created: res.created.length }
+  // The name, setupListing and maybe country/currency changed; new dishes too.
+  await auth.reloadProfile()
+  void kitchen.refresh()
   phase.value = 'done'
 }
 
@@ -352,6 +363,8 @@ const initials = (name: string) => {
           />
         </div>
 
+        <p v-if="searchError" class="rounded-xl bg-coral-50 px-3 py-2 text-sm text-coral-600">{{ searchError }}</p>
+
         <TransitionGroup name="list" tag="ul" class="relative space-y-2">
           <li v-for="(r, i) in results" :key="r.placeId" :style="{ transitionDelay: i * 40 + 'ms' }">
             <button
@@ -363,18 +376,15 @@ const initials = (name: string) => {
               </span>
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-semibold">{{ r.name }}</span>
-                <span class="block truncate text-xs text-smoke">{{ r.address }}, {{ r.city }}</span>
+                <span class="block truncate text-xs text-smoke">{{ r.address }}</span>
               </span>
-              <span class="shrink-0 text-right text-xs">
-                <span class="font-semibold">★ {{ n(r.rating, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }}</span>
-                <span class="block text-smoke">{{ t('setup.search.reviews', { n: n(r.reviewCount) }) }}</span>
-              </span>
+              <span class="shrink-0 text-ember" aria-hidden="true">›</span>
             </button>
           </li>
         </TransitionGroup>
 
         <div v-if="!searching && query.trim().length >= 2" class="space-y-2 text-center">
-          <p v-if="!results.length" class="text-sm text-smoke">{{ t('setup.search.noResults') }}</p>
+          <p v-if="!results.length && !searchError" class="text-sm text-smoke">{{ t('setup.search.noResults') }}</p>
           <button class="text-sm font-semibold text-ember-700 hover:underline" @click="addManually">
             {{ results.length ? t('setup.search.notListed') : t('setup.search.addManually', { name: query.trim() }) }}
           </button>
@@ -404,7 +414,7 @@ const initials = (name: string) => {
           </div>
           <div>
             <h1 class="text-2xl font-bold">{{ chosen.name }}</h1>
-            <p class="text-xs text-smoke">{{ chosen.address }}, {{ chosen.city }}</p>
+            <p v-if="chosen.address" class="text-xs text-smoke">{{ chosen.address }}</p>
           </div>
           <p class="text-sm text-smoke" aria-live="polite">
             {{ activeSource ? t('setup.importing.' + activeSource + '.active') : t('setup.importing.finishing') }}
@@ -412,7 +422,7 @@ const initials = (name: string) => {
         </div>
 
         <div class="h-1.5 overflow-hidden rounded-full bg-ember-50">
-          <div class="setup-bar h-full origin-left rounded-full bg-ember" :style="{ transform: `scaleX(${progress})` }" />
+          <div class="setup-bar h-full origin-left rounded-full bg-ember" :style="{ transform: `scaleX(${settled / SOURCES.length})` }" />
         </div>
 
         <ul class="card space-y-1 !p-2">
@@ -420,21 +430,21 @@ const initials = (name: string) => {
             v-for="s in SOURCES"
             :key="s"
             class="flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors"
-            :class="s === activeSource ? 'bg-ember-50' : ''"
+            :class="rowState(s) === 'busy' ? 'bg-ember-50' : ''"
           >
             <span class="text-xl" aria-hidden="true">{{ ICONS[s] }}</span>
-            <span class="flex-1 text-sm" :class="counts[s] === undefined && s !== activeSource ? 'text-smoke' : 'font-medium'">
+            <span class="flex-1 text-sm" :class="rowState(s) === 'wait' ? 'text-smoke' : 'font-medium'">
               {{ t('setup.importing.' + s + '.label') }}
             </span>
             <Transition name="setup-pop" mode="out-in" type="transition">
-              <span v-if="counts[s] === 0" key="none" class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-smoke">
+              <span v-if="rowState(s) === 'not_found' || rowState(s) === 'failed'" key="none" class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-smoke">
                 {{ t('setup.importing.notFound') }}
               </span>
-              <span v-else-if="counts[s] !== undefined" key="done" class="chip-down">
-                ✓ {{ t('setup.importing.' + s + '.found', { n: counts[s] }, counts[s] ?? 0) }}
+              <span v-else-if="rowState(s) === 'done'" key="done" class="chip-down">
+                ✓ {{ listing.job?.steps[s].count !== undefined ? t('setup.importing.' + s + '.found', { n: listing.job?.steps[s].count }, listing.job?.steps[s].count ?? 0) : t('setup.importing.' + s + '.ready') }}
               </span>
               <span
-                v-else-if="s === activeSource"
+                v-else-if="rowState(s) === 'busy'"
                 key="busy"
                 class="h-4 w-4 animate-spin rounded-full border-2 border-ember-100 border-t-ember"
                 aria-hidden="true"
@@ -446,71 +456,79 @@ const initials = (name: string) => {
       </section>
 
       <!-- ── 3. Review ─────────────────────────────────────── -->
-      <section v-else-if="phase === 'review' && profile" key="review" class="space-y-4 pt-2">
-        <!-- Hero: photo mosaic + identity -->
+      <section v-else-if="phase === 'review' && listing.job" key="review" class="space-y-4 pt-2">
+        <!-- Hero: live photos (never stored) + identity -->
         <div class="card setup-rise overflow-hidden !p-0">
-          <!-- Five photos → mosaic; fewer → one row, the first one wider -->
           <div
-            v-if="profile.photos.length"
+            v-if="photos.length"
             class="grid h-40 gap-0.5 sm:h-48"
-            :class="profile.photos.length >= 5 ? 'grid-cols-4 grid-rows-2' : ''"
-            :style="profile.photos.length < 5 ? { gridTemplateColumns: `2fr repeat(${profile.photos.length - 1}, 1fr)` } : undefined"
+            :class="photos.length >= 5 ? 'grid-cols-4 grid-rows-2' : ''"
+            :style="photos.length < 5 ? { gridTemplateColumns: photos.length > 1 ? `2fr repeat(${photos.length - 1}, 1fr)` : '1fr' } : undefined"
           >
-            <div
-              v-for="(ph, i) in profile.photos.slice(0, 5)"
-              :key="i"
-              class="flex items-center justify-center text-4xl"
-              :class="i === 0 ? (profile.photos.length >= 5 ? 'col-span-2 row-span-2 text-6xl' : 'text-6xl') : ''"
-              :style="{ background: `linear-gradient(140deg, hsl(${ph.hue} 85% 82%), hsl(${ph.hue + 25} 75% 66%))` }"
-              aria-hidden="true"
-            >
-              {{ ph.emoji }}
-            </div>
+            <img
+              v-for="(ph, i) in photos.slice(0, 5)"
+              :key="ph.url"
+              :src="ph.url"
+              :alt="''"
+              :title="ph.attributions[0]?.name ? t('setup.review.photoBy', { name: ph.attributions[0].name }) : undefined"
+              class="h-full w-full object-cover"
+              :class="i === 0 && photos.length >= 5 ? 'col-span-2 row-span-2' : ''"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
           </div>
           <div v-else class="flex h-28 items-center justify-center bg-gradient-to-br from-ember-100 to-ember-200" aria-hidden="true">
             <span class="flex h-16 w-16 items-center justify-center rounded-full bg-ember text-xl font-bold text-white shadow-card">
-              {{ initials(profile.name) }}
+              {{ initials(restaurantName) }}
             </span>
           </div>
           <div class="space-y-3 p-4">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
-                <h1 class="truncate text-2xl font-bold">{{ profile.name }}</h1>
-                <div v-if="profile.reviewCount" class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-smoke">
-                  <span class="font-semibold text-ink">★ {{ n(profile.rating, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }}</span>
-                  <span>{{ t('setup.search.reviews', { n: n(profile.reviewCount) }) }}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{{ t('setup.priceLevel.' + profile.priceLevel) }}</span>
+                <h1 class="truncate text-2xl font-bold">{{ restaurantName }}</h1>
+                <div v-if="place?.rating" class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-smoke">
+                  <span class="font-semibold text-ink">★ {{ n(place.rating, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }}</span>
+                  <span v-if="place.reviewCount">{{ t('setup.review.reviewCount', { n: n(place.reviewCount) }) }}</span>
+                  <template v-if="place.priceLevel">
+                    <span aria-hidden="true">·</span>
+                    <span>{{ t('setup.priceLevel.' + place.priceLevel) }}</span>
+                  </template>
                 </div>
-                <p v-else class="mt-1 text-xs text-smoke">{{ t('setup.review.manualHint') }}</p>
+                <p v-else-if="isManual" class="mt-1 text-xs text-smoke">{{ t('setup.review.manualHint') }}</p>
               </div>
-              <span v-if="!isManual" :class="profile.openNow ? 'chip-down' : 'chip-up'" class="shrink-0">
-                {{ profile.openNow ? t('setup.review.openNow') : t('setup.review.closedNow') }}
+              <span v-if="place && place.openNow !== null" :class="place.openNow ? 'chip-down' : 'chip-up'" class="shrink-0">
+                {{ place.openNow ? t('setup.review.openNow') : t('setup.review.closedNow') }}
               </span>
             </div>
-            <div v-if="profile.cuisines.length" class="flex flex-wrap gap-1.5">
-              <span v-for="c in profile.cuisines" :key="c" class="rounded-full bg-ember-50 px-2.5 py-0.5 text-xs font-semibold text-ember-700">
+            <div v-if="place?.cuisines.length" class="flex flex-wrap gap-1.5">
+              <span v-for="c in place.cuisines" :key="c" class="rounded-full bg-ember-50 px-2.5 py-0.5 text-xs font-semibold text-ember-700">
                 {{ t('setup.cuisine.' + c) }}
               </span>
             </div>
-            <dl v-if="!isManual" class="grid gap-2 text-xs sm:grid-cols-2">
-              <div class="flex gap-2"><dt aria-hidden="true">📍</dt><dd>{{ profile.address }}, {{ profile.city }}</dd></div>
-              <div class="flex gap-2"><dt aria-hidden="true">🕒</dt><dd>{{ t('setup.review.today') }} {{ profile.hoursToday }}</dd></div>
+            <dl v-if="place" class="grid gap-2 text-xs sm:grid-cols-2">
+              <div v-if="place.address" class="flex gap-2"><dt aria-hidden="true">📍</dt><dd>{{ place.address }}</dd></div>
+              <div v-if="hoursToday" class="flex gap-2"><dt aria-hidden="true">🕒</dt><dd>{{ hoursToday }}</dd></div>
               <div class="flex gap-2">
                 <dt aria-hidden="true">🌐</dt>
-                <dd :class="profile.website ? '' : 'text-smoke'">{{ profile.website ?? t('setup.review.noWebsite') }}</dd>
+                <dd :class="listing.job.website ? '' : 'text-smoke'">{{ listing.job.website ?? t('setup.review.noWebsite') }}</dd>
               </div>
-              <div class="flex gap-2"><dt aria-hidden="true">📞</dt><dd>{{ profile.phone }}</dd></div>
+              <div v-if="place.phone" class="flex gap-2"><dt aria-hidden="true">📞</dt><dd>{{ place.phone }}</dd></div>
             </dl>
+            <p v-if="place" class="text-[11px] text-smoke">
+              {{ t('setup.review.googleMaps') }}
+              <a v-if="place.googleMapsUri" :href="place.googleMapsUri" target="_blank" rel="noopener" class="font-semibold underline">
+                {{ t('setup.review.seeOnMaps') }}
+              </a>
+            </p>
           </div>
         </div>
 
         <!-- Menu -->
         <div class="card setup-rise space-y-3" style="animation-delay: 60ms">
-          <template v-if="dishes.length">
+          <template v-if="listing.dishes.length">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-sm font-semibold">{{ t('setup.review.menuTitle', { n: dishes.length }, dishes.length) }}</div>
-              <span v-if="toReview" class="chip-up">{{ t('setup.review.toReview', { n: toReview }) }}</span>
+              <div class="text-sm font-semibold">{{ t('setup.review.menuTitle', { n: listing.dishes.length }, listing.dishes.length) }}</div>
+              <span v-if="listing.toReview" class="chip-up">{{ t('setup.review.toReview', { n: listing.toReview }) }}</span>
               <span v-else class="chip-down">✓ {{ t('setup.review.allReviewed') }}</span>
             </div>
             <p class="text-xs text-smoke">{{ t('setup.review.menuHint') }}</p>
@@ -526,15 +544,14 @@ const initials = (name: string) => {
               <TransitionGroup name="list" tag="div" class="relative space-y-1">
                 <div
                   v-for="d in list"
-                  :key="d.id"
+                  :key="d.key"
                   class="rounded-xl transition-colors"
-                  :class="editingId === d.id ? 'bg-ember-50 ring-1 ring-ember-200' : d.selected && !d.confirmed ? 'bg-coral-50/50' : ''"
+                  :class="editingKey === d.key ? 'bg-ember-50 ring-1 ring-ember-200' : d.selected && !d.confirmed ? 'bg-coral-50/50' : ''"
                 >
                   <!-- Editing -->
-                  <form v-if="editingId === d.id" class="flex flex-wrap items-center gap-2 p-2" @submit.prevent="saveEdit" @keydown.esc="cancelEdit">
-                    <span class="text-lg" aria-hidden="true">{{ d.emoji }}</span>
+                  <form v-if="editingKey === d.key" class="flex flex-wrap items-center gap-2 p-2" @submit.prevent="saveEdit" @keydown.esc="cancelEdit">
                     <input
-                      :id="`dish-name-${d.id}`"
+                      :id="`dish-name-${d.key}`"
                       v-model="draftName"
                       class="input min-w-0 flex-1 !py-1.5"
                       :class="draftInvalid && !draftName.trim() ? '!border-coral' : ''"
@@ -542,11 +559,11 @@ const initials = (name: string) => {
                       :aria-label="t('setup.review.namePlaceholder')"
                     />
                     <input
-                      :id="`dish-price-${d.id}`"
+                      :id="`dish-price-${d.key}`"
                       v-model="draftPrice"
                       inputmode="decimal"
                       class="input !w-24 !py-1.5 text-right tabular-nums"
-                      :class="draftInvalid && !(parseAmount(draftPrice, locale === 'es' ? ',' : '.') > 0) ? '!border-coral' : ''"
+                      :class="draftInvalid && !(parseDraft() >= 0) ? '!border-coral' : ''"
                       :placeholder="plainPrice(0)"
                       :aria-label="t('setup.review.pricePlaceholder')"
                     />
@@ -566,12 +583,13 @@ const initials = (name: string) => {
                       >
                         <span v-if="d.selected" aria-hidden="true">✓</span>
                       </button>
-                      <span class="text-lg" aria-hidden="true">{{ d.emoji }}</span>
                       <button class="min-w-0 flex-1 text-left" :title="t('setup.review.tapToEdit')" @click="startEdit(d, 'name')">
                         <span class="block truncate text-sm" :class="d.selected ? '' : 'text-smoke line-through'">{{ d.name }}</span>
                         <span class="text-[11px] text-smoke">
                           {{ t('setup.review.source.' + d.source) }}
-                          <span v-if="loved.includes(d.name)" class="font-semibold text-coral-600"> · ♥ {{ t('setup.review.loved') }}</span>
+                          <span v-if="d.match" class="font-semibold text-herb-700">
+                            · {{ priceChanged(d) ? t('setup.review.priceChange', { from: money(d.match.price) }) : t('setup.review.onMenu') }}
+                          </span>
                         </span>
                       </button>
                       <button
@@ -580,25 +598,25 @@ const initials = (name: string) => {
                         :aria-label="t('setup.review.editPrice', { dish: d.name })"
                         @click="startEdit(d, 'price')"
                       >
-                        {{ money(d.price) }}
+                        {{ d.price !== null ? money(d.price) : t('setup.review.noPrice') }}
                         <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-smoke opacity-50 group-hover:opacity-100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                           <path d="M4 20h4L19 9l-4-4L4 16v4Z" />
                         </svg>
                       </button>
                     </div>
 
-                    <!-- Two sources disagree → pick one -->
-                    <div v-if="d.selected && !d.confirmed && d.altPrice !== undefined" class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pl-10 text-[11px]">
+                    <!-- Two prices on the site → pick the current one -->
+                    <div v-if="d.selected && !d.confirmed && d.altPrice !== undefined && d.price !== null" class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pl-10 text-[11px]">
                       <span class="text-smoke">{{ t('setup.review.conflict') }}</span>
                       <button class="rounded-full border border-gray-200 bg-white px-2 py-0.5 font-semibold hover:border-ember" @click="pickPrice(d, d.price)">
-                        {{ t('setup.review.source.website') }}: {{ money(d.price) }}
+                        {{ money(d.price) }}
                       </button>
                       <button class="rounded-full border border-gray-200 bg-white px-2 py-0.5 font-semibold hover:border-ember" @click="pickPrice(d, d.altPrice)">
-                        {{ t('setup.review.source.photos') }}: {{ money(d.altPrice) }}
+                        {{ money(d.altPrice) }}
                       </button>
                     </div>
-                    <!-- Price from a photo → confirm or fix -->
-                    <div v-else-if="d.selected && !d.confirmed" class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pl-10 text-[11px]">
+                    <!-- Read from an image → confirm or fix -->
+                    <div v-else-if="d.selected && !d.confirmed && d.price !== null" class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pl-10 text-[11px]">
                       <span class="text-smoke">{{ t('setup.review.photoPrice') }}</span>
                       <button class="rounded-full border border-gray-200 bg-white px-2 py-0.5 font-semibold hover:border-herb" @click="d.confirmed = true">
                         ✓ {{ t('setup.review.looksRight') }}
@@ -614,43 +632,64 @@ const initials = (name: string) => {
           <div v-else class="space-y-1 py-2 text-center">
             <div class="text-3xl" aria-hidden="true">📖</div>
             <div class="text-sm font-semibold">{{ t('setup.review.emptyTitle') }}</div>
-            <p class="mx-auto max-w-sm text-xs text-smoke">{{ t('setup.review.emptyBody') }}</p>
+            <p class="mx-auto max-w-sm text-xs text-smoke">
+              {{ listing.job.menuNote === 'pdf' ? t('setup.review.pdfMenu') : t('setup.review.emptyBody') }}
+            </p>
           </div>
 
-          <!-- No website on file → paste one -->
-          <form v-if="!profile.website" class="space-y-1.5 rounded-xl bg-cream p-3" @submit.prevent="onWebsite">
+          <!-- No menu from the website → paste (another) link -->
+          <form v-if="!listing.job.website || listing.job.steps.menu.state !== 'done'" class="space-y-1.5 rounded-xl bg-cream p-3" @submit.prevent="onWebsite">
             <label for="setup-website" class="text-xs font-semibold">🌐 {{ t('setup.review.websiteAsk') }}</label>
             <div class="flex gap-2">
-              <input id="setup-website" v-model="websiteUrl" type="text" inputmode="url" autocomplete="url" autocapitalize="off" class="input !py-1.5" :placeholder="t('setup.review.websitePlaceholder')" :disabled="readingWebsite" />
-              <button type="submit" class="btn-primary shrink-0 !py-1.5" :disabled="readingWebsite || !websiteUrl.trim()">
-                <span v-if="readingWebsite" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-                {{ readingWebsite ? t('setup.review.websiteReading') : t('setup.review.websiteRead') }}
+              <input
+                id="setup-website"
+                v-model="websiteUrl"
+                type="text"
+                inputmode="url"
+                autocomplete="url"
+                autocapitalize="off"
+                class="input !py-1.5"
+                :placeholder="t('setup.review.websitePlaceholder')"
+                :disabled="!!listing.busy"
+              />
+              <button type="submit" class="btn-primary shrink-0 !py-1.5" :disabled="!!listing.busy || !websiteUrl.trim()">
+                <span v-if="listing.busy === 'website' || listing.busy === 'menu'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+                {{ listing.busy === 'website' || listing.busy === 'menu' ? t('setup.review.websiteReading') : t('setup.review.websiteRead') }}
               </button>
             </div>
-            <p v-if="websiteError" class="text-[11px] text-coral-600">{{ t('setup.review.websiteNoMenu') }}</p>
+            <p v-if="websiteMessage" class="text-[11px] text-coral-600">{{ websiteMessage }}</p>
           </form>
 
           <!-- Add more -->
           <div class="flex flex-wrap gap-2 border-t border-gray-100 pt-3">
-            <button class="btn-ghost" :disabled="editingId !== null" @click="addDish">＋ {{ t('setup.review.addDish') }}</button>
-            <button class="btn-ghost" :disabled="readingPhoto" @click="photoInput?.click()">
-              <span v-if="readingPhoto" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-ink" aria-hidden="true" />
+            <button class="btn-ghost" :disabled="editingKey !== null" @click="addDish">＋ {{ t('setup.review.addDish') }}</button>
+            <button class="btn-ghost" :disabled="!!listing.busy" @click="photoInput?.click()">
+              <span v-if="listing.busy === 'photo'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-ink" aria-hidden="true" />
               <span v-else aria-hidden="true">📷</span>
-              {{ readingPhoto ? t('setup.review.photoReading') : t('setup.review.scanPhoto') }}
+              {{ listing.busy === 'photo' ? t('setup.review.photoReading') : t('setup.review.scanPhoto') }}
             </button>
             <input ref="photoInput" type="file" accept="image/*" capture="environment" class="hidden" @change="onPhoto" />
           </div>
+          <p v-if="photoMessage" class="text-[11px] text-coral-600">{{ photoMessage }}</p>
         </div>
 
-        <!-- Customers say -->
-        <div v-if="profile.reviews.length" class="card setup-rise space-y-3" style="animation-delay: 120ms">
-          <div class="text-sm font-semibold">{{ t('setup.review.reviewsTitle') }}</div>
-          <figure v-for="r in profile.reviews" :key="r.author" class="space-y-1.5 rounded-xl bg-cream p-3">
+        <!-- Guests' reviews — live from Google, attributed, never stored -->
+        <div v-if="reviews.length" class="card setup-rise space-y-3" style="animation-delay: 120ms">
+          <div>
+            <div class="text-sm font-semibold">{{ t('setup.review.reviewsTitle') }}</div>
+            <p class="text-[11px] text-smoke">{{ t('setup.review.reviewsOrder') }}</p>
+          </div>
+          <figure v-for="(r, i) in reviews" :key="i" class="space-y-1.5 rounded-xl bg-cream p-3">
             <blockquote class="text-sm leading-relaxed">“{{ r.text }}”</blockquote>
             <figcaption class="flex flex-wrap items-center gap-1.5 text-[11px] text-smoke">
-              <span class="text-ember" :aria-label="t('setup.review.stars', { n: r.rating })">{{ '★'.repeat(r.rating) }}</span>
-              <span>{{ r.author }}</span>
-              <span v-for="m in r.mentions" :key="m" class="rounded-full bg-white px-2 py-0.5 font-semibold text-ink">{{ m }}</span>
+              <img v-if="r.author.photoUri" :src="r.author.photoUri" alt="" class="h-4 w-4 rounded-full" referrerpolicy="no-referrer" />
+              <span class="text-ember" :aria-label="t('setup.review.stars', { n: r.rating })">{{ '★'.repeat(Math.round(r.rating)) }}</span>
+              <a v-if="r.author.uri" :href="r.author.uri" target="_blank" rel="noopener" class="hover:underline">{{ r.author.name }}</a>
+              <span v-else>{{ r.author.name }}</span>
+              <span v-if="r.relativeTime">· {{ r.relativeTime }}</span>
+              <a v-if="r.googleMapsUri" :href="r.googleMapsUri" target="_blank" rel="noopener" class="ml-auto font-semibold underline">
+                {{ t('setup.review.seeOnMaps') }}
+              </a>
             </figcaption>
           </figure>
           <p class="text-[11px] text-smoke">{{ t('setup.review.attribution') }}</p>
@@ -698,30 +737,41 @@ const initials = (name: string) => {
         </div>
 
         <div class="sticky bottom-3 z-10 space-y-1 rounded-2xl glass p-2 shadow-card">
-          <p v-if="toReview" class="px-1 text-center text-[11px] text-smoke">{{ t('setup.review.reviewLeft', { n: toReview }, toReview) }}</p>
+          <p v-if="listing.toReview" class="px-1 text-center text-[11px] text-smoke">
+            {{ t('setup.review.reviewLeft', { n: listing.toReview }, listing.toReview) }}
+          </p>
           <div class="flex items-center justify-between gap-2">
-            <BaseButton variant="ghost" @click="restart">{{ isManual ? t('setup.review.back') : t('setup.review.notMine') }}</BaseButton>
-            <BaseButton :disabled="!selectedCount" @click="confirmImport">
-              {{ t('setup.review.confirm', { n: selectedCount }, selectedCount) }}
+            <BaseButton variant="ghost" :disabled="listing.busy === 'commit'" @click="restart">
+              {{ isManual ? t('setup.review.back') : t('setup.review.notMine') }}
+            </BaseButton>
+            <BaseButton :disabled="!!listing.busy" @click="confirmImport">
+              <span v-if="listing.busy === 'commit'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+              {{ listing.busy === 'commit' ? t('setup.review.saving') : selectedCount ? t('setup.review.confirm', { n: selectedCount }, selectedCount) : t('setup.review.confirmNoDishes') }}
             </BaseButton>
           </div>
         </div>
       </section>
 
       <!-- ── 4. Done ───────────────────────────────────────── -->
-      <section v-else-if="phase === 'done' && profile" key="done" class="flex flex-col items-center gap-4 pt-16 text-center">
+      <section v-else-if="phase === 'done' && outcome" key="done" class="flex flex-col items-center gap-4 pt-16 text-center">
         <div class="setup-pop-in flex h-20 w-20 items-center justify-center rounded-full bg-herb text-4xl text-white shadow-card" aria-hidden="true">
           ✓
         </div>
         <h1 class="text-3xl font-bold">{{ t('setup.done.title') }}</h1>
         <p class="max-w-sm text-sm leading-relaxed text-smoke">
-          {{ t('setup.done.body', { n: selectedCount, name: profile.name }, selectedCount) }}
+          {{ t('setup.done.body', { n: outcome.saved, name: restaurantName }, outcome.saved) }}
+        </p>
+        <p v-if="outcome.link === 'contested'" class="max-w-sm rounded-xl bg-ember-50 px-3 py-2 text-xs leading-relaxed text-ember-700">
+          {{ t('setup.done.contested') }}
         </p>
         <div class="flex gap-2">
-          <BaseButton variant="ghost" @click="restart">{{ t('setup.done.again') }}</BaseButton>
-          <BaseButton variant="herb" :disabled="leaving" @click="leave('/menu')">{{ t('setup.done.toMenu') }}</BaseButton>
+          <BaseButton variant="ghost" @click="router.replace('/')">{{ t('setup.done.toPulse') }}</BaseButton>
+          <!-- New dishes have prices but no recipes yet: draft them next -->
+          <BaseButton v-if="outcome.created" variant="herb" @click="router.replace({ path: '/menu', query: { recipes: 'listing' } })">
+            ✨ {{ t('setup.done.estimate') }}
+          </BaseButton>
+          <BaseButton v-else variant="herb" @click="router.replace('/menu')">{{ t('setup.done.toMenu') }}</BaseButton>
         </div>
-        <p class="text-[11px] text-smoke">{{ t('setup.done.prototype') }}</p>
       </section>
     </Transition>
   </div>

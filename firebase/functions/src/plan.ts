@@ -67,6 +67,10 @@ export interface PlanInfo {
   fxOptIns: FxSource[];
   /** First-run "find your restaurant" step — same read. Absent = done. */
   setupListing: SetupListing;
+  /** For the assistant's facts (docs/restaurant-listing.md) — same read. */
+  name: string;
+  cuisines: string[];
+  priceLevel: number | null;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -86,6 +90,9 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     fxDefaultSource: fxSourceSchema.nullable().catch(null).parse(snap.get("fxDefaultSource") ?? null),
     fxOptIns: fxSourceSchema.array().catch([]).parse(snap.get("fxOptIns") ?? []),
     setupListing: setupListingSchema.catch("done").parse(snap.get("setupListing")),
+    name: (snap.get("name") as string | undefined) ?? "",
+    cuisines: (snap.get("listing.cuisines") as string[] | undefined) ?? [],
+    priceLevel: (snap.get("listing.priceLevel") as number | null | undefined) ?? null,
   };
 }
 

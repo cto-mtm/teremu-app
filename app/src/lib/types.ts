@@ -19,6 +19,10 @@ import type {
   invoiceSchema,
   invoiceStatusSchema,
   lineItemSchema,
+  listingCandidateSchema,
+  listingCommitResponseSchema,
+  listingImportSchema,
+  listingMediaSchema,
   menuItemSchema,
   menuScanResponseSchema,
   recipeDraftsResponseSchema,
@@ -38,6 +42,10 @@ export type Invoice = z.infer<typeof invoiceSchema>
 export type Ingredient = z.infer<typeof ingredientSchema>
 export type RecipeLine = z.infer<typeof recipeLineSchema>
 export type MenuItem = z.infer<typeof menuItemSchema>
+export type ListingImport = z.infer<typeof listingImportSchema>
+export type ListingCandidate = z.infer<typeof listingCandidateSchema>
+export type ListingMedia = z.infer<typeof listingMediaSchema>
+export type ListingCommitResult = z.infer<typeof listingCommitResponseSchema>
 export type RevenueEntry = z.infer<typeof revenueEntrySchema>
 export type ExpenseEntry = z.infer<typeof expenseSchema>
 export type PermLevel = z.infer<typeof permLevelSchema>

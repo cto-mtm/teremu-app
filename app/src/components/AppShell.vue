@@ -66,10 +66,18 @@ watch(
 // tour makes more sense once the owner's own restaurant is in.
 const onboardingOpen = ref(false)
 const onboardingKey = (uid: string) => `teremu-onboarded:${uid}`
+// Also not while the owner is still ON the setup page: finishing it marks
+// setup done, and the tour must not cover the "¡Listo!" screen.
 watch(
-  () => [authStore.profile, authStore.user, authStore.listingSetupPending] as const,
-  ([profile, user, setupPending]) => {
-    if (profile && user && !setupPending && !localStorage.getItem(onboardingKey(user.uid))) {
+  () => [authStore.profile, authStore.user, authStore.listingSetupPending, route.name] as const,
+  ([profile, user, setupPending, routeName]) => {
+    if (
+      profile &&
+      user &&
+      !setupPending &&
+      routeName !== 'restaurant-setup' &&
+      !localStorage.getItem(onboardingKey(user.uid))
+    ) {
       onboardingOpen.value = true
     }
   },

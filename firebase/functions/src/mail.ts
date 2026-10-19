@@ -34,7 +34,7 @@ export interface SendMailInput {
 }
 
 /** Small, stable set — the mailer's per-project stats are keyed on it. */
-export type MailKind = "staff-invite" | "supplier-order";
+export type MailKind = "staff-invite" | "supplier-order" | "claim-verify" | "claim-transferred";
 
 export type SendMailResult =
   | { ok: true; mailId: string; duplicate: boolean }
@@ -113,6 +113,7 @@ export function mailAccepted(result: SendMailResult): boolean {
 export const MAIL_DAILY_CAP_PER_USER = 100;
 export const MAIL_DAILY_CAP_INVITES_PER_RECIPIENT = 5;
 export const MAIL_DAILY_CAP_ORDERS_PER_SUPPLIER = 10;
+export const MAIL_DAILY_CAP_CLAIMS_PER_RECIPIENT = 5;
 
 export type MailQuotaResult = { ok: true } | { ok: false; limit: "restaurant" | "user" | "recipient" };
 
@@ -122,7 +123,10 @@ export async function consumeMailQuota(rid: string, uid: string, to: string, kin
   const recipient =
     kind === "staff-invite"
       ? { id: `invite-${mailKeyHash(address)}`, cap: MAIL_DAILY_CAP_INVITES_PER_RECIPIENT }
-      : { id: `order-${mailKeyHash(rid, address)}`, cap: MAIL_DAILY_CAP_ORDERS_PER_SUPPLIER };
+      : kind === "supplier-order"
+        ? { id: `order-${mailKeyHash(rid, address)}`, cap: MAIL_DAILY_CAP_ORDERS_PER_SUPPLIER }
+        : // Listing claims (docs/restaurant-listing.md): per address, project-wide.
+          { id: `claim-${mailKeyHash(address)}`, cap: MAIL_DAILY_CAP_CLAIMS_PER_RECIPIENT };
   const counters = [
     { limit: "restaurant", ref: db.collection("restaurants").doc(rid) },
     { limit: "user", ref: db.collection("users").doc(uid) },
@@ -271,6 +275,41 @@ export function inviteEmail(args: {
   };
 }
 
+/**
+ * Listing claim verification (docs/restaurant-listing.md §Claims). Fixed
+ * content: the code and the place's name as Google lists it — nothing
+ * the claimant typed — sent to an address at the listing's own domain.
+ */
+export function claimCodeEmail(args: { locale: Locale; code: string; placeName: string }): MailContent {
+  const c = COPY[args.locale].claimCode;
+  return {
+    subject: c.subject(args.placeName).slice(0, 200),
+    text: [c.intro(args.placeName), "", args.code, "", c.expires, "", c.footer].join("\n"),
+    html: layout(
+      args.locale,
+      `<p style="margin:0 0 12px">${c.intro(`<strong>${esc(args.placeName)}</strong>`)}</p>
+<p style="margin:0 0 12px;font-family:Menlo,Consolas,monospace;font-size:28px;letter-spacing:6px"><strong>${esc(args.code)}</strong></p>
+<p style="margin:0 0 12px">${c.expires}</p>`,
+      c.footer,
+    ),
+  };
+}
+
+/** To the previous holder of a listing someone else just verified. */
+export function claimTransferredEmail(args: { locale: Locale; placeName: string }): MailContent {
+  const c = COPY[args.locale].claimTransferred;
+  return {
+    subject: c.subject(args.placeName).slice(0, 200),
+    text: [c.body(args.placeName), "", c.data, "", c.footer].join("\n"),
+    html: layout(
+      args.locale,
+      `<p style="margin:0 0 12px">${c.body(`<strong>${esc(args.placeName)}</strong>`)}</p>
+<p style="margin:0 0 12px">${c.data}</p>`,
+      c.footer,
+    ),
+  };
+}
+
 // ── Copy ─────────────────────────────────────────────────────────────
 // Same convention as the app (docs/i18n.md): `es` is the source of
 // truth and `en` is typed against it, so a missing string is a compile
@@ -299,6 +338,18 @@ const es = {
     cta: "Abrir Teremu",
     footer: "Si no esperabas esta invitación, ignora este correo.",
   },
+  claimCode: {
+    subject: (place: string) => `Tu código para verificar ${place} en Teremu`,
+    intro: (place: string) => `Alguien quiere verificar que gestiona ${place} en Teremu. Si eres tú, este es tu código:`,
+    expires: "Caduca en 15 minutos.",
+    footer: "Si no lo has pedido tú, ignora este correo: no cambia nada.",
+  },
+  claimTransferred: {
+    subject: (place: string) => `${place} se ha verificado en otra cuenta de Teremu`,
+    body: (place: string) => `Quien gestiona ${place} lo ha verificado desde su propia cuenta de Teremu, así que tu local ya no está vinculado a esa ficha de Google.`,
+    data: "Tus datos no cambian: platos, facturas y todo lo demás siguen en tu cuenta. Si crees que es un error, responde a soporte desde la app.",
+    footer: "Enviado con Teremu.",
+  },
 };
 
 const en: typeof es = {
@@ -321,6 +372,18 @@ const en: typeof es = {
     signIn: (email) => `Sign in with your Google account (${email}) and you'll have access right away:`,
     cta: "Open Teremu",
     footer: "If you weren't expecting this invitation, you can ignore this email.",
+  },
+  claimCode: {
+    subject: (place) => `Your code to verify ${place} on Teremu`,
+    intro: (place) => `Someone wants to verify they run ${place} on Teremu. If that's you, here is your code:`,
+    expires: "It expires in 15 minutes.",
+    footer: "If you didn't ask for it, ignore this email — nothing changes.",
+  },
+  claimTransferred: {
+    subject: (place) => `${place} was verified on another Teremu account`,
+    body: (place) => `Whoever runs ${place} verified it from their own Teremu account, so your location is no longer linked to that Google listing.`,
+    data: "Your data is unchanged: dishes, invoices and everything else stay in your account. If you think this is a mistake, contact support from the app.",
+    footer: "Sent with Teremu.",
   },
 };
 

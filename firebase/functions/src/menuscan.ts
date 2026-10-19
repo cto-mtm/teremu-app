@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmApiKey, parseModelJson } from "./llm.js";
+import { chatCompletion, llmApiKey, llmEnabled, parseModelJson } from "./llm.js";
 import { categorySchema, unitSchema, type Category, type Unit } from "./models.js";
 
 /**
@@ -98,6 +98,80 @@ function mockMenu(): MenuScanResult {
       { name: "Side of Rice", price: 4.0, section: "Sides" },
     ],
   };
+}
+
+// ── 1b. Menu extraction from TEXT (a restaurant's website) ──────────
+// docs/restaurant-listing.md: the owner's site is read as text and the
+// same rules apply — one prompt's rules, one response schema.
+
+const TEXT_MENU_PROMPT = `You read restaurant menus copied as plain text from the restaurant's own website (any language). The text may include navigation, opening hours, allergen notes and other noise — ignore everything that is not a sellable item with its price.
+
+Reply with ONLY a JSON object (no markdown fences, no commentary) in exactly this shape:
+
+{
+  "isMenu": true,
+  "dishes": [
+    { "name": "dish name exactly as written (clean casing)", "price": 12.50, "section": "menu section header if any, else null" }
+  ]
+}
+
+Rules:
+- Extract EVERY sellable item: dishes, sides, desserts, drinks listed with a price.
+- "price": the written price as a number. If several prices (sizes, half/full portion), use the smallest. Use null only when no price is written.
+- "section": the heading the item appears under ("Entrantes", "Postres", ...), or null.
+- Skip descriptions, ingredient lists and allergen notes — names and prices only.
+- Never write a " character inside a value: drop the quotes around a quoted dish name.
+- If the text contains no menu at all, reply {"isMenu": false, "dishes": []}.
+
+MENU TEXT:
+`;
+
+/** Cap per call: menus are short; a site that dumps 100k chars is noise. */
+const MAX_MENU_TEXT = 20_000;
+
+export async function extractMenuFromText(text: string): Promise<MenuScanResult> {
+  const clipped = text.slice(0, MAX_MENU_TEXT);
+  if (!llmEnabled()) {
+    logger.warn("LLM not available — parsing the menu text with the offline heuristic");
+    return mockMenuFromText(clipped);
+  }
+  const raw = await chatCompletion([{ role: "user", content: TEXT_MENU_PROMPT + clipped }], {
+    maxTokens: 3072,
+    temperature: 0.2,
+    label: "menu-extract-text",
+    json: { name: "menu_extraction", schema: menuResponseSchema },
+  });
+  const parsed = menuResponseSchema.parse(parseModelJson(raw));
+  if (parsed.error) return { dishes: [], unreadable: true };
+  if (!parsed.isMenu) return { dishes: [], notMenu: true };
+  return {
+    dishes: parsed.dishes
+      .filter((d) => d.name.trim().length > 0)
+      .map((d) => ({ ...d, name: d.name.trim() })),
+  };
+}
+
+/**
+ * Offline stand-in (no key, no cassette): "Name ..... 12,50 €" lines are
+ * dishes, short price-less lines above them are section headings. Good
+ * enough for the emulator fixtures and an honest first pass on simple
+ * sites; the model does the real work when it is available.
+ */
+export function mockMenuFromText(text: string): MenuScanResult {
+  const dishes: MenuScanResult["dishes"] = [];
+  let section: string | null = null;
+  const line = /^(.{2,80}?)[\s.·…:\-–—]*(?:€\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:€|eur|euros)?$/i;
+  for (const raw of text.split(/\n+/)) {
+    const l = raw.trim();
+    if (!l) continue;
+    const m = line.exec(l);
+    if (m && /\p{L}/u.test(m[1])) {
+      dishes.push({ name: m[1].trim(), price: Number(m[2].replace(",", ".")), section });
+    } else if (l.length <= 40 && !/\d/.test(l)) {
+      section = l;
+    }
+  }
+  return dishes.length ? { dishes } : { dishes: [], notMenu: true };
 }
 
 // ── 2. Recipe drafts ────────────────────────────────────────────────

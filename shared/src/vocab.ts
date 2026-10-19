@@ -149,6 +149,37 @@ export const SETUP_LISTING_STATES = ["pending", "done", "skipped"] as const;
 export const setupListingSchema = z.enum(SETUP_LISTING_STATES);
 export type SetupListing = z.infer<typeof setupListingSchema>;
 
+/** What kind of place a restaurant is — from its Google listing, confirmed
+ * by the owner. Rendered via i18n `setup.cuisine.<id>`. */
+export const CUISINES = [
+  "tapas",
+  "spanish",
+  "seafood",
+  "mediterranean",
+  "italian",
+  "pizza",
+  "mexican",
+  "asian",
+  "japanese",
+  "chinese",
+  "indian",
+  "american",
+  "burger",
+  "grill",
+  "vegetarian",
+  "cafe",
+  "bakery",
+  "bar",
+  "fast_food",
+] as const;
+export const cuisineSchema = z.enum(CUISINES);
+export type Cuisine = z.infer<typeof cuisineSchema>;
+
+/** How a dish got onto the menu. Absent on a stored dish = `manual`. */
+export const MENU_ITEM_ORIGINS = ["manual", "menu_scan", "listing", "pos"] as const;
+export const menuItemOriginSchema = z.enum(MENU_ITEM_ORIGINS);
+export type MenuItemOrigin = z.infer<typeof menuItemOriginSchema>;
+
 // ── Granular permissions ────────────────────────────────────────────
 // Per-area access levels instead of fixed roles. Owners bypass all
 // checks (enforced server-side). Sharing this shape means adding a new

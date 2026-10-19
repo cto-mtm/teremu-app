@@ -123,13 +123,19 @@ export const useKitchenStore = defineStore('kitchen', () => {
       prepMinutes?: number
       recipe: RecipeLine[]
       active: boolean
+      section?: string | null
+      origin?: MenuItem['origin']
     },
     id?: string,
   ): Promise<MenuItem | null> {
+    // PUT replaces the whole dish doc: keep the printed section and the
+    // provenance of an imported dish unless the caller sets them.
+    const prev = id ? menuItems.value.find((m) => m.id === id) : undefined
+    const body = prev ? { section: prev.section, origin: prev.origin, ...item } : item
     const res = id
       ? await apiFetch<MenuItem>(
           `/menu-items/${id}`,
-          { method: 'PUT', body: JSON.stringify(item) },
+          { method: 'PUT', body: JSON.stringify(body) },
           menuItemSchema,
         )
       : await apiFetch<MenuItem>(

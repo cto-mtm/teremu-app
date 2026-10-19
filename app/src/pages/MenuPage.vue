@@ -27,6 +27,30 @@ const auth = useAuthStore()
 // Photo-of-the-menu import wizard (see MenuScanWizard.vue)
 const wizardOpen = ref(false)
 
+// Dishes imported from the restaurant's website have prices but no recipe
+// yet (docs/restaurant-listing.md). The same wizard drafts them, in place.
+const needRecipes = computed(() =>
+  kitchen.activeMenuItems.filter((m) => m.origin === 'listing' && m.recipe.length === 0),
+)
+const recipeSeed = ref<{ key: string; name: string; price: number | null; menuItemId: string }[] | undefined>()
+function estimateImported(): void {
+  recipeSeed.value = needRecipes.value.map((m) => ({ key: m.id, name: m.name, price: m.price, menuItemId: m.id }))
+  wizardOpen.value = true
+}
+watch(wizardOpen, (isOpen) => {
+  if (!isOpen) recipeSeed.value = undefined
+})
+// Deep link from the setup "done" screen: /menu?recipes=listing.
+watch(
+  () => [route.query.recipes, needRecipes.value.length] as const,
+  ([flag, count]) => {
+    if (flag !== 'listing' || !count || wizardOpen.value) return
+    void router.replace({ query: {} })
+    if (auth.can('menu', 'edit')) estimateImported()
+  },
+  { immediate: true },
+)
+
 // ── Search / sort ───────────────────────────────────────────────
 const search = ref('')
 const sortBy = ref<'margin' | 'name' | 'price'>('margin')
@@ -216,6 +240,18 @@ async function save(): Promise<void> {
 
     <PageLoader v-if="kitchen.loading && !kitchen.menuItems.length" :cards="0" :lines="4" />
 
+    <!-- Imported dishes still without a recipe → draft them -->
+    <div
+      v-if="needRecipes.length && auth.can('menu', 'edit')"
+      class="card flex flex-wrap items-center justify-between gap-3 !py-3"
+    >
+      <p class="text-sm">
+        <span aria-hidden="true">📖</span>
+        {{ t('menu.listing.needRecipes', { n: needRecipes.length }, needRecipes.length) }}
+      </p>
+      <BaseButton @click="estimateImported">✨ {{ t('menu.listing.estimate') }}</BaseButton>
+    </div>
+
     <div v-else-if="kitchen.activeMenuItems.length > 0" class="flex flex-wrap gap-2">
       <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
       <select v-model="sortBy" class="input w-auto">
@@ -236,6 +272,12 @@ async function save(): Promise<void> {
           {{ t('menu.scan.cta') }}
         </span>
       </BaseButton>
+      <!-- Owners can bring their menu in from their website / Google listing -->
+      <div v-if="auth.profile?.role === 'owner'">
+        <RouterLink :to="{ name: 'restaurant-setup' }" class="text-xs font-semibold text-ember-700 hover:underline">
+          🌐 {{ t('menu.listing.importCta') }}
+        </RouterLink>
+      </div>
     </div>
     <div v-else-if="rows.length === 0" class="card py-8 text-center text-sm text-smoke">
       {{ t('common.filter.noResults') }}
@@ -288,7 +330,7 @@ async function save(): Promise<void> {
       </RouterLink>
     </div>
 
-    <MenuScanWizard v-model="wizardOpen" />
+    <MenuScanWizard v-model="wizardOpen" :seed="recipeSeed" :title="recipeSeed ? t('menu.listing.wizardTitle') : undefined" />
 
     <!-- Dish editor (within-page overlay) -->
     <Transition name="list">

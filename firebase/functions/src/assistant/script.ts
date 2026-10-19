@@ -25,5 +25,7 @@ export const script: MockScript = {
   gastos: [toolCall("getExpenses", { from: from30 }), text("Gastos etiquetados de los últimos 30 días.")],
   escanear: [toolCall("openScanner", {}), text("Te abro el escáner.")],
   scan: [toolCall("openScanner", {}), text("Opening the scanner.")],
+  "que dias abrimos": [toolCall("getRestaurantNotes", {}), text("Según las notas que guardaste, esto es lo que tengo sobre tus días de apertura.")],
+  "what should you know": [toolCall("getRestaurantNotes", {}), text("These are the notes you saved about your restaurant.")],
   hola: [text("¡Hola! Puedo mirar precios de ingredientes, márgenes de platos, facturas, ventas y gastos de este restaurante.")],
 };

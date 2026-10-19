@@ -31,6 +31,10 @@ export interface AssistantPrincipal {
   planLabel: string;
   scansLabel: string;
   assistantLabel: string;
+  /** From the confirmed listing (docs/restaurant-listing.md); "not set" until then. */
+  restaurantLabel: string;
+  cuisineLabel: string;
+  priceLabel: string;
 }
 
 export const manifest = {
@@ -48,6 +52,9 @@ export const manifest = {
     "Current plan": "principal.planLabel",
     "Invoice scans this month": "principal.scansLabel",
     "Assistant questions this plan allows": "principal.assistantLabel",
+    "Restaurant": "principal.restaurantLabel",
+    "Cuisine": "principal.cuisineLabel",
+    "Price range": "principal.priceLabel",
   },
   conversation: { path: "restaurants/{tenant}/assistantConversations", ttlDays: 7, window: 30 },
   // Monthly turn counter on the restaurant doc, next to plan/scanCount.

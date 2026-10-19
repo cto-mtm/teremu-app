@@ -1,12 +1,14 @@
 import { z } from 'zod'
 import {
   categorySchema,
+  cuisineSchema,
   currencySchema,
   DEFAULT_CURRENCY,
   docTypeSchema,
   fxSourceSchema,
   invoiceStatusSchema,
   localeSchema,
+  menuItemOriginSchema,
   permsSchema,
   setupListingSchema,
   subcategorySchema,
@@ -138,6 +140,10 @@ export const menuItemSchema = z.object({
   prepMinutes: z.number().optional(),
   recipe: z.array(recipeLineSchema),
   active: z.boolean(),
+  // Imported menus keep their printed section and provenance. Carried
+  // through edits — PUT /menu-items/:id replaces the whole dish doc.
+  section: z.string().nullable().optional().catch(undefined),
+  origin: menuItemOriginSchema.optional().catch(undefined),
 })
 
 export const revenueEntrySchema = z.object({
@@ -338,6 +344,111 @@ export const meSchema = z.object({
 
 /** POST /restaurants response — the newly created location. */
 export const createdRestaurantSchema = locationSchema
+
+// ── Restaurant listing import (docs/restaurant-listing.md) ──────────
+
+export const listingSearchSchema = z.object({
+  results: z.array(z.object({ placeId: z.string(), name: z.string(), address: z.string().catch('') })),
+})
+
+const listingStepSchema = z.object({
+  state: z.enum(['pending', 'done', 'not_found', 'failed']).catch('not_found'),
+  count: z.number().optional(),
+})
+
+export const listingCandidateSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  price: z.number().nullable().catch(null),
+  section: z.string().nullable().catch(null),
+  source: z.enum(['website', 'website_image']).catch('website'),
+  altPrice: z.number().optional().catch(undefined),
+  match: z
+    .object({ menuItemId: z.string(), kind: z.enum(['exact', 'fuzzy']), name: z.string(), price: z.number() })
+    .optional()
+    .catch(undefined),
+})
+
+export const listingImportSchema = z.object({
+  id: z.string(),
+  status: z.enum(['open', 'committed']).catch('open'),
+  placeId: z.string().nullable(),
+  manualName: z.string().nullable().catch(null),
+  place: z
+    .object({
+      placeId: z.string(),
+      name: z.string(),
+      address: z.string().catch(''),
+      city: z.string().nullable().catch(null),
+      country: z.string().nullable().catch(null),
+      phone: z.string().nullable().catch(null),
+      website: z.string().nullable().catch(null),
+      weekHours: z.array(z.string()).catch([]),
+      openNow: z.boolean().nullable().catch(null),
+      rating: z.number().nullable().catch(null),
+      reviewCount: z.number().nullable().catch(null),
+      priceLevel: z.number().int().min(1).max(4).nullable().catch(null),
+      cuisines: z.array(cuisineSchema).catch([]),
+      photoCount: z.number().catch(0),
+      googleMapsUri: z.string().nullable().catch(null),
+    })
+    .nullable(),
+  steps: z.object({
+    profile: listingStepSchema,
+    photos: listingStepSchema,
+    website: listingStepSchema,
+    menu: listingStepSchema,
+    reviews: listingStepSchema,
+  }),
+  website: z.string().nullable().catch(null),
+  websiteTried: z.array(z.string()).catch([]),
+  menuNote: z.enum(['pdf']).nullable().catch(null),
+  candidates: z.array(listingCandidateSchema).catch([]),
+})
+
+const attributionSchema = z.object({ name: z.string().catch(''), uri: z.string().nullable().catch(null), photoUri: z.string().nullable().catch(null) })
+
+export const listingMediaSchema = z.object({
+  photos: z.array(z.object({ url: z.string(), attributions: z.array(attributionSchema).catch([]) })).catch([]),
+  reviews: z
+    .array(
+      z.object({
+        author: attributionSchema,
+        rating: z.number().catch(0),
+        text: z.string().catch(''),
+        relativeTime: z.string().nullable().catch(null),
+        googleMapsUri: z.string().nullable().catch(null),
+      }),
+    )
+    .catch([]),
+  googleMapsUri: z.string().nullable().catch(null),
+})
+
+/** GET/PUT /listing — the Settings card "Tu restaurante". */
+export const listingStatusSchema = z.object({
+  setupListing: z.string().catch('done'),
+  listing: z
+    .object({
+      placeId: z.string().nullable(),
+      contestedPlaceId: z.string().nullable().catch(null),
+      website: z.string().nullable().catch(null),
+      cuisines: z.array(cuisineSchema).catch([]),
+      priceLevel: z.number().nullable().catch(null),
+      confirmedAt: z.number().catch(0),
+      mapsUrl: z.string().nullable().catch(null),
+    })
+    .nullable(),
+  claim: z.enum(['verified', 'unverified', 'contested', 'none']).catch('none'),
+  reviewOpen: z.boolean().catch(false),
+  notes: z.array(z.object({ id: z.string(), text: z.string(), origin: z.enum(['suggested', 'owner']).catch('owner') })).catch([]),
+})
+
+export const listingCommitResponseSchema = z.object({
+  link: z.enum(['linked', 'unchanged', 'contested', 'none']),
+  contestedPlaceId: z.string().nullable().catch(null),
+  created: z.array(z.string()),
+  updated: z.number(),
+})
 
 export const membersResponseSchema = z.object({
   members: z.array(

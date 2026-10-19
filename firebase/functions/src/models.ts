@@ -2,12 +2,14 @@ import { z } from "zod";
 import {
   categorySchema,
   countryCodeSchema,
+  cuisineSchema,
   currencySchema,
   docTypeSchema,
   fxSourceSchema,
   invoiceStatusSchema,
   isSubcategoryOf,
   localeSchema,
+  menuItemOriginSchema,
   permsSchema,
   setupListingSchema,
   subcategorySchema,
@@ -166,6 +168,10 @@ export const menuItemDocSchema = z.object({
   prepMinutes: z.number().min(0).max(600).optional(),
   recipe: z.array(recipeLineSchema),
   active: z.boolean(),
+  // The printed menu heading ("Arroces") — imported menus keep it.
+  section: z.string().max(80).nullable().optional(),
+  // How the dish got here (absent = manual). docs/restaurant-listing.md.
+  origin: menuItemOriginSchema.optional(),
 });
 export type MenuItemDoc = z.infer<typeof menuItemDocSchema>;
 
@@ -328,6 +334,9 @@ export const restaurantDocSchema = z.object({
   // from the device region by the app, shown, editable, never asked.
   country: countryCodeSchema.optional(),
   timezone: timezoneSchema.optional(),
+  // Who set country/timezone: the device guess, the owner in Settings, or
+  // the confirmed Google listing. Only an owner choice is never overwritten.
+  regionSource: z.enum(["device", "owner", "listing"]).optional(),
   // Owner overrides for the pack's rate sources (only meaningful when the
   // pack offers more than one / has opt-ins). Empty for the world.
   fxDefaultSource: fxSourceSchema.optional(),
@@ -335,6 +344,20 @@ export const restaurantDocSchema = z.object({
   // "Find your restaurant" first-run step (docs/restaurant-listing.md).
   // Absent = done: only locations created after it shipped start pending.
   setupListing: setupListingSchema.optional(),
+  // The confirmed public listing (docs/restaurant-listing.md). Only the
+  // place ID and what the owner confirmed are stored — never Google's
+  // rating, reviews, photos or hours.
+  listing: z
+    .object({
+      placeId: z.string().nullable(),
+      // Set when another account already holds this place (Claims).
+      contestedPlaceId: z.string().nullable().optional(),
+      website: z.string().nullable(),
+      cuisines: z.array(cuisineSchema),
+      priceLevel: z.number().int().min(1).max(4).nullable(),
+      confirmedAt: z.number(),
+    })
+    .optional(),
 });
 export type RestaurantDoc = z.infer<typeof restaurantDocSchema>;
 
@@ -367,9 +390,69 @@ export const updateRestaurantSchema = z.object({
   currency: currencySchema.optional(),
   country: countryCodeSchema.optional(),
   timezone: timezoneSchema.optional(),
+  regionSource: z.enum(["device", "owner"]).optional(),
   fxDefaultSource: fxSourceSchema.optional(),
   fxOptIns: z.array(fxSourceSchema).max(8).optional(),
 });
+
+// ── Restaurant listing import (docs/restaurant-listing.md) ──────────
+
+/** POST /listing/imports — a Google place, or "not on Google" by name. */
+export const listingImportCreateSchema = z.union([
+  z.object({ placeId: z.string().min(1).max(300), session: z.string().max(64).optional() }).strict(),
+  z.object({ manual: z.object({ name: z.string().trim().min(1).max(80) }).strict() }).strict(),
+]);
+
+/** POST /listing/imports/:id/website — re-read with the owner's own link. */
+export const listingWebsiteSchema = z.object({ url: z.string().trim().min(3).max(500).optional() }).strict();
+
+/** POST /listing/imports/:id/commit — what the owner reviewed and kept. */
+export const listingCommitSchema = z
+  .object({
+    restaurant: z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        website: z.string().trim().max(500).nullable(),
+        cuisines: z.array(cuisineSchema).max(4),
+        priceLevel: z.number().int().min(1).max(4).nullable(),
+      })
+      .strict(),
+    dishes: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(120),
+            price: z.number().min(0).max(100_000),
+            section: z.string().trim().max(80).nullable(),
+            action: z.enum(["create", "update_price", "skip_existing"]),
+            menuItemId: z.string().min(1).max(200).optional(),
+          })
+          .strict(),
+      )
+      .max(150),
+    notes: z
+      .array(z.object({ text: z.string().trim().min(1).max(200), origin: z.enum(["suggested", "owner"]) }).strict())
+      .max(20),
+  })
+  .strict();
+export type ListingCommit = z.infer<typeof listingCommitSchema>;
+
+/** PUT /listing — the Settings card edits (all optional). */
+export const listingUpdateSchema = z
+  .object({
+    website: z.string().trim().max(500).nullable().optional(),
+    cuisines: z.array(cuisineSchema).max(4).optional(),
+    notes: z
+      .array(z.object({ text: z.string().trim().min(1).max(200), origin: z.enum(["suggested", "owner"]) }).strict())
+      .max(20)
+      .optional(),
+  })
+  .strict();
+
+/** Claim verification (docs/restaurant-listing.md §Claims). */
+export const listingVerifyStartSchema = z.object({ email: z.string().trim().email().max(120) }).strict();
+export const listingVerifyConfirmSchema = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
+export const listingReviewSchema = z.object({ note: z.string().trim().max(500).optional() }).strict();
 
 /** POST /members — invite by email with explicit perms. */
 export const inviteSchema = z.object({

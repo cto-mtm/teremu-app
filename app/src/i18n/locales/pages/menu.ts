@@ -44,6 +44,12 @@ const es = {
     ingredientExists: 'Ya existe un ingrediente con ese nombre.',
     ingredientFailed: 'No se pudo crear el ingrediente.',
   },
+  listing: {
+    importCta: 'Importar la carta desde tu web o Google',
+    needRecipes: '{n} plato importado aún no tiene receta. | {n} platos importados aún no tienen receta.',
+    estimate: 'Estimar recetas',
+    wizardTitle: 'Recetas de tu carta importada',
+  },
   scan: {
     cta: 'Escanear carta',
     title: 'Escanear tu carta',
@@ -122,6 +128,12 @@ const en: typeof es = {
     saveFailed: 'Could not save dish.',
     ingredientExists: 'An ingredient with that name already exists.',
     ingredientFailed: 'Could not create ingredient.',
+  },
+  listing: {
+    importCta: 'Import your menu from your website or Google',
+    needRecipes: "{n} imported dish doesn't have a recipe yet. | {n} imported dishes don't have a recipe yet.",
+    estimate: 'Estimate recipes',
+    wizardTitle: 'Recipes for your imported menu',
   },
   scan: {
     cta: 'Scan menu',
