@@ -169,7 +169,7 @@ export async function commitImport(
   const owned = updates.length
     ? await db().getAll(...updates.map((d) => restRef.collection("menuItems").doc(d.menuItemId!)))
     : [];
-  if (owned.some((s) => !s.exists)) throw new RequestError("unknown_menu_item", 400);
+  if (owned.some((s) => !s.exists || s.get("kind") === "prep")) throw new RequestError("unknown_menu_item", 400);
 
   const { outcome, contestedPlaceId } = await decideLink(ctx.rid, ctx.uid, id, job, restaurant);
 

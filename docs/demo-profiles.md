@@ -176,10 +176,11 @@ Profiles are `ProfileSpec` objects under `firebase/functions/src/demo/profiles/`
   threshold); round, readable hero numbers.
 - Recipes in natural units (g/ml/each against kg/L/dozen stock), real-looking
   quantities, USD.
-- Sub-recipes are **active, sellable** menu items (the recipe editor only
-  offers active dishes as sub-recipes; inactive price-0 items would show as
-  margin-0 dots in the matrix). Price them as what they are — a side, a
-  plain croissant, a tart shell.
+- Sub-recipes are **active, sellable** menu items used by portions (inactive
+  price-0 items would show as margin-0 dots in the matrix). Price them as
+  what they are — a side, a plain croissant, a tart shell. Profiles have no
+  preps (`kind: "prep"`, docs/prep-recipes.md) yet: the engine expands subs
+  as unit-less portions, which is what keeps the pinned numbers stable.
 - Only shipped features. Fictional vendors and businesses only.
 - `purchaseHorizon`: `"last-week"` for new profiles (a delivery covers the
   next `span` days; days after today use the same weekday a week earlier).

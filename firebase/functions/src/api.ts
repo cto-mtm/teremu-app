@@ -666,6 +666,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
   }
 
   // ── menu items ────────────────────────────────────────────────
+  // A prep (docs/prep-recipes.md) is never sold: no price, no target.
+  const menuItemBody = (raw: unknown) => {
+    const { yield: batch, ...item } = menuItemSchema.parse(raw);
+    return item.kind === "prep" ? { ...item, price: 0, targetMarginPct: 0, yield: batch } : item;
+  };
   if (head === "menu-items") {
     if (m === "GET" && seg.length === 1) {
       if (!can(member, "menu") && !can(member, "finance") && !can(member, "pantry"))
@@ -675,7 +680,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     }
     if (m === "POST" && seg.length === 1) {
       if (!can(member, "menu", "edit")) return forbidden(res);
-      const body = menuItemSchema.parse(req.body);
+      const body = menuItemBody(req.body);
       const ref = await col("menuItems").add(body);
       // A new dish may be what a POS catalog item was waiting for.
       await rematchAfterMenuChange(rid);
@@ -683,7 +688,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     }
     if (m === "PUT" && id && seg.length === 2) {
       if (!can(member, "menu", "edit")) return forbidden(res);
-      const body = menuItemSchema.parse(req.body);
+      const body = menuItemBody(req.body);
       await col("menuItems").doc(id).set(body);
       // Renamed / deactivated dishes re-match (and release dangling links).
       await rematchAfterMenuChange(rid);

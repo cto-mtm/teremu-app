@@ -84,6 +84,8 @@ describe("assistant", () => {
     const tomato = await seedIngredient(owner.rid, { name: "Tomate", nameKey: "tomate", unit: "kg", lastUnitPrice: 2, prevUnitPrice: 1.5 });
     await seedMenuItem(owner.rid, { name: "Ensalada", price: 10, targetMarginPct: 70, recipe: [{ ingredientId: tomato.id, qty: 0.5 }] });
     await seedMenuItem(owner.rid, { name: "Plato caro", price: 10, targetMarginPct: 70, recipe: [{ ingredientId: tomato.id, qty: 4 }] });
+    // A prep has no price: it must not top the "least profitable" list.
+    await seedMenuItem(owner.rid, { name: "Salsa", kind: "prep", price: 0, yield: { qty: 1, unit: "L" }, recipe: [{ ingredientId: tomato.id, qty: 2 }] });
 
     const t = await turn(owner.token, owner.rid, "¿Qué platos tienen menos margen?");
     expect(t.status).toBe(200);

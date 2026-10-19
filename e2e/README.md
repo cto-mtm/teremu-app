@@ -50,13 +50,13 @@ e2e/
 │   ├── data.ts              # unique() — per-project name namespacing
 │   ├── auth.flow.ts         # the Auth emulator's fake Google account picker
 │   ├── pantry.flow.ts       # create ingredient, read stock, physical count
-│   ├── menu.flow.ts         # create dish (+ recipe lines)
+│   ├── menu.flow.ts         # create dish or prep (+ recipe lines, units)
 │   ├── plan.flow.ts         # setPlanEverywhere() — specs set the plan they need
 │   └── invoice.flow.ts      # upload → wait for OCR → approve (golden path + per-scan-id helpers)
 └── tests/
     ├── auth.setup.ts        # sign in → skip "find your restaurant" → first-login tour → saves storageState
     ├── auth/login.spec.ts   # signed-OUT: login page + route guard
-    ├── menu/                # dish costing and target-margin flagging
+    ├── menu/                # dish costing, target-margin flagging, prep recipes
     ├── pantry/              # manual ingredient creation, physical count
     ├── pulse/               # revenue entry → pantry depletion
     ├── scan/                # the golden path: scan → triage → approve

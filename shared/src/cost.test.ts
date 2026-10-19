@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { marginPct, plateCost, prepLaborCost, qtyInStockUnit, type CostIngredient, type CostMenuItem } from "./cost.js";
+import {
+  expandUsage,
+  isDish,
+  marginPct,
+  plateCost,
+  prepLaborCost,
+  qtyInStockUnit,
+  subMultiplier,
+  type CostIngredient,
+  type CostMenuItem,
+} from "./cost.js";
 
 // plateCost is the ONE costing implementation behind the menu page, Pulse
 // and the assistant's dish-cost tool — a margin quoted in chat must equal
@@ -96,5 +106,51 @@ describe("prepLaborCost / marginPct", () => {
     expect(marginPct(20, 5)).toBe(75);
     expect(marginPct(10, 12)).toBe(-20);
     expect(marginPct(0, 5)).toBeNull();
+  });
+});
+
+// Preps (docs/prep-recipes.md): a batch recipe with a yield, used by an
+// amount of that yield. Here: a 2 L demi-glace from 1 kg of salmon
+// trimmings ($20) and 30 min of labor.
+describe("preps and yields", () => {
+  const demi = dish({ id: "demi", price: 0, prepMinutes: 30, yield: { qty: 2, unit: "L" }, recipe: [{ ingredientId: "salmon", qty: 1 }] });
+  const items = new Map([["demi", demi]]);
+
+  it("uses a prep by an amount of its yield: 50 ml of a 2 L batch is 1/40", () => {
+    expect(subMultiplier({ subItemId: "demi", qty: 50, unit: "ml" }, demi)).toBeCloseTo(0.025);
+    const plate = dish({ recipe: [{ subItemId: "demi", qty: 50, unit: "ml" }] });
+    const r = plateCost(plate, ings, items, 30);
+    expect(r.foodCost).toBeCloseTo(20 / 40);
+    expect(r.laborCost).toBeCloseTo(15 / 40);
+    expect(r.missing).toBe(false);
+  });
+
+  it("keeps a unit-less sub line as batches / portions (every existing line)", () => {
+    expect(subMultiplier({ subItemId: "demi", qty: 2 }, demi)).toBe(2);
+    expect(plateCost(dish({ recipe: [{ subItemId: "demi", qty: 2 }] }), ings, items).foodCost).toBeCloseTo(40);
+  });
+
+  it("flags a unit that does not convert to the yield as missing", () => {
+    expect(subMultiplier({ subItemId: "demi", qty: 50, unit: "g" }, demi)).toBeNull();
+    expect(plateCost(dish({ recipe: [{ subItemId: "demi", qty: 50, unit: "g" }] }), ings, items).missing).toBe(true);
+  });
+
+  it("depletes a prep's ingredients by the fraction of the batch used", () => {
+    const plate = dish({ id: "plate", recipe: [{ subItemId: "demi", qty: 500, unit: "ml" }, { ingredientId: "lemon", qty: 1 }] });
+    const usage = expandUsage([{ menuItemId: "plate", qty: 4 }], new Map([["plate", plate], ["demi", demi]]));
+    // 4 plates × 0.25 batch × 1 kg = 1 kg; 4 lemons.
+    expect(usage.get("salmon")).toEqual([{ qty: 1, unit: undefined }]);
+    expect(usage.get("lemon")).toEqual([{ qty: 4, unit: undefined }]);
+  });
+
+  it("skips an unconvertible prep line when depleting", () => {
+    const plate = dish({ id: "plate", recipe: [{ subItemId: "demi", qty: 50, unit: "g" }] });
+    expect(expandUsage([{ menuItemId: "plate", qty: 1 }], new Map([["plate", plate], ["demi", demi]])).size).toBe(0);
+  });
+
+  it("treats a missing kind as a dish", () => {
+    expect(isDish({})).toBe(true);
+    expect(isDish({ kind: "dish" })).toBe(true);
+    expect(isDish({ kind: "prep" })).toBe(false);
   });
 });

@@ -25,6 +25,24 @@ export interface CostMenuItem {
   price: number;
   prepMinutes?: number;
   recipe: CostRecipeLine[];
+  /** Preps only: what one batch makes (docs/prep-recipes.md). */
+  yield?: { qty: number; unit: Unit };
+}
+
+/** Sold on the menu (has a price and a margin), as opposed to a prep. */
+export const isDish = (item: { kind?: "dish" | "prep" }): boolean => item.kind !== "prep";
+
+/**
+ * How many batches / portions of `sub` one line uses. A line with a unit
+ * on a sub with a yield is an amount of that yield (50 ml of a 2 L
+ * demi-glace = 0.025); a unit-less line is batches, as sub-recipe lines
+ * always were. null = the units don't convert (g of something sold in L):
+ * the line can't be costed or depleted.
+ */
+export function subMultiplier(line: CostRecipeLine, sub: CostMenuItem): number | null {
+  if (!line.unit || !sub.yield) return line.qty;
+  const inYieldUnit = convertQty(line.qty, line.unit, sub.yield.unit);
+  return inYieldUnit == null || sub.yield.qty <= 0 ? null : inYieldUnit / sub.yield.qty;
 }
 
 export interface PlateCost {
@@ -65,13 +83,14 @@ export function plateCost<I extends CostIngredient, M extends CostMenuItem>(
   for (const line of item.recipe) {
     if (line.subItemId) {
       const sub = menuItems.get(line.subItemId);
-      if (!sub || path.has(sub.id) || path.size > 4) {
+      const mult = sub ? subMultiplier(line, sub) : null;
+      if (!sub || mult == null || path.has(sub.id) || path.size > 4) {
         missing = true;
         continue;
       }
       const rec = plateCost(sub, ingredients, menuItems, laborRatePerHour, new Set([...path, sub.id]));
-      foodCost += rec.foodCost * line.qty;
-      laborCost += rec.laborCost * line.qty;
+      foodCost += rec.foodCost * mult;
+      laborCost += rec.laborCost * mult;
       missing = missing || rec.missing;
       continue;
     }
@@ -88,4 +107,42 @@ export function plateCost<I extends CostIngredient, M extends CostMenuItem>(
 /** Margin % over price, or null when the dish has no price. */
 export function marginPct(price: number, cost: number): number | null {
   return price > 0 ? ((price - cost) / price) * 100 : null;
+}
+
+/**
+ * Expand what was made or sold (sub-recipes and preps included,
+ * cycle-guarded, depth-capped) into raw ingredient usage entries in the
+ * recipe's own units — ONE walk for the app's pantry math, the production
+ * planner and the API's depletion on revenue. Callers convert each entry
+ * to the ingredient's stock unit.
+ */
+export function expandUsage<M extends CostMenuItem>(
+  selections: { menuItemId: string; qty: number }[],
+  menuItems: Map<string, M>,
+): Map<string, { qty: number; unit?: Unit }[]> {
+  const raw = new Map<string, { qty: number; unit?: Unit }[]>();
+  const walk = (menuItemId: string, multiplier: number, path: Set<string>, depth: number): void => {
+    if (depth > 4) return;
+    const item = menuItems.get(menuItemId);
+    if (!item) return;
+    for (const line of item.recipe) {
+      if (line.subItemId) {
+        const sub = menuItems.get(line.subItemId);
+        const mult = sub ? subMultiplier(line, sub) : null;
+        if (mult != null && !path.has(line.subItemId)) {
+          walk(line.subItemId, multiplier * mult, new Set([...path, line.subItemId]), depth + 1);
+        }
+        continue;
+      }
+      if (!line.ingredientId) continue;
+      raw.set(line.ingredientId, [
+        ...(raw.get(line.ingredientId) ?? []),
+        { qty: line.qty * multiplier, unit: line.unit },
+      ]);
+    }
+  };
+  for (const s of selections) {
+    if (s.qty > 0) walk(s.menuItemId, s.qty, new Set([s.menuItemId]), 0);
+  }
+  return raw;
 }

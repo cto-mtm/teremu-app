@@ -128,9 +128,9 @@ export async function projectDay(rid: string, provider: PosProvider, date: strin
 
   const [links, dishes] = await Promise.all([
     currentLinks(rid, provider, integ.epoch),
-    db().collection(`restaurants/${rid}/menuItems`).where("active", "==", true).select().get(),
+    db().collection(`restaurants/${rid}/menuItems`).where("active", "==", true).select("kind").get(),
   ]);
-  const activeDishes = new Set(dishes.docs.map((d) => d.id));
+  const activeDishes = new Set(dishes.docs.filter((d) => d.get("kind") !== "prep").map((d) => d.id));
   const agg = aggregateDay(usable, (catalogId) => {
     if (!catalogId) return null;
     const link = links.get(linkIdFor(provider, catalogId));

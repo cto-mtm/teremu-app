@@ -11,6 +11,8 @@ import MiniBars from '../components/MiniBars.vue'
 /**
  * One dish end to end: pricing and margin, sales trend, and which
  * ingredients the plate cost is made of (each linking to its page).
+ * A prep (docs/prep-recipes.md) shows its yield, batch cost, cost per
+ * yield unit and the recipes that use it instead of price and sales.
  */
 const { t, n, d } = useI18n()
 const route = useRoute()
@@ -26,6 +28,16 @@ const margin = computed(() =>
   dish.value
     ? actualMarginPct(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value)
     : { margin: null, cost: 0, foodCost: 0, laborCost: 0, missing: false },
+)
+const isPrep = computed(() => dish.value?.kind === 'prep')
+const unitCost = computed(() => (dish.value?.yield?.qty ? margin.value.cost / dish.value.yield.qty : null))
+/** Recipes that use this one, with the amount each line takes. */
+const usedIn = computed(() =>
+  dish.value
+    ? kitchen.activeMenuItems.flatMap((m) =>
+        m.recipe.filter((r) => r.subItemId === dish.value!.id).map((r) => ({ item: m, qty: r.qty, unit: r.unit })),
+      )
+    : [],
 )
 const weekly = computed(() => (dish.value ? unitsSoldWeekly(kitchen.revenue, dish.value.id) : []))
 const sold14 = computed(() => weekly.value.slice(-2).reduce((s, v) => s + v, 0))
@@ -49,7 +61,13 @@ const weekStarts = computed(() => {
 
   <div v-else class="space-y-4">
     <div class="flex items-center gap-3">
-      <button class="text-smoke" :aria-label="t('common.action.back')" @click="router.push('/menu')">←</button>
+      <button
+        class="text-smoke"
+        :aria-label="t('common.action.back')"
+        @click="router.push(isPrep ? { path: '/menu', query: { tab: 'preps' } } : '/menu')"
+      >
+        ←
+      </button>
       <!-- HERO TARGET: same name as the menu list card -->
       <h1
         class="min-w-0 flex-1 truncate text-xl leading-tight font-bold"
@@ -66,6 +84,50 @@ const weekStarts = computed(() => {
       </BaseButton>
     </div>
 
+    <template v-if="isPrep">
+      <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div class="card">
+          <div class="text-xs text-smoke">{{ t('menu.detail.yield') }}</div>
+          <div class="mt-1 text-2xl font-bold">
+            <template v-if="dish.yield">{{ n(dish.yield.qty) }} {{ t('common.unit.' + dish.yield.unit) }}</template>
+            <template v-else>—</template>
+          </div>
+        </div>
+        <div class="card">
+          <div class="text-xs text-smoke">{{ t('menu.detail.batchCost') }}</div>
+          <div class="mt-1 text-2xl font-bold">{{ n(margin.cost, 'currency') }}</div>
+          <div v-if="margin.laborCost > 0" class="text-[11px] text-smoke">
+            {{ t('menu.detail.inclLabor', { cost: n(margin.laborCost, 'currency') }) }}
+          </div>
+          <div v-if="margin.missing" class="text-[11px] text-smoke">{{ t('menu.unpriced') }}</div>
+        </div>
+        <div v-if="dish.yield && unitCost != null" class="card">
+          <div class="text-xs text-smoke">{{ t('menu.detail.unitCost', { unit: t('common.unit.' + dish.yield.unit) }) }}</div>
+          <div class="mt-1 text-2xl font-bold">{{ n(unitCost, 'currency') }}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="mb-2 text-sm font-semibold">{{ t('menu.detail.usedInTitle') }}</div>
+        <p v-if="usedIn.length === 0" class="text-xs text-smoke">{{ t('menu.detail.usedInEmpty') }}</p>
+        <div v-else class="divide-y divide-gray-100">
+          <RouterLink
+            v-for="(u, i) in usedIn"
+            :key="u.item.id + ':' + i"
+            :to="`/menu/${u.item.id}`"
+            class="flex items-center justify-between gap-3 py-2 text-sm hover:text-ember-700"
+          >
+            <span class="truncate font-medium">{{ u.item.name }}</span>
+            <span class="shrink-0 text-xs text-smoke">
+              <template v-if="u.unit">{{ n(u.qty) }} {{ t('common.unit.' + u.unit) }}</template>
+              <template v-else>{{ t('menu.detail.subPortions', { qty: n(u.qty) }) }}</template>
+            </span>
+          </RouterLink>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
     <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.price') }}</div>
@@ -102,6 +164,7 @@ const weekStarts = computed(() => {
         <span>{{ d(weekStarts[1], 'weekday') }}</span>
       </div>
     </div>
+    </template>
 
     <div class="card">
       <div class="mb-2 text-sm font-semibold">{{ t('menu.detail.breakdownTitle') }}</div>
@@ -118,16 +181,26 @@ const weekStarts = computed(() => {
             <span class="truncate font-medium" :class="row.labor ? '' : 'group-hover:text-ember-700'">
               <template v-if="row.labor">
                 {{ t('menu.detail.laborRow') }}
-                <span class="text-smoke">· {{ t('menu.detail.laborPerPlate', { min: n(row.qty) }) }}</span>
+                <span class="text-smoke">
+                  · {{ t(isPrep ? 'menu.detail.laborPerBatch' : 'menu.detail.laborPerPlate', { min: n(row.qty) }) }}
+                </span>
               </template>
               <template v-else-if="row.sub">
                 {{ row.sub.name }}
-                <span class="text-smoke">· {{ t('menu.detail.subPortions', { qty: n(row.qty) }) }}</span>
+                <span class="text-smoke">
+                  ·
+                  <template v-if="row.unit">
+                    {{ t(isPrep ? 'menu.detail.perBatch' : 'menu.detail.perPlate', { qty: n(row.qty), unit: t('common.unit.' + row.unit) }) }}
+                  </template>
+                  <template v-else>
+                    {{ t(isPrep ? 'menu.detail.subPortionsBatch' : 'menu.detail.subPortions', { qty: n(row.qty) }) }}
+                  </template>
+                </span>
               </template>
               <template v-else>
                 {{ row.ingredient!.name }}
                 <span class="text-smoke">
-                  · {{ t('menu.detail.perPlate', { qty: n(row.qty), unit: t('common.unit.' + (row.unit ?? row.ingredient!.unit)) }) }}
+                  · {{ t(isPrep ? 'menu.detail.perBatch' : 'menu.detail.perPlate', { qty: n(row.qty), unit: t('common.unit.' + (row.unit ?? row.ingredient!.unit)) }) }}
                 </span>
               </template>
             </span>

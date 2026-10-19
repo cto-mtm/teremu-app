@@ -9,6 +9,7 @@ import {
   invoiceStatusSchema,
   isSubcategoryOf,
   localeSchema,
+  menuItemKindSchema,
   menuItemOriginSchema,
   permsSchema,
   setupListingSchema,
@@ -74,15 +75,17 @@ export type FxDecision = z.infer<typeof fxDecisionSchema>;
 
 export const recipeLineSchema = z.object({
   // Exactly one of these: a raw ingredient, or another menu item used as
-  // a sub-recipe ("side of rice" inside "salmon with rice"). Sub-recipes
-  // expand recursively for costing and pantry depletion (cycle-guarded).
+  // a sub-recipe ("side of rice" inside "salmon with rice", a prep like
+  // a demi-glace). Sub-recipes expand recursively for costing and pantry
+  // depletion (cycle-guarded) — see subMultiplier in @teremu/shared.
   ingredientId: z.string().optional(),
   subItemId: z.string().optional(),
   qty: z.number().positive(),
   // Optional recipe unit (e.g. grams while stock is in kg). Converted to
   // the ingredient's unit for pantry depletion — see units.ts. Absent =
-  // legacy behavior: qty is already in the ingredient's unit. Sub-recipe
-  // lines have no unit — qty is portions.
+  // legacy behavior: qty is already in the ingredient's unit. On a
+  // sub-recipe line, a unit means "this much of the prep's yield"; no
+  // unit means qty is batches / portions (docs/prep-recipes.md).
   unit: unitSchema.optional(),
 });
 export type RecipeLine = z.infer<typeof recipeLineSchema>;
@@ -172,6 +175,9 @@ export const menuItemDocSchema = z.object({
   section: z.string().max(80).nullable().optional(),
   // How the dish got here (absent = manual). docs/restaurant-listing.md.
   origin: menuItemOriginSchema.optional(),
+  // dish (absent) or prep; a prep has a yield instead of a price.
+  kind: menuItemKindSchema.optional(),
+  yield: z.object({ qty: z.number().positive().max(100_000), unit: unitSchema }).optional(),
 });
 export type MenuItemDoc = z.infer<typeof menuItemDocSchema>;
 
@@ -196,8 +202,12 @@ export const approveInvoiceSchema = z.object({
   fx: fxDecisionSchema.omit({ pickedBy: true }).optional(),
 });
 
-/** POST /menu-items and PUT /menu-items/:id — same shape as the doc. */
-export const menuItemSchema = menuItemDocSchema;
+/** POST /menu-items and PUT /menu-items/:id — the doc's shape. A prep
+ * must say what one batch makes; the route stores its price as 0. */
+export const menuItemSchema = menuItemDocSchema.refine((m) => m.kind !== "prep" || m.yield !== undefined, {
+  message: "a prep needs a yield",
+  path: ["yield"],
+});
 
 /** POST /revenue — manual daily sales entry. */
 export const revenueSchema = z.object({

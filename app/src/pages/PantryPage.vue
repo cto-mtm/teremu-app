@@ -187,7 +187,7 @@ async function commit(id: string): Promise<void> {
         <BaseButton v-if="canEdit" variant="ghost" @click="showAdd = true">
           + {{ t('pantry.add.cta') }}
         </BaseButton>
-        <BaseButton v-if="kitchen.activeMenuItems.length" variant="ghost" @click="showPlan = true">
+        <BaseButton v-if="kitchen.dishes.length" variant="ghost" @click="showPlan = true">
           {{ t('pantry.plan.cta') }}
         </BaseButton>
         <BaseButton v-if="kitchen.ingredients.length" @click="showGrocery = true">
@@ -213,7 +213,7 @@ async function commit(id: string): Promise<void> {
           </div>
 
           <div class="space-y-2">
-            <div v-for="m in kitchen.activeMenuItems" :key="m.id" class="flex items-center gap-3">
+            <div v-for="m in kitchen.dishes" :key="m.id" class="flex items-center gap-3">
               <div class="min-w-0 flex-1 truncate text-sm">{{ m.name }}</div>
               <input
                 v-model="planQty[m.id]"

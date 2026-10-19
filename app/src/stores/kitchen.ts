@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { isDish } from '@teremu/shared'
 import { apiFetch, writeEpoch } from '../lib/api'
 import { replaceById } from '../lib/collections'
 import {
@@ -38,6 +39,10 @@ export const useKitchenStore = defineStore('kitchen', () => {
 
   const ingredientMap = computed(() => new Map(ingredients.value.map((i) => [i.id, i])))
   const activeMenuItems = computed(() => menuItems.value.filter((m) => m.active))
+  /** What is sold — sales, margins, POS (docs/prep-recipes.md). */
+  const dishes = computed(() => activeMenuItems.value.filter(isDish))
+  /** Batch recipes used inside other recipes; never sold. */
+  const preps = computed(() => activeMenuItems.value.filter((m) => !isDish(m)))
   /** Distinct tags already used — feeds the expense form's suggestions. */
   const expenseTags = computed(() => [...new Map(expenses.value.map((e) => [e.tagKey, e.tag])).values()])
 
@@ -125,13 +130,15 @@ export const useKitchenStore = defineStore('kitchen', () => {
       active: boolean
       section?: string | null
       origin?: MenuItem['origin']
+      kind?: MenuItem['kind']
+      yield?: MenuItem['yield']
     },
     id?: string,
   ): Promise<MenuItem | null> {
     // PUT replaces the whole dish doc: keep the printed section and the
     // provenance of an imported dish unless the caller sets them.
     const prev = id ? menuItems.value.find((m) => m.id === id) : undefined
-    const body = prev ? { section: prev.section, origin: prev.origin, ...item } : item
+    const body = prev ? { section: prev.section, origin: prev.origin, kind: prev.kind, yield: prev.yield, ...item } : item
     const res = id
       ? await apiFetch<MenuItem>(
           `/menu-items/${id}`,
@@ -358,6 +365,8 @@ export const useKitchenStore = defineStore('kitchen', () => {
     error,
     ingredientMap,
     activeMenuItems,
+    dishes,
+    preps,
     expenseTags,
     refresh,
     reset,

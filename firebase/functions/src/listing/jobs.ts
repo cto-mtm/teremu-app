@@ -203,7 +203,9 @@ export async function readMenu(backend: ListingBackend, rid: string, id: string)
   const found = results.flat();
 
   const menuSnap = await db().collection(`restaurants/${rid}/menuItems`).where("active", "==", true).get();
-  const menu: MatchDish[] = menuSnap.docs.map((d) => ({ id: d.id, name: d.get("name") as string, price: d.get("price") as number }));
+  const menu: MatchDish[] = menuSnap.docs
+    .filter((d) => d.get("kind") !== "prep")
+    .map((d) => ({ id: d.id, name: d.get("name") as string, price: d.get("price") as number }));
   const candidates = mergeCandidates(job.candidates, found, menu);
 
   const allFailed = failures > 0 && failures === texts.length + images.length;

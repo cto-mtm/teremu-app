@@ -63,6 +63,31 @@ describe("pantry & revenue", () => {
     expect(fresh.theoreticalQty).toBe(5000 - 150 * 2);
   });
 
+  it("depletes a prep by the share of its yield a dish uses", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const bones = await seedIngredient(owner.rid, { name: "Bones", unit: "kg", theoreticalQty: 10 });
+    const demi = await seedMenuItem(owner.rid, {
+      name: "Demi-glace",
+      kind: "prep",
+      price: 0,
+      yield: { qty: 2, unit: "L" },
+      recipe: [{ ingredientId: bones.id, qty: 4, unit: "kg" }],
+    });
+    const steak = await seedMenuItem(owner.rid, {
+      name: "Steak",
+      // 50 ml of a 2 L batch = 1/40 of the batch's 4 kg of bones = 0.1 kg.
+      recipe: [{ subItemId: demi.id, qty: 50, unit: "ml" }],
+    });
+
+    const { status } = await post("/revenue", owner.token, {
+      date: "2026-07-01",
+      amount: 100,
+      itemsSold: [{ menuItemId: steak.id, qty: 4 }],
+    });
+    expect(status).toBe(201);
+    expect((await ing(owner.rid, bones.id)).theoreticalQty).toBeCloseTo(10 - 0.4);
+  });
+
   it("guards against a sub-recipe cycle instead of hanging or erroring", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     // Create both menu items first (need each other's ids), then wire the

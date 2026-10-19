@@ -55,6 +55,31 @@ describe("menu & menu-scan", () => {
     expect(persistedSide.recipe).toEqual([{ ingredientId: rice.id, qty: 150, unit: "g" }]);
   });
 
+  it("a prep (docs/prep-recipes.md) needs a yield and stores no price; a dish keeps none", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const prep = { name: "Demi-glace", kind: "prep", price: 12, targetMarginPct: 70, active: true, recipe: [] };
+
+    expect((await post("/menu-items", owner.token, prep)).status).toBe(400); // no yield
+
+    const created = await post<{ id: string; price: number; targetMarginPct: number }>("/menu-items", owner.token, {
+      ...prep,
+      yield: { qty: 2, unit: "L" },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ kind: "prep", price: 0, targetMarginPct: 0, yield: { qty: 2, unit: "L" } });
+
+    // Switching it back to a dish drops the yield.
+    const asDish = await put(`/menu-items/${created.body.id}`, owner.token, {
+      ...prep,
+      kind: "dish",
+      yield: { qty: 2, unit: "L" },
+    });
+    expect(asDish.status).toBe(200);
+    const list = await get<Array<{ id: string; kind?: string; yield?: unknown; price: number }>>("/menu-items", owner.token);
+    expect(list.body.find((m) => m.id === created.body.id)).toMatchObject({ kind: "dish", price: 12 });
+    expect(list.body.find((m) => m.id === created.body.id)!.yield).toBeUndefined();
+  });
+
   it("prepMinutes persists on menu items and the labor rate round-trips via /restaurants + /me", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
 

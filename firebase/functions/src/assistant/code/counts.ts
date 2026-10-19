@@ -13,17 +13,19 @@ import { tenantRef } from "./shared.js";
 export async function getCounts(_input: Record<string, never>, ctx: AssistantContext): Promise<CountsRowT[]> {
   const rest = tenantRef(ctx);
   const invoices = rest.collection("invoices");
-  const [approved, pending, dishes, ingredients] = await Promise.all([
+  const active = rest.collection("menuItems").where("active", "==", true);
+  const [approved, pending, menuItems, preps, ingredients] = await Promise.all([
     invoices.where("status", "==", "approved").count().get(),
     invoices.where("status", "==", "needs_review").count().get(),
-    rest.collection("menuItems").where("active", "==", true).count().get(),
+    active.count().get(),
+    active.where("kind", "==", "prep").count().get(), // preps are not dishes
     rest.collection("ingredients").count().get(),
   ]);
   return [
     {
       approvedInvoices: approved.data().count,
       pendingInvoices: pending.data().count,
-      dishes: dishes.data().count,
+      dishes: menuItems.data().count - preps.data().count,
       ingredients: ingredients.data().count,
     },
   ];

@@ -180,6 +180,13 @@ export const MENU_ITEM_ORIGINS = ["manual", "menu_scan", "listing", "pos"] as co
 export const menuItemOriginSchema = z.enum(MENU_ITEM_ORIGINS);
 export type MenuItemOrigin = z.infer<typeof menuItemOriginSchema>;
 
+/** What a menu item is (docs/prep-recipes.md). A `dish` is sold; a `prep`
+ * (stock, sauce, dough) is made in batches and used inside other recipes.
+ * Absent on a stored item = `dish`. */
+export const MENU_ITEM_KINDS = ["dish", "prep"] as const;
+export const menuItemKindSchema = z.enum(MENU_ITEM_KINDS);
+export type MenuItemKind = z.infer<typeof menuItemKindSchema>;
+
 // ── Granular permissions ────────────────────────────────────────────
 // Per-area access levels instead of fixed roles. Owners bypass all
 // checks (enforced server-side). Sharing this shape means adding a new

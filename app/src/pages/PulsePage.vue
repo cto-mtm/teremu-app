@@ -207,7 +207,7 @@ const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
 
 const marginAlerts = computed(() => {
   const list: { m: MenuItem; margin: number; cost: number }[] = []
-  for (const m of kitchen.activeMenuItems) {
+  for (const m of kitchen.dishes) {
     const { margin, cost } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
     if (margin != null && margin < m.targetMarginPct) list.push({ m, margin, cost })
   }
@@ -872,9 +872,9 @@ watch(showExpense, (open) => {
               <input v-model="amount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
             </label>
           </div>
-          <div v-if="kitchen.activeMenuItems.length" class="space-y-2">
+          <div v-if="kitchen.dishes.length" class="space-y-2">
             <div class="text-xs text-smoke">{{ t('pulse.sheet.dishesHint') }}</div>
-            <div v-for="m in kitchen.activeMenuItems" :key="m.id" class="flex items-center gap-3">
+            <div v-for="m in kitchen.dishes" :key="m.id" class="flex items-center gap-3">
               <div class="flex-1 text-sm">{{ m.name }}</div>
               <input v-model="sold[m.id]" type="number" inputmode="numeric" class="input w-20 text-center" placeholder="0" />
             </div>

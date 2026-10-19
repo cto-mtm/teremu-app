@@ -81,7 +81,7 @@ Ports Dirumed's helpers, adapted to HTTP + Teremu's Firestore-based membership (
 - Reprocess a failed invoice.
 
 **3. Pantry & revenue**
-- `POST /revenue` with `itemsSold` depletes pantry via recipes, incl. sub-recipe recursion + cycle/depth guard.
+- `POST /revenue` with `itemsSold` depletes pantry via recipes, incl. sub-recipe recursion + cycle/depth guard, and a prep by the share of its yield a line uses.
 - Update/delete revenue reverts the deltas.
 - `PUT /ingredients/:id/count` overwrites `theoreticalQty`.
 
@@ -93,7 +93,7 @@ Ports Dirumed's helpers, adapted to HTTP + Teremu's Firestore-based membership (
 - History windowing: `?days=` capped by plan; `GET /me` usage reflects consumed scans.
 
 **5. Menu & menu-scan**
-- `POST`/`PUT /menu-items` persists recipes incl. `ingredientId` XOR `subItemId`.
+- `POST`/`PUT /menu-items` persists recipes incl. `ingredientId` XOR `subItemId`; a prep needs a `yield` and stores price 0 (docs/prep-recipes.md).
 - `POST /menu/scan` (mock) returns dishes; `POST /menu/draft-recipes` returns catalog-matched drafts; **assert the scan quota is NOT consumed** (menu setup is quota-free); 5s cooldown → 429.
 
 **6. Vendors & orders**

@@ -1,5 +1,5 @@
 import type { AssistantContext } from "@mtmcya/assistant";
-import { marginPct, normalizeName, plateCost } from "@teremu/shared";
+import { isDish, marginPct, normalizeName, plateCost } from "@teremu/shared";
 import type { DishCostRowT } from "../tools.js";
 import { laborRate, loadIngredients, loadMenuItems, round1, round2 } from "./shared.js";
 
@@ -28,7 +28,7 @@ export async function dishCosts(input: DishCostInput, ctx: AssistantContext): Pr
   const needle = input.name ? normalizeName(input.name) : "";
   const rows: DishCostRowT[] = [];
   for (const item of menuItems.values()) {
-    if (!item.active) continue;
+    if (!item.active || !isDish(item)) continue; // a prep has no price or margin
     if (needle && !normalizeName(item.name).includes(needle)) continue;
     const c = plateCost(item, ingredients, menuItems, laborRatePerHour);
     rows.push({

@@ -8,6 +8,7 @@ import {
   fxSourceSchema,
   invoiceStatusSchema,
   localeSchema,
+  menuItemKindSchema,
   menuItemOriginSchema,
   permsSchema,
   setupListingSchema,
@@ -126,7 +127,8 @@ export const recipeLineSchema = z.object({
   qty: z.number(),
   // Optional recipe unit (grams while stock is in kg, etc.) — converted
   // via lib/units.ts. Absent = qty is in the ingredient's stock unit.
-  // Sub-recipe lines carry no unit: qty is portions.
+  // On a sub-recipe line, a unit is an amount of the prep's yield; no
+  // unit = qty is batches / portions (docs/prep-recipes.md).
   unit: unitSchema.optional(),
 })
 
@@ -144,6 +146,9 @@ export const menuItemSchema = z.object({
   // through edits — PUT /menu-items/:id replaces the whole dish doc.
   section: z.string().nullable().optional().catch(undefined),
   origin: menuItemOriginSchema.optional().catch(undefined),
+  // dish (absent) or prep — a prep has a yield instead of a price.
+  kind: menuItemKindSchema.optional().catch(undefined),
+  yield: z.object({ qty: z.number(), unit: unitSchema }).optional().catch(undefined),
 })
 
 export const revenueEntrySchema = z.object({

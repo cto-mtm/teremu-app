@@ -63,7 +63,9 @@ export async function currentLinks(rid: string, provider: PosProvider, epoch: nu
 
 async function activeDishes(rid: string): Promise<MatchDish[]> {
   const snap = await db().collection(`restaurants/${rid}/menuItems`).where("active", "==", true).get();
-  return snap.docs.map((d) => ({ id: d.id, name: d.get("name") as string, price: (d.get("price") as number) ?? 0 }));
+  return snap.docs
+    .filter((d) => d.get("kind") !== "prep") // preps are never sold
+    .map((d) => ({ id: d.id, name: d.get("name") as string, price: (d.get("price") as number) ?? 0 }));
 }
 
 function summarize(links: Iterable<LinkDoc>): MatchSummary {
@@ -317,7 +319,9 @@ export async function updateLink(rid: string, provider: PosProvider, linkId: str
   switch (body.action) {
     case "confirm": {
       const dish = await db().doc(`restaurants/${rid}/menuItems/${body.menuItemId}`).get();
-      if (!dish.exists || dish.get("active") !== true) throw new RequestError("dish_not_found", 404);
+      if (!dish.exists || dish.get("active") !== true || dish.get("kind") === "prep") {
+        throw new RequestError("dish_not_found", 404);
+      }
       const by =
         link.menuItemId === body.menuItemId
           ? link.matchedBy

@@ -3,7 +3,17 @@
 
 import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RevenueEntry, Unit } from './types'
 import { convertQty } from './units'
-import { normalizeName, pairSubcategory, plateCost, prepLaborCost, qtyInStockUnit, SUBCATEGORIES } from '@teremu/shared'
+import {
+  expandUsage,
+  isDish,
+  normalizeName,
+  pairSubcategory,
+  plateCost,
+  prepLaborCost,
+  qtyInStockUnit,
+  subMultiplier,
+  SUBCATEGORIES,
+} from '@teremu/shared'
 
 export { normalizeName }
 
@@ -410,40 +420,6 @@ export function dishesUsing(menuItems: MenuItem[], ingredientId: string) {
     })
 }
 
-/**
- * Expand recipes (sub-recipes included, cycle-guarded) into raw
- * ingredient usage entries — shared by pantry-usage math and the
- * production planner.
- */
-function expandUsage(
-  selections: { menuItemId: string; qty: number }[],
-  menuItems: Map<string, MenuItem>,
-): Map<string, { qty: number; unit?: Unit }[]> {
-  const raw = new Map<string, { qty: number; unit?: Unit }[]>()
-  const walk = (menuItemId: string, multiplier: number, path: Set<string>, depth: number): void => {
-    if (depth > 4) return
-    const item = menuItems.get(menuItemId)
-    if (!item) return
-    for (const line of item.recipe) {
-      if (line.subItemId) {
-        if (!path.has(line.subItemId)) {
-          walk(line.subItemId, multiplier * line.qty, new Set([...path, line.subItemId]), depth + 1)
-        }
-        continue
-      }
-      if (!line.ingredientId) continue
-      raw.set(line.ingredientId, [
-        ...(raw.get(line.ingredientId) ?? []),
-        { qty: line.qty * multiplier, unit: line.unit },
-      ])
-    }
-  }
-  for (const s of selections) {
-    if (s.qty > 0) walk(s.menuItemId, s.qty, new Set([s.menuItemId]), 0)
-  }
-  return raw
-}
-
 // ── Production planning (events / catering) ─────────────────────────
 
 export interface PlanRow {
@@ -508,7 +484,7 @@ export function menuEngineering(
   }
   const menuMap = new Map(menuItems.map((m) => [m.id, m]))
   const raw = menuItems
-    .filter((m) => m.active)
+    .filter((m) => m.active && isDish(m)) // preps are never sold
     .map((m) => ({
       item: m,
       units: units.get(m.id) ?? 0,
@@ -707,9 +683,11 @@ export function costBreakdown(
     .map((line): Omit<BreakdownRow, 'share'> | null => {
       if (line.subItemId) {
         const sub = menuItems.get(line.subItemId)
-        if (!sub || sub.id === item.id) return null
+        const mult = sub ? subMultiplier(line, sub) : null
+        if (!sub || mult == null || sub.id === item.id) return null
         const subCost = plateCost(sub, ingredients, menuItems, laborRatePerHour, new Set([item.id, sub.id])).cost
-        return { sub, qty: line.qty, cost: subCost * line.qty }
+        // unit set = an amount of the prep's yield; none = batches/portions
+        return { sub, qty: line.qty, unit: line.unit, cost: subCost * mult }
       }
       const ing = line.ingredientId ? ingredients.get(line.ingredientId) : undefined
       if (!ing) return null

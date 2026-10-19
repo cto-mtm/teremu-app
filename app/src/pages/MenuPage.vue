@@ -17,7 +17,9 @@ import PageLoader from '../components/PageLoader.vue'
 
 /**
  * Menu Margin Mapping — every dish costed from this week's rolling
- * vendor prices. Dishes drifting under their target get flagged.
+ * vendor prices. Dishes drifting under their target get flagged. The
+ * second tab holds the preps (stocks, sauces…) dishes are built from —
+ * docs/prep-recipes.md.
  */
 const { t, n } = useI18n()
 const route = useRoute()
@@ -32,8 +34,12 @@ const wizardOpen = ref(false)
 // Dishes imported from the restaurant's website have prices but no recipe
 // yet (docs/restaurant-listing.md). The same wizard drafts them, in place.
 const needRecipes = computed(() =>
-  kitchen.activeMenuItems.filter((m) => m.origin === 'listing' && m.recipe.length === 0),
+  kitchen.dishes.filter((m) => m.origin === 'listing' && m.recipe.length === 0),
 )
+
+// Dishes (sold, with margins) or preps (batch recipes used inside them).
+// /menu?tab=preps opens the second one (the prep detail page links back).
+const tab = ref<'dishes' | 'preps'>(route.query.tab === 'preps' ? 'preps' : 'dishes')
 const recipeSeed = ref<{ key: string; name: string; price: number | null; menuItemId: string }[] | undefined>()
 function estimateImported(): void {
   recipeSeed.value = needRecipes.value.map((m) => ({ key: m.id, name: m.name, price: m.price, menuItemId: m.id }))
@@ -65,7 +71,7 @@ const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 
 const rows = computed(() => {
   const q = search.value.toLowerCase().trim()
-  const list = kitchen.activeMenuItems
+  const list = kitchen.dishes
     .filter((m) => !q || m.name.toLowerCase().includes(q))
     .map((m) => ({ m, ...actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value) }))
   switch (sortBy.value) {
@@ -79,8 +85,24 @@ const rows = computed(() => {
   }
 })
 
-// ── Dish editor sheet ───────────────────────────────────────────
+/** Preps with what one batch costs, per yield unit, and how many recipes use it. */
+const prepRows = computed(() => {
+  const q = search.value.toLowerCase().trim()
+  return kitchen.preps
+    .filter((m) => !q || m.name.toLowerCase().includes(q))
+    .map((m) => {
+      const { cost, missing } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
+      const usedIn = kitchen.activeMenuItems.filter((d) => d.recipe.some((r) => r.subItemId === m.id)).length
+      return { m, cost, missing, unitCost: m.yield?.qty ? cost / m.yield.qty : null, usedIn }
+    })
+    .sort((a, b) => a.m.name.localeCompare(b.m.name))
+})
+
+// ── Dish / prep editor sheet ────────────────────────────────────
 const editing = ref<MenuItem | 'new' | null>(null)
+const kind = ref<'dish' | 'prep'>('dish')
+const yieldQty = ref('')
+const yieldUnit = ref<Unit>('L')
 const name = ref('')
 const price = ref('')
 const target = ref('70')
@@ -106,10 +128,15 @@ function closeEditor(): void {
   if (route.query.edit) void router.replace({ query: {} })
 }
 
-/** Other active dishes usable as sub-recipes (excluding the one open). */
-const subChoices = computed(() =>
-  kitchen.activeMenuItems.filter((m) => editing.value === 'new' || m.id !== editing.value?.id),
-)
+/** Other active items usable as sub-recipes (excluding the one open):
+ * preps first — that is what they are for — then dishes. */
+const notOpen = (m: MenuItem) => editing.value === 'new' || m.id !== editing.value?.id
+const prepChoices = computed(() => kitchen.preps.filter(notOpen))
+const dishChoices = computed(() => kitchen.dishes.filter(notOpen))
+
+/** The item a sub-recipe line points at. */
+const subOf = (line: RecipeLine): MenuItem | undefined =>
+  line.subItemId ? menuMap.value.get(line.subItemId) : undefined
 
 /** Encode a line's component for the single select. */
 function lineValue(line: RecipeLine): string {
@@ -130,7 +157,9 @@ function onPick(line: RecipeLine, index: number, event: Event): void {
   if (value.startsWith('sub:')) {
     line.subItemId = value.slice(4)
     line.ingredientId = undefined
-    line.unit = undefined // sub-recipe qty is portions
+    // A prep is used by an amount of its yield (ml of a stock); anything
+    // without a yield by portions.
+    line.unit = subOf(line)?.yield?.unit
     return
   }
   if (value.startsWith('ing:')) {
@@ -178,12 +207,18 @@ async function confirmCreateIngredient(): Promise<void> {
 function openEditor(item: MenuItem | 'new'): void {
   editing.value = item
   if (item === 'new') {
+    kind.value = tab.value === 'preps' ? 'prep' : 'dish'
+    yieldQty.value = ''
+    yieldUnit.value = 'L'
     name.value = ''
     price.value = ''
     target.value = '70'
     prepMin.value = ''
     recipe.value = []
   } else {
+    kind.value = item.kind ?? 'dish'
+    yieldQty.value = item.yield ? String(item.yield.qty) : ''
+    yieldUnit.value = item.yield?.unit ?? 'L'
     name.value = item.name
     price.value = String(item.price)
     target.value = String(item.targetMarginPct)
@@ -197,13 +232,20 @@ function openEditor(item: MenuItem | 'new'): void {
   }
 }
 
+const isPrep = computed(() => kind.value === 'prep')
+const canSave = computed(() => !!name.value.trim() && (!isPrep.value || Number(yieldQty.value) > 0))
+
 async function save(): Promise<void> {
   busy.value = true
   const ok = await kitchen.saveMenuItem(
     {
       name: name.value.trim(),
-      price: Number(price.value) || 0,
-      targetMarginPct: Number(target.value) || 0,
+      kind: kind.value,
+      // The API stores a prep's price and target as 0 and a dish's yield
+      // as nothing; send the shape the server keeps.
+      yield: isPrep.value ? { qty: Number(yieldQty.value), unit: yieldUnit.value } : undefined,
+      price: isPrep.value ? 0 : Number(price.value) || 0,
+      targetMarginPct: isPrep.value ? 0 : Number(target.value) || 0,
       // Omitted when blank/0 — PUT replaces the doc, so the field clears.
       ...(Number(prepMin.value) > 0 ? { prepMinutes: Number(prepMin.value) } : {}),
       recipe: recipe.value
@@ -212,15 +254,18 @@ async function save(): Promise<void> {
           ...(r.ingredientId ? { ingredientId: r.ingredientId } : {}),
           ...(r.subItemId ? { subItemId: r.subItemId } : {}),
           qty: r.qty,
-          ...(r.unit && r.ingredientId ? { unit: r.unit } : {}),
+          // A sub line keeps its unit only when the sub has a yield to measure.
+          ...(r.unit && (r.ingredientId || subOf(r)?.yield) ? { unit: r.unit } : {}),
         })),
       active: true,
     },
     editing.value === 'new' ? undefined : editing.value?.id,
   )
   busy.value = false
-  if (ok) closeEditor()
-  else alert(t('menu.editor.saveFailed'))
+  if (ok) {
+    tab.value = isPrep.value ? 'preps' : 'dishes' // land where the item now lives
+    closeEditor()
+  } else alert(t('menu.editor.saveFailed'))
 }
 </script>
 
@@ -238,14 +283,32 @@ async function save(): Promise<void> {
             {{ t('menu.scan.cta') }}
           </span>
         </BaseButton>
-        <BaseButton variant="ghost" @click="openEditor('new')">+ {{ t('menu.addDish') }}</BaseButton>
+        <BaseButton variant="ghost" @click="openEditor('new')">
+          + {{ tab === 'preps' ? t('menu.addPrep') : t('menu.addDish') }}
+        </BaseButton>
       </div>
+    </div>
+
+    <!-- Dishes / preps -->
+    <div class="flex gap-1 rounded-xl bg-gray-100 p-1" role="tablist" :aria-label="t('menu.title')">
+      <button
+        v-for="tb in (['dishes', 'preps'] as const)"
+        :key="tb"
+        role="tab"
+        :aria-selected="tab === tb"
+        class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium sm:flex-none"
+        :class="tab === tb ? 'bg-white text-ink shadow-sm' : 'text-smoke hover:text-ink'"
+        @click="tab = tb"
+      >
+        {{ t('menu.tabs.' + tb) }}
+        <span v-if="tb === 'preps' && kitchen.preps.length" class="text-xs text-smoke">· {{ kitchen.preps.length }}</span>
+      </button>
     </div>
 
     <!-- Imported dishes still without a recipe → draft them. Kept OUT of
          the loader/toolbar v-if chain below so search and sort stay. -->
     <div
-      v-if="needRecipes.length && auth.can('menu', 'edit')"
+      v-if="tab === 'dishes' && needRecipes.length && auth.can('menu', 'edit')"
       class="card flex flex-wrap items-center justify-between gap-3 !py-3"
     >
       <p class="text-sm">
@@ -257,16 +320,55 @@ async function save(): Promise<void> {
 
     <PageLoader v-if="kitchen.loading && !kitchen.menuItems.length" :cards="0" :lines="4" />
 
-    <div v-else-if="kitchen.activeMenuItems.length > 0" class="flex flex-wrap gap-2">
+    <div v-else-if="(tab === 'preps' ? kitchen.preps : kitchen.dishes).length > 0" class="flex flex-wrap gap-2">
       <input v-model="search" class="input min-w-40 flex-1" :placeholder="t('common.filter.search')" />
-      <select v-model="sortBy" class="input w-auto">
+      <select v-if="tab === 'dishes'" v-model="sortBy" class="input w-auto">
         <option value="margin">{{ t('common.filter.sortMargin') }}</option>
         <option value="name">{{ t('common.filter.sortName') }}</option>
         <option value="price">{{ t('common.filter.sortPrice') }}</option>
       </select>
     </div>
 
-    <div v-if="!kitchen.loading && kitchen.activeMenuItems.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
+    <template v-if="tab === 'preps'">
+      <p class="text-xs text-smoke">{{ t('menu.prep.intro') }}</p>
+      <div v-if="!kitchen.loading && kitchen.preps.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
+        <p>{{ t('menu.prep.empty') }}</p>
+        <BaseButton v-if="auth.can('menu', 'edit')" @click="openEditor('new')">+ {{ t('menu.addPrep') }}</BaseButton>
+      </div>
+      <div v-else-if="prepRows.length === 0" class="card py-8 text-center text-sm text-smoke">
+        {{ t('common.filter.noResults') }}
+      </div>
+      <div class="space-y-2">
+        <RouterLink
+          v-for="{ m, cost, missing, unitCost, usedIn } in prepRows"
+          :key="m.id"
+          :to="`/menu/${m.id}`"
+          class="card block w-full text-left hover:border-ember/40"
+          @click="armHero('dish', m.id)"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="font-semibold" :style="heroStyle('dish', m.id)">{{ m.name }}</div>
+              <div class="mt-0.5 text-xs text-smoke">
+                <template v-if="m.yield">{{ t('menu.prep.yields', { qty: n(m.yield.qty), unit: t('common.unit.' + m.yield.unit) }) }} · </template>
+                {{ t('menu.prep.batchCost', { cost: n(cost, 'currency') }) }}<template v-if="missing"> · {{ t('menu.unpriced') }}</template>
+              </div>
+            </div>
+            <div class="shrink-0 text-right">
+              <div v-if="unitCost != null && m.yield" class="font-bold">
+                {{ t('menu.prep.unitCost', { cost: n(unitCost, 'currency'), unit: t('common.unit.' + m.yield.unit) }) }}
+              </div>
+              <div class="text-[11px]" :class="usedIn ? 'text-smoke' : 'text-ember-700'">
+                {{ t('menu.prep.usedIn', { n: usedIn }, usedIn) }}
+              </div>
+            </div>
+          </div>
+        </RouterLink>
+      </div>
+    </template>
+
+    <template v-else>
+    <div v-if="!kitchen.loading && kitchen.dishes.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
       <p>{{ t('menu.empty') }}</p>
       <BaseButton v-if="auth.can('menu', 'edit')" @click="wizardOpen = true">
         <span class="inline-flex items-center gap-1.5">
@@ -334,6 +436,7 @@ async function save(): Promise<void> {
         </div>
       </RouterLink>
     </div>
+    </template>
 
     <MenuScanWizard v-model="wizardOpen" :seed="recipeSeed" :title="recipeSeed ? t('menu.listing.wizardTitle') : undefined" />
 
@@ -349,10 +452,38 @@ async function save(): Promise<void> {
           @click.stop
         >
           <h2 class="text-lg font-bold">
-            {{ editing === 'new' ? t('menu.editor.newTitle') : t('menu.editor.editTitle') }}
+            <template v-if="isPrep">{{ editing === 'new' ? t('menu.editor.newPrepTitle') : t('menu.editor.editPrepTitle') }}</template>
+            <template v-else>{{ editing === 'new' ? t('menu.editor.newTitle') : t('menu.editor.editTitle') }}</template>
           </h2>
-          <input v-model="name" class="input" :placeholder="t('menu.editor.dishName')" />
-          <div class="grid grid-cols-2 gap-3">
+          <!-- Dish or prep: also how an existing "dish" that is really a
+               stock or sauce becomes a prep (docs/prep-recipes.md § Migration) -->
+          <div class="inline-flex gap-1 rounded-full bg-gray-100 p-1 text-sm" role="radiogroup" :aria-label="t('menu.editor.kindLabel')">
+            <button
+              v-for="k in (['dish', 'prep'] as const)"
+              :key="k"
+              role="radio"
+              :aria-checked="kind === k"
+              class="rounded-full px-4 py-1.5 font-medium transition-colors"
+              :class="kind === k ? 'bg-white text-ink shadow-sm' : 'text-smoke'"
+              @click="kind = k"
+            >
+              {{ k === 'prep' ? t('menu.editor.kindPrep') : t('menu.editor.kindDish') }}
+            </button>
+          </div>
+          <input v-model="name" class="input" :placeholder="isPrep ? t('menu.editor.prepName') : t('menu.editor.dishName')" />
+          <div v-if="isPrep" class="grid grid-cols-2 gap-3">
+            <label class="space-y-1 text-sm">
+              <span class="text-xs text-smoke">{{ t('menu.editor.yieldQty') }}</span>
+              <input v-model="yieldQty" type="number" inputmode="decimal" min="0" class="input" />
+            </label>
+            <label class="space-y-1 text-sm">
+              <span class="text-xs text-smoke">{{ t('common.label.unit') }}</span>
+              <select v-model="yieldUnit" class="input" :aria-label="t('common.label.unit')">
+                <option v-for="u in settings.unitChoices" :key="u" :value="u">{{ t('common.unit.' + u) }}</option>
+              </select>
+            </label>
+          </div>
+          <div v-else class="grid grid-cols-2 gap-3">
             <label class="space-y-1 text-sm">
               <span class="text-xs text-smoke">{{ t('menu.editor.menuPrice', { symbol: currencySymbol }) }}</span>
               <input v-model="price" type="number" inputmode="decimal" class="input" />
@@ -363,7 +494,7 @@ async function save(): Promise<void> {
             </label>
           </div>
           <label class="block space-y-1 text-sm">
-            <span class="text-xs text-smoke">{{ t('menu.editor.prepMinutes') }}</span>
+            <span class="text-xs text-smoke">{{ isPrep ? t('menu.editor.prepMinutesBatch') : t('menu.editor.prepMinutes') }}</span>
             <input v-model="prepMin" type="number" inputmode="numeric" min="0" class="input" />
             <span v-if="!laborRate" class="block text-[11px] text-smoke">
               {{ t('menu.editor.prepMinutesHint') }}
@@ -371,14 +502,21 @@ async function save(): Promise<void> {
           </label>
 
           <div class="space-y-2">
-            <div class="text-xs text-smoke">{{ t('menu.editor.ingredientsPerPlate') }}</div>
+            <div class="text-xs text-smoke">
+              {{ isPrep ? t('menu.editor.ingredientsPerBatch') : t('menu.editor.ingredientsPerPlate') }}
+            </div>
             <div v-for="(line, i) in recipe" :key="i" class="space-y-2">
               <div class="flex items-center gap-2">
               <select :value="lineValue(line)" class="input flex-1" @change="onPick(line, i, $event)">
                 <option value="">{{ t('menu.editor.selectIngredient') }}</option>
                 <option value="__create__">{{ t('menu.editor.createNew') }}</option>
-                <optgroup v-if="subChoices.length" :label="t('menu.editor.groupSubs')">
-                  <option v-for="sub in subChoices" :key="sub.id" :value="'sub:' + sub.id">
+                <optgroup v-if="prepChoices.length" :label="t('menu.editor.groupPreps')">
+                  <option v-for="sub in prepChoices" :key="sub.id" :value="'sub:' + sub.id">
+                    {{ sub.name }}
+                  </option>
+                </optgroup>
+                <optgroup v-if="dishChoices.length" :label="t('menu.editor.groupSubs')">
+                  <option v-for="sub in dishChoices" :key="sub.id" :value="'sub:' + sub.id">
                     {{ sub.name }}
                   </option>
                 </optgroup>
@@ -409,6 +547,17 @@ async function save(): Promise<void> {
                   :key="u"
                   :value="u"
                 >
+                  {{ t('common.unit.' + u) }}
+                </option>
+              </select>
+              <!-- A prep is measured in its yield's dimension (ml of a stock in L) -->
+              <select
+                v-else-if="subOf(line)?.yield && line.unit"
+                v-model="line.unit"
+                class="input w-24"
+                :aria-label="t('common.label.unit')"
+              >
+                <option v-for="u in compatibleUnits(subOf(line)!.yield!.unit)" :key="u" :value="u">
                   {{ t('common.unit.' + u) }}
                 </option>
               </select>
@@ -453,7 +602,7 @@ async function save(): Promise<void> {
             </div>
           </div>
 
-          <BaseButton variant="herb" class="w-full py-3" :disabled="busy || !name.trim()" @click="save">
+          <BaseButton variant="herb" class="w-full py-3" :disabled="busy || !canSave" @click="save">
             {{ busy ? t('common.action.saving') : t('common.action.save') }}
           </BaseButton>
         </div>

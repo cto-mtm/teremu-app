@@ -2,6 +2,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { extractInvoice, type OcrResult } from "./ocr.js";
+import { expandUsage } from "@teremu/shared";
 import { convertQty } from "./units.js";
 import { convertInvoice, hasPricedLines } from "./fx/convert.js";
 import { packFor } from "./countries/index.js";
@@ -16,6 +17,7 @@ import {
   type FxDecision,
   type IngredientDoc,
   type InvoiceDoc,
+  type MenuItemDoc,
   type LineItem,
 } from "./models.js";
 
@@ -375,10 +377,10 @@ export async function usageFor(
     restCol(rid, "menuItems").limit(300).get(),
     restCol(rid, "ingredients").limit(300).get(),
   ]);
-  const menuMap = new Map<string, { recipe: { ingredientId?: string; subItemId?: string; qty: number; unit?: string }[] }>();
+  const menuMap = new Map<string, MenuItemDoc & { id: string }>();
   for (const doc of menuSnap.docs) {
     const parsed = menuItemDocSchema.safeParse(doc.data());
-    if (parsed.success) menuMap.set(doc.id, parsed.data);
+    if (parsed.success) menuMap.set(doc.id, { id: doc.id, ...parsed.data });
   }
   const ingredientMap = new Map<string, { unit: IngredientDoc["unit"] }>();
   for (const doc of ingredientsSnap.docs) {
@@ -386,35 +388,8 @@ export async function usageFor(
     if (parsed.success) ingredientMap.set(doc.id, parsed.data);
   }
 
-  // Walk recipes in-memory (same algorithm as domain.ts expandUsage).
-  const raw = new Map<string, { qty: number; unit: string | undefined }[]>();
-  const walk = (
-    menuItemId: string,
-    multiplier: number,
-    path: Set<string>,
-    depth: number,
-  ): void => {
-    if (depth > 4) return;
-    const item = menuMap.get(menuItemId);
-    if (!item) return;
-    for (const line of item.recipe) {
-      if (line.subItemId) {
-        if (!path.has(line.subItemId)) {
-          walk(line.subItemId, multiplier * line.qty, new Set([...path, line.subItemId]), depth + 1);
-        }
-        continue;
-      }
-      if (!line.ingredientId) continue;
-      raw.set(line.ingredientId, [
-        ...(raw.get(line.ingredientId) ?? []),
-        { qty: line.qty * multiplier, unit: line.unit },
-      ]);
-    }
-  };
-
-  for (const sold of itemsSold) {
-    walk(sold.menuItemId, sold.qty, new Set([sold.menuItemId]), 0);
-  }
+  // The one recipe walk (@teremu/shared), preps and their yields included.
+  const raw = expandUsage(itemsSold, menuMap);
 
   const usage = new Map<string, number>();
   for (const [ingredientId, entries] of raw) {
@@ -423,7 +398,7 @@ export async function usageFor(
     let used = 0;
     for (const e of entries) {
       used += e.unit
-        ? (convertQty(e.qty, e.unit as IngredientDoc["unit"], ing.unit) ?? e.qty)
+        ? (convertQty(e.qty, e.unit, ing.unit) ?? e.qty)
         : e.qty;
     }
     usage.set(ingredientId, used);

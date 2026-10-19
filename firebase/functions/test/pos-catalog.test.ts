@@ -124,10 +124,15 @@ describe("POS catalog sync", () => {
 
   it("returns the active dishes alongside the links, for the picker", async () => {
     const { owner, dishes } = await connectedWithMenu();
+    // A prep is never sold, so a POS item can't sell as one.
+    const prep = await seedMenuItem(owner.rid, { name: "Agua mineral", kind: "prep", price: 0, yield: { qty: 1, unit: "L" } });
     const { body } = await get("/integrations/square/links", owner.token);
     const ids = body.dishes.map((d: { id: string }) => d.id);
     expect(ids).toContain(dishes.burger.id);
     expect(ids).not.toContain(dishes.tortillaOld.id);
+    expect(ids).not.toContain(prep.id);
+    const l = await links(owner);
+    expect((await decide(owner, l.get("mock-var-agua")!, { action: "confirm", menuItemId: prep.id })).status).toBe(404);
   });
 
   it("follows the POS: renames keep the link, removals are flagged (kept), new items queue", async () => {
