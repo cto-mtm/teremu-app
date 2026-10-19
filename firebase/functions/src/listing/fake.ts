@@ -3,8 +3,8 @@ import type { Cuisine } from "../models.js";
 import type { ListingBackend, ListingProvider, PlaceDetails, PlaceMedia, PlaceReview } from "./types.js";
 
 /**
- * Offline listing backend — the emulator without GOOGLE_PLACES_API_KEY and
- * every test (TEREMU_TEST_MOCKS). Same contract as google.ts + safeFetch,
+ * Offline listing backend — the emulator unless live Google is opted into
+ * (listing/index.ts), and every test (TEREMU_TEST_MOCKS). Same contract as google.ts + safeFetch,
  * so search → import → review → commit runs end to end with no network.
  *
  * Each fixture restaurant exercises one real-world path:

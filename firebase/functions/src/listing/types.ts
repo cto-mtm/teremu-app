@@ -40,7 +40,7 @@ export interface Attribution {
 }
 
 export interface PlacePhoto {
-  /** Short-lived image URL — never carries our API key. */
+  /** Short-lived image URL — never carries our credentials. */
   url: string;
   attributions: Attribution[];
 }
