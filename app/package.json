@@ -9,6 +9,8 @@
     "typecheck": "vue-tsc -b",
     "preview": "vite preview",
     "lint": "eslint .",
+    "test": "npm run typecheck && vitest run",
+    "test:watch": "vitest",
     "cap:sync": "npm run build && cap sync",
     "cap:ios": "npm run build && cap sync ios && cap open ios",
     "cap:android": "npm run build && cap sync android && cap open android",
@@ -43,6 +45,7 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.3",
     "vite": "^7.1.0",
+    "vitest": "^4.1.12",
     "vue-tsc": "^3.0.0"
   }
 }

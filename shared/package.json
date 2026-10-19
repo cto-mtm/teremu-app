@@ -13,13 +13,16 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "peerDependencies": {
     "zod": "^4"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
+    "vitest": "^4.1.12",
     "zod": "^4.6.7"
   }
 }

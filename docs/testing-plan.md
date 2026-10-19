@@ -1,5 +1,10 @@
 # Integration testing plan
 
+> **Day-to-day runbook: [`docs/testing.md`](testing.md)** (commands, conventions, limits). This file is the
+> original design record for the integration tier. Since it was written, a unit tier (`shared/` + `app/src/lib/`)
+> and a security-rules lock-test were added, and `npm test` now runs the unit tier. The integration one-shot is
+> `npm run test:integration:exec`.
+
 > **Superseded in part (2026-09-23): the E2E tier now exists.** Everything below about
 > the *integration* tier still stands. What no longer does is the "no Playwright / no
 > E2E tier" call in **Settled decisions** and the deferral in **Out of scope** / **Future

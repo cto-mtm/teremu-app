@@ -1165,6 +1165,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
 export const api = onRequest(
   {
     region: REGION,
+    // CORS is handleCors()'s job (helpers/cors.ts allow-list). Production adds
+    // no CORS layer, but the functions EMULATOR turns on firebase-functions'
+    // `enableCors` debug feature (allow-ANY-origin) and masks the allow-list
+    // locally; `cors: false` is the opt-out (test/cors.test.ts guards it).
+    cors: false,
     maxInstances: 10,
     secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY, ...POS_SECRETS],
     memory: "512MiB",

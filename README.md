@@ -70,16 +70,16 @@ Testable immediately against the emulator — no deploy needed.
 
 ## Tests
 
-Two emulator-backed tiers, both local (no GitHub CI) and both in the pre-deploy gate:
+Three tiers, all local (no GitHub CI) and all in the pre-deploy gate:
 
 ```bash
-npm run test        # integration — the api function over HTTP (vitest)
-npm run test:e2e    # end-to-end — the real UI in a browser (Playwright)
+npm run test:unit              # unit — shared + app pure logic, no emulator (= npm test)
+npm run test:integration:exec  # integration — the api function over HTTP (vitest, one-shot emulators)
+npm run test:e2e               # end-to-end — the real UI in a browser (Playwright)
 ```
 
-Either command boots the emulators it needs if they aren't already running, and reuses
-them if they are. `npm run deploy` runs both before it builds anything (`--skip-tests`
-bypasses the gate for an emergency redeploy).
+`npm run deploy` runs all three before it builds anything (`--skip-tests` bypasses the
+gate for an emergency redeploy). Runbook, conventions and limits: [`docs/testing.md`](docs/testing.md).
 
 The e2e suite drives Chromium and a Pixel 7 viewport through sign-in, scan → triage →
 approve, the pantry, dish margins and revenue. First run needs `npx playwright install

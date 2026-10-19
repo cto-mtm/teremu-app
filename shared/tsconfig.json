@@ -12,5 +12,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Unit tests (src/**/*.test.ts) run under vitest and must never ship in dist/.
+  "exclude": ["src/**/*.test.ts"]
 }

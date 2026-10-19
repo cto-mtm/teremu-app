@@ -29,7 +29,7 @@ npm **workspaces** monorepo (root `package.json` → `["shared", "app", "firebas
 - `npm run seed` seeds the small dev dataset; `npm run seed -- --profile <name>` / `--all` seed the deterministic demo profiles (read `docs/demo-profiles.md` before touching `firebase/functions/src/demo/` or a receipt photo under `docs/samples/dummy/` — the Harbor Bistro numbers are pinned by a test because published videos depend on them).
 - Local dev never needs a real Firebase project — the emulators run offline under the `demo-app` project id. Without an `NVIDIA_API_KEY`, receipt OCR falls back to a randomized offline mock so the whole flow works offline (exact assertions on real OCR go through record/replay — `docs/real-samples.md`).
 - Use `npm` as the package manager (not yarn or pnpm).
-- Two test tiers, both emulator-backed and both in the pre-deploy gate: `npm run test` (integration, `firebase/functions/test/`) and `npm run test:e2e` (Playwright, `e2e/` — read `e2e/README.md` before adding or fixing a spec). Both boot what they need; **don't** run them unless asked, and never as a substitute for a build.
+- Three test tiers, all in the pre-deploy gate (read `docs/testing.md` before adding tests): `npm run test:unit` (= `npm test`; `shared/src` + `app/src/lib`, no emulator), `npm run test:integration:exec` (`firebase/functions/test/`, boots its own emulators — and stops running ones) and `npm run test:e2e` (Playwright, `e2e/` — read `e2e/README.md` before adding or fixing a spec). **Don't** run them unless asked, and never as a substitute for a build.
 
 ## i18n rules (non-negotiable)
 

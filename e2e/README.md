@@ -129,8 +129,8 @@ never attach them anywhere. See `docs/real-samples.md`.
 ## Deploy gate (instead of GitHub CI)
 
 E2E (and integration) tests deliberately don't run on GitHub Actions. They run
-locally as the pre-deploy gate: `npm run deploy` executes `npm run test` and
-`npm run test:e2e` before building or shipping anything (the `testGate` array in
+locally as the pre-deploy gate: `npm run deploy` executes `npm run test:unit`,
+`npm run test:integration:exec` and `npm run test:e2e` before building or shipping anything (the `testGate` array in
 `scripts/deploy.mjs`; `--skip-tests` bypasses it for an emergency redeploy).
 
 ## Debugging
