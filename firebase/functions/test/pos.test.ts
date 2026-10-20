@@ -121,11 +121,10 @@ describe("POS OAuth state", () => {
 });
 
 describe("POS gating", () => {
-  it("connecting is Pro+ (402 on free); reading stays open", async () => {
+  it("Free can connect too (capped, see pos-ingest)", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     const res = await api("/integrations/square/connect", { token: owner.token, method: "POST" });
-    expect(res.status).toBe(402);
-    expect(res.body.error).toBe("integrations_pro");
+    expect(res.status).toBe(200);
     expect((await get("/integrations", owner.token)).status).toBe(200);
   });
 

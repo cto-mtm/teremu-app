@@ -36,7 +36,7 @@ const busy = ref<string | null>(null)
 const message = ref<{ ok: boolean; text: string } | null>(null)
 
 const canEdit = computed(() => auth.can('integrations', 'edit'))
-const onPaidPlan = computed(() => auth.profile?.plan !== 'free')
+const onFreePlan = computed(() => auth.profile?.plan === 'free')
 
 const RESULTS = ['connected', 'denied', 'forbidden', 'upgrade', 'not_configured', 'invalid_state', 'failed'] as const
 const ERRORS = ['currency_mismatch', 'location_taken', 'pos_reauth'] as const
@@ -158,6 +158,10 @@ onMounted(async () => {
       <p v-if="!i.available" class="text-xs text-smoke">{{ t('integrations.unavailable') }}</p>
 
       <template v-else>
+        <p v-if="onFreePlan" class="text-xs text-smoke">
+          {{ t('integrations.freeCap') }}
+          <RouterLink to="/pricing" class="font-medium text-ember-700 hover:underline">{{ t('pricing.seePlans') }}</RouterLink>
+        </p>
         <p v-if="i.status === 'needs_reauth'" class="text-xs text-coral-600">{{ t('integrations.reauthHint') }}</p>
         <p v-if="i.status === 'active' && i.locationName" class="text-xs">
           {{ t('integrations.connectedTo', { name: i.locationName }) }}
@@ -191,7 +195,7 @@ onMounted(async () => {
 
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
           <template v-if="i.status === 'not_connected' || i.status === 'disconnected' || i.status === 'needs_reauth'">
-            <BaseButton v-if="onPaidPlan" :disabled="busy === i.provider" @click="connect(i.provider)">
+            <BaseButton :disabled="busy === i.provider" @click="connect(i.provider)">
               {{
                 busy === i.provider
                   ? t('integrations.connecting')
@@ -200,12 +204,6 @@ onMounted(async () => {
                     : t('integrations.connect')
               }}
             </BaseButton>
-            <template v-else>
-              <span class="text-xs text-smoke">{{ t('integrations.proOnly') }}</span>
-              <RouterLink to="/pricing" class="text-xs font-medium text-ember-700 hover:underline">
-                {{ t('pricing.seePlans') }}
-              </RouterLink>
-            </template>
           </template>
           <BaseButton
             v-if="i.status === 'active' && !picking[i.provider]"

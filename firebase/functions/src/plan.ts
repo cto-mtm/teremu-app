@@ -33,12 +33,20 @@ export interface PlanLimits {
   assistantTurns: number;
   mailsPerDay: number; // invites + supplier orders per UTC day (abuse cap, see mail.ts)
   integrations: boolean; // POS connections (docs/pos.md) — per location, like billing
+  /** POS sales poll floor in minutes (docs/pos.md §Plan gating): once a
+   * pass is complete the scheduler waits at least this long, and "sync
+   * now" is throttled to it (`syncNowRetryAt`). A pass still in flight —
+   * the initial import — resumes every tick on every plan. */
+  posPollMinutes: number;
+  /** LLM tier of the POS matcher (bind + "buscar coincidencias"); without
+   * it only the deterministic tiers run. */
+  posAiMatching: boolean;
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, integrations: false },
-  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, integrations: true },
-  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, integrations: true },
+  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, integrations: true, posPollMinutes: 60, posAiMatching: false },
+  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, integrations: true, posPollMinutes: 5, posAiMatching: true },
+  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, integrations: true, posPollMinutes: 5, posAiMatching: true },
 };
 
 /** Free locations one person may own. Creating a location costs nothing,
@@ -72,6 +80,9 @@ export interface PlanInfo {
   name: string;
   cuisines: string[];
   priceLevel: number | null;
+  website: string | null;
+  /** A Google place is linked (`listing.placeId`); its content is never stored. */
+  placeLinked: boolean;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
@@ -94,6 +105,8 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     name: (snap.get("name") as string | undefined) ?? "",
     cuisines: (snap.get("listing.cuisines") as string[] | undefined) ?? [],
     priceLevel: (snap.get("listing.priceLevel") as number | null | undefined) ?? null,
+    website: (snap.get("listing.website") as string | null | undefined) ?? null,
+    placeLinked: Boolean(snap.get("listing.placeId")),
   };
 }
 

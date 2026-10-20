@@ -284,7 +284,7 @@ watch(
           <rect x="14" y="14" width="7" height="7" rx="1.5" />
         </svg>
       </button>
-      <MobileLauncher v-model="launcherOpen" />
+      <MobileLauncher v-model="launcherOpen" @assistant="assistant.open()" />
     </template>
 
     <OnboardingWizard v-if="authStore.user" v-model="onboardingOpen" />

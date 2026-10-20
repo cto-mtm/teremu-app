@@ -21,6 +21,8 @@ import NavIcon from './NavIcon.vue'
  * the file input's accept list reflects that.
  */
 const model = defineModel<boolean>({ required: true })
+// The assistant tile asks AppShell to open it (AppShell owns the modal).
+const emit = defineEmits<{ assistant: [] }>()
 
 const { t } = useI18n()
 const router = useRouter()
@@ -44,6 +46,11 @@ const tiles = computed(() =>
 function go(to: string): void {
   model.value = false
   void router.push(to)
+}
+
+function openAssistant(): void {
+  model.value = false
+  emit('assistant')
 }
 
 // ── Scan / Upload actions ───────────────────────────────────────
@@ -135,6 +142,14 @@ async function onFile(e: Event): Promise<void> {
             </span>
             <NavIcon :name="tile.icon" class="h-8 w-8 text-ember-700" />
             <span class="text-xs font-semibold text-ink">{{ tile.label }}</span>
+          </button>
+          <button
+            class="relative flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gray-50 p-2 text-center transition-colors hover:bg-ember-50 active:bg-ember-50"
+            :aria-label="t('assistant.open')"
+            @click="openAssistant"
+          >
+            <NavIcon name="assistant" class="h-8 w-8 text-ember-700" />
+            <span class="text-xs font-semibold text-ink">{{ t('assistant.title') }}</span>
           </button>
         </div>
       </div>

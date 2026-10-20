@@ -173,18 +173,27 @@ describe("gating and catalog freshness", () => {
     expect(await entryOn(owner, date)).toBeDefined();
   });
 
-  it("a downgraded location is paused — and catches up when the plan returns", async () => {
+  it("Free is capped to the hourly floor — sync now is throttled until it's due", async () => {
     const { owner } = await setup();
     const date = isoDaysAgo(6);
     await setPlan(owner.rid, "free");
-    await setMockOrders([...fixture(), orderOn("mock-order-paused", date, { updatedAt: Date.now() })]);
+    await setMockOrders([...fixture(), orderOn("mock-order-capped", date, { updatedAt: Date.now() })]);
 
-    expect((await syncNow(owner)).status).not.toBe(200); // paywalled
+    const throttled = await syncNow(owner); // binding just polled
+    expect(throttled.status).toBe(429);
+    expect(throttled.body.error).toBe("pos_sync_throttled");
     expect(await entryOn(owner, date)).toBeUndefined();
-    expect(await entries(owner)).toHaveLength(3); // existing history is kept
 
-    await setPlan(owner.rid, "pro");
-    expect((await syncNow(owner)).status).toBe(200);
+    // A pass still in flight counts too: the scheduler is already on it.
+    const hourAgo = Date.now() - 61 * 60_000;
+    await integration(owner.rid).update({ lastSyncAt: hourAgo, "orderSync.cursor": "mid-pass", "orderSync.passStartedAt": Date.now() });
+    expect((await syncNow(owner)).status).toBe(429);
+
+    // An hour later it may sync, and the scheduler waits a full hour next.
+    await integration(owner.rid).update({ "orderSync.cursor": null, "orderSync.passStartedAt": hourAgo });
+    const run = await syncNow(owner);
+    expect(run.status).toBe(200);
+    expect(run.body.nextPollAt - Date.now()).toBeGreaterThan(55 * 60_000);
     expect(await entryOn(owner, date)).toBeDefined();
   });
 

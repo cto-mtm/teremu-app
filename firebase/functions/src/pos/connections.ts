@@ -3,7 +3,7 @@ import { logger } from "firebase-functions/v2";
 import { defaultAppOrigin, isAllowedOrigin } from "../helpers/cors.js";
 import { CURRENCIES, DEFAULT_CURRENCY, memberDocSchema, POS_PROVIDERS, type PosProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
-import { syncOrders } from "./orders.js";
+import { pollFloorMs, syncOrders } from "./orders.js";
 import { projectDirtyDays } from "./project.js";
 import { getPlanInfo } from "../plan.js";
 import { can } from "../tenancy.js";
@@ -379,15 +379,16 @@ export async function selectLocation(
   // First catalog pull right away, so the review queue is ready when the
   // owner gets there. Best effort — the binding stands either way, and
   // "sync now" / the daily job retry.
+  const { limits } = await getPlanInfo(rid);
   try {
-    await syncCatalog(rid, provider);
+    await syncCatalog(rid, provider, { llm: limits.posAiMatching });
   } catch (err) {
     logger.warn("POS catalog sync after location bind failed", { rid, provider, err });
   }
   // Then the first slice of sales history (the scheduler finishes the
   // rest, a few pages per tick). Same best-effort rule.
   try {
-    await syncOrders(rid, provider, { maxPages: 2 });
+    await syncOrders(rid, provider, { maxPages: 2, pollFloorMs: pollFloorMs(limits) });
     await projectDirtyDays(rid, provider, { limit: 30 });
   } catch (err) {
     logger.warn("POS order import after location bind failed", { rid, provider, err });

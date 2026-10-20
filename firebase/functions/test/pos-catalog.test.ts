@@ -229,7 +229,7 @@ describe("POS catalog gating", () => {
     await clearFirestore();
   });
 
-  it("read can list, only edit can decide; a downgraded plan pauses sync but keeps reads", async () => {
+  it("read can list, only edit can decide; Free still syncs the catalog", async () => {
     const { owner } = await connectedWithMenu();
     const uid = `m-${uniqueId()}`;
     const email = `${uid}@test.local`;
@@ -248,7 +248,7 @@ describe("POS catalog gating", () => {
     expect(denied.status).toBe(403);
 
     await setPlan(owner.rid, "free");
-    expect((await post("/integrations/square/catalog/sync", owner.token)).status).toBe(402);
+    expect((await post("/integrations/square/catalog/sync", owner.token)).status).toBe(200);
     expect((await get("/integrations/square/links", owner.token)).status).toBe(200);
   });
 });

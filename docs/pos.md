@@ -203,7 +203,12 @@ v1: margins use current rolling `lastUnitPrice` — the status quo, identical to
 
 ## Plan gating
 
-Integrations are a **Pro-and-up, per-location** feature (consistent with per-location billing). Enforced server-side at connect and at sync time: a downgraded location's sync **pauses** (data retained, banner shown) rather than deletes. Permission checks use the new `integrations` area on every route.
+Integrations are on **every plan, per location** (2026-10-20 — previously Pro+), with Free **capped** through `PLAN_LIMITS` in `plan.ts`:
+
+- `posPollMinutes` — the sales-poll floor: Free 60, Pro/Max 5. Once a pass is complete `nextPollDelay` never goes below it (a floor above `POLL_MAX` is flat), and `POST …/orders/sync` returns `429 pos_sync_throttled { retryAt }` while the latest pass — finished (`lastSyncAt`) or still in flight (`orderSync.passStartedAt`) — is younger than the floor (`syncNowRetryAt`; plans at the 5-min floor are never held). A pass still in flight resumes every tick on every plan: the initial 90-day import finishes in hours for Free too, so the cap is on freshness, not on seeing one's own history. A Pro→Free downgrade takes effect at the next completed pass (one last 5-min poll at most).
+- `posAiMatching` — the matcher's LLM tier on bind, "Sincronizar catálogo" and "Buscar coincidencias": Free runs only the deterministic tiers.
+
+Running cost per connected restaurant is cents a month (Firestore reads/writes); the cap exists for the serial `posSync` loop and unmetered LLM calls, not storage. `limits.integrations` (true on every plan) is kept as the pause lever: a plan without it paywalls connect/sync and pauses the scheduler (data retained). Permission checks use the `integrations` area on every route.
 
 ## Dev & testing
 
@@ -220,7 +225,7 @@ Where the code settled details the design left open (module map in §Provider ab
 **Phase 1 — Foundation**
 
 - **Adapter selection** mirrors `llm.ts`: `TEREMU_TEST_MOCKS` → mock; provider credentials configured (`PosProviderModule.configured()`; Square: `SQUARE_APP_SECRET` — the production app id `sq0idp--72l5BFDOKatnObhy_fj0w` is the code default, `SQUARE_APP_ID` overrides it, and the host follows the id unless `SQUARE_ENV` says otherwise) → that provider; emulator without them → mock (in the emulator a `.secret.local` secret alone is not enough — live Square locally also needs an explicit `SQUARE_APP_ID`); deployed without them → `501 pos_not_configured`.
-- **Routes** (all take `:provider`): `GET /integrations` (read), `GET …/locations` (read), `POST …/connect` → `{ url }` (edit, Pro+), `POST /integrations/oauth { state, code }` (the starter only), `PUT /integrations/:provider { locationExternalId }` (edit, Pro+), `DELETE /integrations/:provider` (edit, any plan — a downgraded location can still let go).
+- **Routes** (all take `:provider`): `GET /integrations` (read), `GET …/locations` (read), `POST …/connect` → `{ url }` (edit, `limits.integrations`), `POST /integrations/oauth { state, code }` (the starter only), `PUT /integrations/:provider { locationExternalId }` (edit, `limits.integrations`), `DELETE /integrations/:provider` (edit, any plan — a downgraded location can still let go).
 - **OAuth round trip**: provider → `posOauthCallback` → `/settings?pos=complete&state&code` → the Settings card POSTs `/integrations/oauth` as the signed-in user → `{ result: connected|forbidden|upgrade|not_configured|invalid_state|failed, rid }`; `?pos=denied|invalid_state|failed` when the callback itself can't continue. Completion re-checks the starter's `integrations:edit` and the plan. Return origin: `APP_URL`, else the web origin that started the flow; native shells get the web app. If the flow was started on another of the user's locations, the app switches to it.
 - **Location binding**: `posConnections/{id}.locations` maps `locationExternalId → rid`, so one POS location never feeds two restaurants (`409 location_taken`). Binding adopts the location's currency as base if the restaurant never set one and has approved nothing, and fills an unset timezone.
 - **`needs_reauth` lives on the connection only**; the per-restaurant view derives it, so one reconnect heals every restaurant on that merchant.
@@ -234,7 +239,7 @@ Where the code settled details the design left open (module map in §Provider ab
 - **Sync** (`catalog.ts` `syncCatalog`): runs right after a location is bound, on "Sincronizar catálogo", and daily (`posDaily`, after credential upkeep, skipping locations whose plan lost POS). Reconciles the link table as in §Link lifecycle, then runs the matcher; LLM tier only on bind and manual runs, never daily.
 - **Re-match** (`rematch`): "Buscar coincidencias" (all tiers, no POS call), and after every `POST`/`PUT /menu-items` (cheap tiers) — so a new dish picks up its POS item immediately and a deactivated dish releases its links.
 - **Matcher** (`matching.ts`, pure): token Dice + character-bigram Dice (0.6/0.4), suggestion floor 0.55, top 3; ties within 0.02 broken by price distance. Accents are folded before `normalizeName` (which would otherwise *drop* "ó" — "jamón" → "jamn").
-- **Routes**: `GET …/links` → `{ links, dishes }` (read — dishes ride along because an integrations-only member may not read `/menu-items`); `POST …/catalog/sync`, `POST …/links/match`, `PUT …/links/:linkId { action: confirm(menuItemId) | ignore | unlink }` (edit, Pro+). Prices on the wire are base-currency floats (`money.ts`).
+- **Routes**: `GET …/links` → `{ links, dishes }` (read — dishes ride along because an integrations-only member may not read `/menu-items`); `POST …/catalog/sync`, `POST …/links/match`, `PUT …/links/:linkId { action: confirm(menuItemId) | ignore | unlink }` (edit, `limits.integrations`; the LLM tier needs `posAiMatching`). Prices on the wire are base-currency floats (`money.ts`).
 - **Review page** `/integrations/:provider` (`PosLinksPage.vue`): tabs sin vincular / vinculados / ignorados / retirados, suggestion chips, any-dish picker, price-drift line, and **bulk "crear platos"** — which opens the existing `MenuScanWizard` seeded with the POS names + prices (no photo step, same AI recipe drafts), then confirms each link to the dish it created. The exact-name auto-link on dish create would catch it anyway; the explicit confirm marks it human-reviewed.
 - **Mock catalog**: a fixed EUR fixture per mock location; tests simulate POS edits by writing `posMockCatalog/{merchantId}`.
 
@@ -298,7 +303,7 @@ Known limits / Later: `usageFor` reads the whole catalog per rebuilt day (fine f
 | Forwarded consent link (consent phishing) | Callback never completes; the signed-in starter completes via `POST /integrations/oauth` (caller uid must equal state uid) |
 | Owner rejects an exact auto-link | `noAuto` on unlink: suggested forever, never re-auto-linked |
 | Offline dev / push vs pull | No webhooks: adaptive poll; the mock simulates orders, catalog edits and revocation |
-| Plan gating | Pro+ per location; downgrade pauses sync, keeps data |
+| Plan gating | Every plan, per location; Free capped (hourly poll floor, no LLM matching) — `limits.integrations` stays the pause lever (data kept) |
 | Disconnect semantics | Data retained, sync stops, token revoked on last reference; purge rides restaurant deletion |
 | Double counting vs manual | `source` field; projector owns only pos entries; manual form warns on covered dates |
 | Future POS providers | Registry typed against the vocab (compile error until registered); per-provider module owns its secrets; opaque credentials; `connect.kind` union for non-OAuth access; normalized events + adapter-defined order revision; provider-prefixed ids; engine and app provider-blind (§Adding a provider) |

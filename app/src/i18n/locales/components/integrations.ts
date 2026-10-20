@@ -57,7 +57,8 @@ const es = {
     importTitle: 'Crear platos desde el TPV',
   },
   unavailable: 'Esta integración no está configurada en este entorno.',
-  proOnly: 'Las integraciones con TPV están incluidas en Pro.',
+  proOnly: 'Las integraciones con TPV no están incluidas en tu plan.',
+  freeCap: 'Plan Free: las ventas se actualizan cada hora y los productos se emparejan sin IA. Pro: cada 5 minutos y con IA.',
   error: {
     currency_mismatch: 'Ese local vende en otra moneda distinta a la moneda base de este restaurante.',
     location_taken: 'Ese local del TPV ya está conectado a otro restaurante de Teremu.',
@@ -135,7 +136,8 @@ const en: typeof es = {
     importTitle: 'Create dishes from the POS',
   },
   unavailable: 'This integration is not configured in this environment.',
-  proOnly: 'POS integrations are included in Pro.',
+  proOnly: 'POS integrations are not included in your plan.',
+  freeCap: 'Free plan: sales update every hour and products are matched without AI. Pro: every 5 minutes, with AI.',
   error: {
     currency_mismatch: 'That location sells in a currency other than this restaurant’s base currency.',
     location_taken: 'That POS location is already connected to another Teremu restaurant.',

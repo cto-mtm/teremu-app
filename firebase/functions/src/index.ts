@@ -14,7 +14,7 @@ import {
 import { POS_SECRETS } from "./pos/index.js";
 import { oauthFailureUrl, oauthReturnUrl, refreshExpiringCredentials } from "./pos/connections.js";
 import { syncAllCatalogs } from "./pos/catalog.js";
-import { boundRestaurants, pollDue, syncOrders } from "./pos/orders.js";
+import { boundRestaurants, pollDue, pollFloorMs, syncOrders } from "./pos/orders.js";
 import { projectDirtyDays } from "./pos/project.js";
 import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { getPlanInfo } from "./plan.js";
@@ -134,10 +134,11 @@ export const posSync = onSchedule(
     let failed = 0;
     for (const { rid, provider } of await boundRestaurants()) {
       try {
-        if (!(await getPlanInfo(rid)).limits.integrations) continue; // paused, data kept
+        const { limits } = await getPlanInfo(rid);
+        if (!limits.integrations) continue; // paused, data kept
         const integ = (await integrationRef(rid, provider).get()).data() as IntegrationDoc | undefined;
         if (integ && pollDue(integ, now)) {
-          await syncOrders(rid, provider);
+          await syncOrders(rid, provider, { pollFloorMs: pollFloorMs(limits) });
           polled += 1;
         }
         await projectDirtyDays(rid, provider, { limit: 20 });

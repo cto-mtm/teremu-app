@@ -41,7 +41,7 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | Emails sent (invites + supplier orders) | 10/day | 50/day | 100/day | Per location; abuse cap, not a selling point |
 | Free locations per owner | 3 | — | — | Paid locations don't count |
 | Data export (CSV) | — | ✓ | ✓ | ✓ |
-| POS integration (Square — built, `docs/pos.md`) | — | ✓ | ✓ | ✓, per location |
+| POS integration (Square — built, `docs/pos.md`) | Hourly sales sync, no AI matching | ✓ (5-min sync, AI matching) | ✓ | ✓, per location |
 | "Find your restaurant" import (Google listing + website menu) | ✓ | ✓ | ✓ | ✓, per location |
 | Support | Community | Priority (48 h) | Priority (48 h) | Dedicated |
 

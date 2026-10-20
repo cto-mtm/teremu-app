@@ -36,6 +36,9 @@ export interface AssistantPrincipal {
   restaurantLabel: string;
   cuisineLabel: string;
   priceLabel: string;
+  websiteLabel: string;
+  countryLabel: string;
+  googleLabel: string;
 }
 
 export const manifest = {
@@ -56,6 +59,9 @@ export const manifest = {
     "Restaurant": "principal.restaurantLabel",
     "Cuisine": "principal.cuisineLabel",
     "Price range": "principal.priceLabel",
+    "Website": "principal.websiteLabel",
+    "Country": "principal.countryLabel",
+    "Google listing": "principal.googleLabel",
   },
   conversation: { path: "restaurants/{tenant}/assistantConversations", ttlDays: 7, window: 30 },
   // Monthly turn counter on the restaurant doc, next to plan/scanCount.

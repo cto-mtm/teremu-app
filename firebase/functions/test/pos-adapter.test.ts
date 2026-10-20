@@ -225,6 +225,10 @@ describe("smart poll cadence", () => {
     expect([0, 1, 2, 3, 4, 10].map((n) => nextPollDelay(n) / 60_000)).toEqual([5, 10, 20, 30, 30, 30]);
   });
 
+  it("a plan floor above the cap is flat (Free polls hourly)", () => {
+    expect([0, 1, 5].map((n) => nextPollDelay(n, 60 * 60_000) / 60_000)).toEqual([60, 60, 60]);
+  });
+
   it("is due when never scheduled, mid-pass (0), or past its time", () => {
     expect(pollDue({}, 1000)).toBe(true);
     expect(pollDue({ orderSync: null }, 1000)).toBe(true);

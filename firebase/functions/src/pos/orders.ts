@@ -1,6 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import type { PosProvider } from "../models.js";
 import { DEFAULT_CURRENCY } from "../models.js";
+import type { PlanLimits } from "../plan.js";
 import { linkIdFor, linksCol, syncCatalog } from "./catalog.js";
 import { businessDay, DAY_MS, DEFAULT_CUTOFF, markDayDirtyInTx } from "./days.js";
 import {
@@ -147,9 +148,24 @@ const DEEP_EVERY_MS = DAY_MS;
  * catalog, but no more often than this. */
 const CATALOG_REFRESH_MIN_MS = 60 * 60_000;
 
-/** Pure: the wait after `idleStreak` quiet passes in a row. */
-export const nextPollDelay = (idleStreak: number): number =>
-  Math.min(POLL_MAX_MS, POLL_MIN_MS * 2 ** Math.max(0, idleStreak));
+/** The plan's poll floor in ms (docs/pos.md §Plan gating): Free 60 min,
+ * Pro/Max 5. Callers already hold the plan, so it is passed in rather
+ * than re-read here. */
+export const pollFloorMs = (limits: Pick<PlanLimits, "posPollMinutes">): number => limits.posPollMinutes * 60_000;
+
+/** Pure: the wait after `idleStreak` quiet passes in a row. `minMs` is
+ * the plan's floor (Free polls hourly); a floor above POLL_MAX is flat. */
+export const nextPollDelay = (idleStreak: number, minMs = POLL_MIN_MS): number =>
+  Math.min(Math.max(POLL_MAX_MS, minMs), minMs * 2 ** Math.max(0, idleStreak));
+
+/** Pure: when "sync now" may run again under the plan's floor — the floor
+ * after the latest pass activity, whether that pass finished (`lastSyncAt`)
+ * or is still in flight (`orderSync.passStartedAt`; the scheduler is
+ * already working through it). Plans at the 5-min floor are never held. */
+export const syncNowRetryAt = (
+  integ: Pick<IntegrationDoc, "lastSyncAt" | "orderSync"> | undefined,
+  floorMs: number,
+): number => (floorMs > POLL_MIN_MS ? Math.max(integ?.lastSyncAt ?? 0, integ?.orderSync?.passStartedAt ?? 0) + floorMs : 0);
 
 /** Pure: whether the scheduler should poll this integration now. */
 export const pollDue = (integ: Pick<IntegrationDoc, "orderSync">, now: number): boolean =>
@@ -163,11 +179,16 @@ export const pollDue = (integ: Pick<IntegrationDoc, "orderSync">, now: number): 
  * backfill, the incremental poll and the late-order sweep in one.
  * Progress is checkpointed after every page; the revision guard makes
  * re-reading an order harmless.
+ *
+ * `pollFloorMs` is the plan's floor (`pollFloorMs(limits)`). It governs
+ * the wait once a pass is complete; a pass still in flight resumes on the
+ * next tick on every plan, so the initial import finishes in hours, not
+ * days, and the cap is on freshness rather than on seeing one's own data.
  */
 export async function syncOrders(
   rid: string,
   provider: PosProvider,
-  opts: { maxPages?: number } = {},
+  opts: { maxPages?: number; pollFloorMs: number },
 ): Promise<OrderSyncResult> {
   const maxPages = opts.maxPages ?? 5;
   const integ = await connectedIntegration(rid, provider);
@@ -209,7 +230,7 @@ export async function syncOrders(
     }
     // Pass complete: the next one starts just before this one began.
     const idleStreak = result.stored > 0 ? 0 : (state.idleStreak ?? 0) + 1;
-    result.nextPollAt = Date.now() + nextPollDelay(idleStreak);
+    result.nextPollAt = Date.now() + nextPollDelay(idleStreak, opts.pollFloorMs);
     state = {
       since: state.passStartedAt - OVERLAP_MS,
       cursor: null,

@@ -95,7 +95,8 @@ import {
   startConnect,
 } from "./pos/connections.js";
 import { listLinks, rematch, rematchAfterMenuChange, syncCatalog, updateLink } from "./pos/catalog.js";
-import { syncOrders } from "./pos/orders.js";
+import { POLL_MIN_MS, pollFloorMs, syncNowRetryAt, syncOrders } from "./pos/orders.js";
+import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { projectDirtyDays } from "./pos/project.js";
 import { posCoversDate } from "./pos/days.js";
 
@@ -1164,6 +1165,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
       restaurantLabel: (planInfo.name || "not set").slice(0, 80),
       cuisineLabel: (planInfo.cuisines.join(", ") || "not set").slice(0, 80),
       priceLabel: planInfo.priceLevel ? `${["budget", "moderate", "upscale", "premium"][planInfo.priceLevel - 1]} (${planInfo.priceLevel} of 4)` : "not set",
+      websiteLabel: (planInfo.website ?? "not set").slice(0, 80),
+      countryLabel: planInfo.country ?? "not set",
+      // Google content (address, hours, phone, rating) is never stored — prompt.md says so.
+      googleLabel: planInfo.placeLinked ? "linked (address, hours and reviews are not stored)" : "not linked",
     };
     await toNodeHandler(assistant.fetch, () => principal)(req, res);
     return;
@@ -1173,7 +1178,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
   // Provider-generic: every route takes :provider and the engine never
   // branches on it. Reading and disconnecting stay open on any plan — a
   // downgraded location must be able to see why sync paused and to let
-  // go. Everything that calls the provider or edits mappings is Pro+.
+  // go. Everything that calls the provider or edits mappings needs
+  // `limits.integrations` (every plan today; Free is capped — hourly sales
+  // poll, no LLM matching — see PLAN_LIMITS).
   if (head === "integrations") {
     if (m === "GET" && seg.length === 1) {
       if (!can(member, "integrations")) return forbidden(res);
@@ -1209,15 +1216,23 @@ async function route(req: Request, res: Response): Promise<unknown> {
     }
     // Pull the POS catalog now (also runs on bind and daily).
     if (m === "POST" && action === "catalog" && sub === "sync" && seg.length === 4) {
-      return json(res, 200, await syncCatalog(rid, p));
+      return json(res, 200, await syncCatalog(rid, p, { llm: planInfo.limits.posAiMatching }));
     }
-    // "Buscar coincidencias": re-run every tier, LLM included, without a POS call.
+    // "Buscar coincidencias": re-run every tier the plan includes (LLM on Pro+), without a POS call.
     if (m === "POST" && action === "links" && sub === "match" && seg.length === 4) {
-      return json(res, 200, await rematch(rid, p, { llm: true }));
+      return json(res, 200, await rematch(rid, p, { llm: planInfo.limits.posAiMatching }));
     }
     // Pull sales now (the scheduler also polls, adaptively — orders.ts) and rebuild the stale days.
+    // A plan with a slower poll floor (Free) can't "sync now" more often than it polls —
+    // counted from the latest pass, finished or still in flight (orders.ts `syncNowRetryAt`).
     if (m === "POST" && action === "orders" && sub === "sync" && seg.length === 4) {
-      const synced = await syncOrders(rid, p, { maxPages: 5 });
+      const floorMs = pollFloorMs(planInfo.limits);
+      if (floorMs > POLL_MIN_MS) {
+        const integ = (await integrationRef(rid, p).get()).data() as IntegrationDoc | undefined;
+        const retryAt = syncNowRetryAt(integ, floorMs);
+        if (retryAt > Date.now()) return json(res, 429, { error: "pos_sync_throttled", retryAt });
+      }
+      const synced = await syncOrders(rid, p, { maxPages: 5, pollFloorMs: floorMs });
       return json(res, 200, { ...synced, ...(await projectDirtyDays(rid, p, { limit: 30 })) });
     }
     if (m === "PUT" && action === "links" && sub && seg.length === 4) {
