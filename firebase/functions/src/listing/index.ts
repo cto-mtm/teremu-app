@@ -13,7 +13,6 @@ import type { ListingBackend } from "./types.js";
  *  - PLACES_AUTH=adc: Google, as the function's own service account (the
  *    production setup — no secret). Billed to PLACES_BILLING_PROJECT, else
  *    the function's project;
- *  - GOOGLE_PLACES_API_KEY set: Google with that key;
  *  - otherwise the emulator gets the fake, and a deployed function gets
  *    null — the routes answer 501 and /me says listingAvailable: false.
  *
@@ -37,8 +36,7 @@ function placesAuth(): PlacesAuth | null {
     if (adc?.project !== project) adc = { project, auth: adcAuth(project) };
     return adc.auth;
   }
-  const key = process.env.GOOGLE_PLACES_API_KEY;
-  return key ? { kind: "key", key } : null;
+  return null;
 }
 
 /** The project Places bills. The emulator's own id (demo-*) can't be. */

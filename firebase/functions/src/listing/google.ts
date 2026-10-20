@@ -16,25 +16,19 @@ import type { Attribution, ListingProvider, PlaceDetails, PlaceMedia, PlaceSugge
  * Credentials stay server-side: photo URLs come back from the media
  * endpoint with skipHttpRedirect, so the browser never sees them.
  *
- * Two ways to authenticate (listing/index.ts picks one):
- *  - "adc" (production default): an OAuth token for the function's own
- *    service account (Application Default Credentials, like the assistant's
- *    Vertex calls) — no secret to store or rotate. Billing goes to the
- *    project named in X-Goog-User-Project; the service account needs
- *    Service Usage Consumer on it.
- *  - "key": a Places API key, for when ADC isn't an option.
+ * Authentication (listing/index.ts): an OAuth token for the function's own
+ * service account (Application Default Credentials, like the assistant's
+ * Vertex calls) — no key or secret to store, rotate or leak. Billing goes
+ * to the project named in X-Goog-User-Project; the service account needs
+ * Service Usage Consumer on it. There is deliberately no API-key mode: a
+ * declared secret that is missing from Secret Manager fails the deploy.
  */
 
-// "key" mode reads GOOGLE_PLACES_API_KEY from the environment (listing/index.ts;
-// locally functions/.env.local). It is deliberately NOT a defineSecret: the
-// Firebase CLI registers every declared secret as a deploy param — bound or
-// not — and a deploy fails ("no value for the secret") when it is missing
-// from Secret Manager. If production ever switches from ADC to a key, add the
-// secret here AND bind it in api.ts, after creating it.
-
-export type PlacesAuth =
-  | { kind: "key"; key: string }
-  | { kind: "token"; token: () => Promise<string>; project: string };
+export interface PlacesAuth {
+  token: () => Promise<string>;
+  /** The project Places bills (X-Goog-User-Project). */
+  project: string;
+}
 
 const SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
@@ -42,7 +36,6 @@ const SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 export function adcAuth(project: string): PlacesAuth {
   const auth = new GoogleAuth({ scopes: [SCOPE] });
   return {
-    kind: "token",
     project,
     token: async () => {
       const t = await auth.getAccessToken();
@@ -53,9 +46,7 @@ export function adcAuth(project: string): PlacesAuth {
 }
 
 async function authHeaders(auth: PlacesAuth): Promise<Record<string, string>> {
-  return auth.kind === "key"
-    ? { "X-Goog-Api-Key": auth.key }
-    : { Authorization: `Bearer ${await auth.token()}`, "X-Goog-User-Project": auth.project };
+  return { Authorization: `Bearer ${await auth.token()}`, "X-Goog-User-Project": auth.project };
 }
 
 const BASE = () => process.env.PLACES_API_URL || "https://places.googleapis.com/v1";
@@ -166,7 +157,7 @@ async function call<T>(
   });
   // One line per Places request: a logs-based metric × the price list =
   // Places COGS, per SKU and per restaurant (like llm_usage for the LLM).
-  logger.info("places_usage", { sku, status: res.status, rid: ctx.rid ?? null, auth: auth.kind });
+  logger.info("places_usage", { sku, status: res.status, rid: ctx.rid ?? null });
   if (res.status === 404) throw new PlacesError(404, "place not found");
   if (!res.ok) throw new PlacesError(res.status, `places ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as T;

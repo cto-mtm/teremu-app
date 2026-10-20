@@ -6,8 +6,7 @@ import { listingBackend } from "../src/listing/index";
 
 /**
  * The Google Places (New) adapter against a stubbed fetch — in-process, no
- * network: how each auth mode authenticates (API key vs the function's own
- * service account), the field masks that set the bill, the mapping into our
+ * network: how it authenticates (the function's own service account), the field masks that set the bill, the mapping into our
  * shapes, and which backend runs when (never live Google by accident).
  */
 
@@ -42,8 +41,7 @@ function stubGoogle(routes: Record<string, unknown>, status = 200) {
   );
 }
 
-const KEY: PlacesAuth = { kind: "key", key: "test-key" };
-const SA: PlacesAuth = { kind: "token", token: async () => "sa-token", project: "teremu-app" };
+const SA: PlacesAuth = { token: async () => "sa-token", project: "teremu-app" };
 
 const PLACE = {
   id: "ChIJfaro",
@@ -70,14 +68,7 @@ afterEach(() => {
 });
 
 describe("google adapter: authentication", () => {
-  it("API key mode sends the key and no bearer token", async () => {
-    stubGoogle({ "/places/ChIJfaro": PLACE });
-    await googleProvider(KEY).details("ChIJfaro", { language: "es" });
-    expect(calls[0].headers["X-Goog-Api-Key"]).toBe("test-key");
-    expect(calls[0].headers.Authorization).toBeUndefined();
-  });
-
-  it("service-account mode sends a bearer token and the billing project, never a key", async () => {
+  it("sends a bearer token and the billing project, never a key", async () => {
     stubGoogle({ "/places/ChIJfaro": PLACE });
     await googleProvider(SA).details("ChIJfaro", { language: "es" });
     expect(calls[0].headers.Authorization).toBe("Bearer sa-token");
@@ -87,7 +78,7 @@ describe("google adapter: authentication", () => {
 
   it("a failed token fetch fails the call (no unauthenticated request goes out)", async () => {
     stubGoogle({ "/places/ChIJfaro": PLACE });
-    const broken: PlacesAuth = { kind: "token", project: "teremu-app", token: async () => Promise.reject(new Error("no ADC")) };
+    const broken: PlacesAuth = { project: "teremu-app", token: async () => Promise.reject(new Error("no ADC")) };
     await expect(googleProvider(broken).details("ChIJfaro", { language: "es" })).rejects.toThrow("no ADC");
     expect(calls).toHaveLength(0);
   });
@@ -96,7 +87,7 @@ describe("google adapter: authentication", () => {
 describe("google adapter: requests and mapping", () => {
   it("details: one field mask without reviews/photos media, mapped to our shape", async () => {
     stubGoogle({ "/places/ChIJfaro": PLACE });
-    const d = await googleProvider(KEY).details("ChIJfaro", { language: "es", session: "s1" });
+    const d = await googleProvider(SA).details("ChIJfaro", { language: "es", session: "s1" });
     const mask = calls[0].headers["X-Goog-FieldMask"];
     expect(mask).toContain("websiteUri");
     expect(mask).not.toContain("reviews"); // the Atmosphere SKU only when media is shown
@@ -123,7 +114,7 @@ describe("google adapter: requests and mapping", () => {
 
   it("details: an unknown place is null; any other error throws", async () => {
     stubGoogle({});
-    expect(await googleProvider(KEY).details("nope", { language: "es" })).toBeNull();
+    expect(await googleProvider(SA).details("nope", { language: "es" })).toBeNull();
     stubGoogle({ "/places/ChIJfaro": { error: { status: "PERMISSION_DENIED" } } }, 403);
     await expect(googleProvider(SA).details("ChIJfaro", { language: "es" })).rejects.toThrow(/places 403/);
   });
@@ -175,10 +166,10 @@ describe("places_usage telemetry", () => {
       await places.media("ChIJfaro", { language: "es" });
       const lines = info.mock.calls.filter((c) => c[0] === "places_usage").map((c) => c[1]);
       expect(lines).toEqual([
-        { sku: "autocomplete_request", status: 200, rid: "r1", auth: "token" },
-        { sku: "details_enterprise", status: 200, rid: "r1", auth: "token" },
-        { sku: "details_enterprise_atmosphere", status: 200, rid: "r1", auth: "token" },
-        { sku: "details_photos", status: 200, rid: "r1", auth: "token" },
+        { sku: "autocomplete_request", status: 200, rid: "r1" },
+        { sku: "details_enterprise", status: 200, rid: "r1" },
+        { sku: "details_enterprise_atmosphere", status: 200, rid: "r1" },
+        { sku: "details_photos", status: 200, rid: "r1" },
       ]);
     } finally {
       info.mockRestore();
@@ -187,7 +178,7 @@ describe("places_usage telemetry", () => {
 });
 
 describe("listingBackend selection", () => {
-  const KEYS = ["TEREMU_TEST_MOCKS", "PLACES_AUTH", "PLACES_BILLING_PROJECT", "GOOGLE_PLACES_API_KEY", "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT", "FUNCTIONS_EMULATOR"];
+  const KEYS = ["TEREMU_TEST_MOCKS", "PLACES_AUTH", "PLACES_BILLING_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT", "FUNCTIONS_EMULATOR"];
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -202,7 +193,7 @@ describe("listingBackend selection", () => {
   const isLive = (b: ReturnType<typeof listingBackend>) => b !== null && b !== fakeBackend;
 
   it("tests always get the fake, whatever credentials exist", () => {
-    Object.assign(process.env, { TEREMU_TEST_MOCKS: "1", PLACES_AUTH: "adc", GCLOUD_PROJECT: "teremu-app", GOOGLE_PLACES_API_KEY: "k" });
+    Object.assign(process.env, { TEREMU_TEST_MOCKS: "1", PLACES_AUTH: "adc", GCLOUD_PROJECT: "teremu-app" });
     expect(listingBackend()).toBe(fakeBackend);
   });
 
@@ -220,11 +211,6 @@ describe("listingBackend selection", () => {
     process.env.PLACES_AUTH = "adc";
     expect(listingBackend()).toBe(fakeBackend);
     process.env.PLACES_BILLING_PROJECT = "teremu-app";
-    expect(isLive(listingBackend())).toBe(true);
-  });
-
-  it("an API key alone also goes live", () => {
-    process.env.GOOGLE_PLACES_API_KEY = "k";
     expect(isLive(listingBackend())).toBe(true);
   });
 });
