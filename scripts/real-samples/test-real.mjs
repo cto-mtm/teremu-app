@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CORPUS_DIR, MANIFEST_PATH, REPO_ROOT, resolveCassetteDir } from "./corpus.mjs";
 import { emulators } from "../lib/ports.mjs";
+import { privateTmpEnv } from "../lib/private-tmp.mjs";
 
 if (!existsSync(MANIFEST_PATH)) {
   console.log("Real corpus not on this machine (or not prepared) — nothing to run. See docs/real-samples.md.");
@@ -78,6 +79,9 @@ const status = run(
       // Cold Windows starts blow the default 10s function discovery
       // (same fix as e2e/run.mjs) — value in seconds.
       FUNCTIONS_DISCOVERY_TIMEOUT: "60",
+      // Private temp dir: the Storage emulator's blobs dir is shared per
+      // machine, so another repo's emulator run would wipe it under us.
+      ...privateTmpEnv(),
     },
   },
 );

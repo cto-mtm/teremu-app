@@ -68,7 +68,7 @@ There is no GitHub CI (`.github/workflows/README.md`). `npm run deploy` runs the
 
 ## Running alongside another repo's emulators
 
-The one-shot runners (`test:integration:exec`, `test:e2e`) start the emulators with `TEMP`/`TMP` pointed at `<repo>/.tmp/emulators` (`scripts/lib/private-tmp.mjs`, gitignored). The Storage emulator keeps its blobs in `<os tmpdir>/firebase/storage/blobs` and wipes that directory on every boot, so two emulator runs on one machine share it even for different projects. Another repo's `emulators:exec` starting mid-run used to delete the blobs and crash this one's Storage emulator (`ENOENT … storage/blobs/…`, then every later test failing). Ports were never the problem: they come from each repo's own `ports.json`. A dev `npm run emulators` still uses the shared system temp dir.
+The one-shot runners (`test:integration:exec`, `test:e2e`, `test:real`) start the emulators with `TEMP`/`TMP` pointed at `<repo>/.tmp/emulators` (`scripts/lib/private-tmp.mjs`, gitignored). The Storage emulator keeps its blobs in `<os tmpdir>/firebase/storage/blobs` and wipes that directory on every boot, so two emulator runs on one machine share it even for different projects. Another repo's `emulators:exec` starting mid-run used to delete the blobs and crash this one's Storage emulator (`ENOENT … storage/blobs/…`, then every later test failing). Ports were never the problem: they come from each repo's own `ports.json`. A dev `npm run emulators` still uses the shared system temp dir.
 
 ## Known limits
 
