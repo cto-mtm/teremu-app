@@ -99,7 +99,7 @@ const vendors = computed(() => {
               {{ v.name }}
             </div>
             <div class="mt-0.5 text-xs text-smoke">
-              {{ t('vendors.receipts', { n: v.invoiceCount }) }}
+              {{ t('vendors.receipts', { n: v.invoiceCount }, v.invoiceCount) }}
               <template v-if="v.lastDate">
                 · {{ t('vendors.lastDelivery', { date: d(new Date(v.lastDate + 'T12:00:00'), 'short') }) }}
               </template>

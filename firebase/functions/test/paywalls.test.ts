@@ -18,24 +18,33 @@ beforeEach(async () => {
 });
 
 describe("freemium paywalls", () => {
-  it("caps free scans at 25/month â€” the 26th POST /invoices is 402 scan_limit", async () => {
+  it("caps free scans at 25/month — the 26th POST /invoices is 402 scan_limit", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     expect(PLAN_LIMITS.free.scans).toBe(25); // guard against the limit silently drifting
 
-    for (let i = 0; i < 25; i++) {
+    // Start at 20/25 used: the last 5 real uploads walk the counter to the
+    // cap. (25 real uploads cost ~20s on the emulator and queue 25 OCR
+    // triggers that keep it busy through the next tests.)
+    await getFirestore()
+      .collection("restaurants")
+      .doc(owner.rid)
+      .set({ scanPeriod: monthKey(), scanCount: 20 }, { merge: true });
+    for (let i = 0; i < 5; i++) {
       const { status } = await upload("/invoices", owner.token, uniqueJpeg());
       expect(status).toBe(201);
     }
     const { status, body } = await upload("/invoices", owner.token, uniqueJpeg());
     expect(status).toBe(402);
     expect(body.error).toBe("scan_limit");
+    const restDoc = await getFirestore().collection("restaurants").doc(owner.rid).get();
+    expect(restDoc.get("scanCount")).toBe(25);
   });
 
   // 60s + a small burst: the Firestore emulator serializes contending
   // transactions with lock waits and exponential backoff (production
-  // resolves the same contention in ms), and the previous test's 25
-  // queued OCR triggers are still draining while this one runs. Six
-  // contenders race exactly like ten â€” the property under test is "the
+  // resolves the same contention in ms), and the previous test's 5
+  // queued OCR triggers may still be draining while this one runs. Six
+  // contenders race exactly like ten — the property under test is "the
   // counter never overruns", not a load benchmark.
   it("never overruns the scan cap under concurrent uploads (transactional counter)", { timeout: 60_000 }, async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });

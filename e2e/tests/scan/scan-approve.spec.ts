@@ -44,7 +44,7 @@ test.describe('Scan → triage → approve', () => {
     await page.goto('/vendors')
     const vendorCard = page.locator('a[href^="/vendors/"]').filter({ hasText: vendor })
     await expect(vendorCard).toBeVisible()
-    await expect(vendorCard).toContainText('1 facturas')
+    await expect(vendorCard).toContainText(/1 factura(?!s)/)
 
     await vendorCard.click()
     await expect(page.getByRole('heading', { name: vendor, level: 1 })).toBeVisible()

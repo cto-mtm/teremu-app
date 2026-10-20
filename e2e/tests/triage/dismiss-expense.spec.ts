@@ -45,14 +45,20 @@ test.describe('Triage housekeeping', () => {
     await page.getByPlaceholder('Etiqueta del gasto').fill('Fotografía')
     await page.getByRole('button', { name: 'Confirmar gasto' }).click()
     await expect(page).toHaveURL(/\/triage$/)
-    await expect(scanCard(page, id)).toBeHidden()
+    // Out of the inbox, into "Aprobadas recientemente" (same link) — under
+    // the vendor the reviewer typed, not the OCR's guess.
+    await expect(page.getByText('Aprobadas recientemente')).toBeVisible()
+    await expect(scanCard(page, id)).not.toContainText('Revisar')
+    await expect(scanCard(page, id)).toContainText(vendor)
 
-    // The payee joins the vendor directory through its expense alone, and
+    // The payee joins the vendor directory through its expense alone (the
+    // card counts it as its one document, tagged with the expense), and
     // its page lists the expense — not a food invoice.
     await page.goto('/vendors')
     const card = page.locator('a[href^="/vendors/"]').filter({ hasText: vendor })
     await expect(card).toBeVisible()
-    await expect(card).toContainText('0 facturas')
+    await expect(card).toContainText(/1 factura(?!s)/)
+    await expect(card).toContainText('Fotografía')
     await card.click()
     await expect(page.getByRole('heading', { name: vendor, level: 1 })).toBeVisible()
     await expect(page.getByText('Gastos', { exact: true })).toBeVisible()

@@ -238,7 +238,7 @@ const suppliers = computed(() => {
         >
           <div class="text-sm font-medium">{{ s.name }}</div>
           <div class="text-xs text-smoke">
-            {{ t('vendors.receipts', { n: s.count }) }} ·
+            {{ t('vendors.receipts', { n: s.count }, s.count) }} ·
             {{ n(s.lastPrice, 'currency') }}/{{ t('common.unit.' + ingredient.unit) }}
           </div>
         </RouterLink>

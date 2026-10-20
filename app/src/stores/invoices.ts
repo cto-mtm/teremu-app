@@ -161,11 +161,17 @@ export const useInvoicesStore = defineStore('invoices', () => {
   }
 
   /** Divert a non-food bill into a tagged expense (archives the invoice).
-   * Same money rule as approve: a foreign bill needs its rate. */
-  async function approveAsExpense(id: string, tag: string, money: ApprovalMoney = {}): Promise<boolean> {
+   * Same money rule as approve: a foreign bill needs its rate. `header`
+   * carries the reviewer's vendor/date corrections. */
+  async function approveAsExpense(
+    id: string,
+    tag: string,
+    money: ApprovalMoney = {},
+    header: { vendorName?: string | null; invoiceDate?: string | null } = {},
+  ): Promise<boolean> {
     const res = await apiFetch<Invoice>(
       `/invoices/${id}/expense`,
-      { method: 'PUT', body: JSON.stringify({ tag, ...money }) },
+      { method: 'PUT', body: JSON.stringify({ tag, ...header, ...money }) },
       invoiceSchema,
     )
     if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)

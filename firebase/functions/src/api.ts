@@ -518,6 +518,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
         const inv = snap.data() as InvoiceDoc;
+        // The reviewer's header edits win over the OCR draft.
+        const vendorName = body.vendorName !== undefined ? body.vendorName?.trim() || null : inv.vendorName;
+        const invoiceDate = body.invoiceDate !== undefined ? body.invoiceDate : inv.invoiceDate;
         const printedTotal =
           inv.total ?? +inv.lineItems.reduce((s, l) => s + l.total, 0).toFixed(2);
         // A bill always carries money, so the priced-lines test is the
@@ -528,17 +531,19 @@ async function route(req: Request, res: Response): Promise<unknown> {
         );
         const amount = fx ? toBaseTotal(printedTotal, fx.rate) : printedTotal;
         const expense: ExpenseDoc = {
-          date: inv.invoiceDate ?? new Date().toISOString().slice(0, 10),
+          date: invoiceDate ?? new Date().toISOString().slice(0, 10),
           amount,
           tag: tag.trim(),
           tagKey: normalizeName(tag),
-          vendorName: inv.vendorName,
+          vendorName,
           note: null,
           createdAt: Date.now(),
         };
         await col("expenses").add(expense);
         await ref.update({
           status: "approved",
+          vendorName,
+          invoiceDate,
           expenseTag: tag.trim(),
           currency: body.currency ?? planInfo.currency,
           ...(fx ? { fx, baseTotal: amount } : { fx: FieldValue.delete(), baseTotal: FieldValue.delete() }),

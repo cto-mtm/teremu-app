@@ -97,6 +97,12 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
   };
 }
 
+/** Retries for the quota transaction. Every scan of a location contends
+ * on the same restaurant doc; the SDK's default 5 attempts can run out
+ * when several uploads land at once (the emulator's lock timeouts make
+ * that routine in tests), and a scan should never fail just for that. */
+const CONSUME_SCAN_ATTEMPTS = 12;
+
 /**
  * Atomically consume one scan from the monthly quota. Transactional so
  * two phones scanning simultaneously can't slip past the cap.
@@ -115,5 +121,5 @@ export async function consumeScan(
     if (count >= limit) return { ok: false, count, limit };
     tx.set(ref, { scanPeriod: period, scanCount: count + 1 }, { merge: true });
     return { ok: true, count: count + 1, limit };
-  });
+  }, { maxAttempts: CONSUME_SCAN_ATTEMPTS });
 }

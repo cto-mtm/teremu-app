@@ -21,7 +21,7 @@ test.describe('Vendors', () => {
     await search.fill(vendor)
     const card = page.locator('a[href^="/vendors/"]').filter({ hasText: vendor })
     await expect(card).toBeVisible()
-    await expect(card).toContainText('1 facturas')
+    await expect(card).toContainText(/1 factura(?!s)/)
     await search.fill('zzz no such vendor')
     await expect(page.getByText('Nada coincide con tu búsqueda.')).toBeVisible()
     await search.fill(vendor)

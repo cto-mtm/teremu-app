@@ -163,6 +163,24 @@ describe("invoice lifecycle", () => {
     expect(expensesSnap.docs[0].data().vendorName).toBe("Acme Hosting");
   });
 
+  it("approve-as-expense keeps the reviewer's vendor and date corrections", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const invoice = await seedInvoice(owner.rid, { total: 80, vendorName: "Bella Dairy", invoiceDate: "2026-07-01" });
+
+    const { status, body } = await put<{ id: string } & InvoiceDoc>(`/invoices/${invoice.id}/expense`, owner.token, {
+      tag: "Fotografía",
+      vendorName: "  Estudio Brillo ",
+      invoiceDate: "2026-07-03",
+    });
+    expect(status).toBe(200);
+    expect(body.vendorName).toBe("Estudio Brillo");
+    expect(body.invoiceDate).toBe("2026-07-03");
+
+    const expense = (await col(owner.rid, "expenses").where("tag", "==", "Fotografía").get()).docs[0].data();
+    expect(expense.vendorName).toBe("Estudio Brillo");
+    expect(expense.date).toBe("2026-07-03");
+  });
+
   it("delivery notes approve with no price/pantry effect, then reconcile manually", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     const ingredient = await seedIngredient(owner.rid, {

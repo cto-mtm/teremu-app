@@ -82,7 +82,7 @@ const supplied = computed(() => vendorSuppliedLines(invoices.value))
           {{ summary.name }}
         </h1>
         <div class="text-xs text-smoke">
-          {{ t('vendors.receipts', { n: summary.invoiceCount }) }} · {{ n(summary.totalSpend, 'currency') }}
+          {{ t('vendors.receipts', { n: summary.invoiceCount }, summary.invoiceCount) }} · {{ n(summary.totalSpend, 'currency') }}
         </div>
       </div>
     </div>

@@ -288,6 +288,10 @@ export type ExpenseDoc = z.infer<typeof expenseDocSchema>;
  * `expenseTag` set and excluded from all food math. */
 export const approveAsExpenseSchema = z.object({
   tag: z.string().min(1).max(40),
+  // The reviewer's header corrections, same as approve. Absent = keep
+  // what OCR read (older clients).
+  vendorName: z.string().max(120).nullable().optional(),
+  invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   // Same money rule as approve: a foreign bill needs the reviewer's rate
   // so the expense lands in base (docs/multi-currency.md).
   currency: currencySchema.optional(),

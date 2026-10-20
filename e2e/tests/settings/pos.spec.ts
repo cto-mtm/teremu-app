@@ -53,7 +53,8 @@ test.describe('Locations & POS', () => {
     await page.waitForURL(/\/settings/, { timeout: 20_000 })
     const picker = pos.getByLabel('Local del TPV')
     await expect(picker).toBeVisible({ timeout: 15_000 })
-    await picker.selectOption({ label: 'Demo — Centro' })
+    // The picker shows each POS location with its currency.
+    await picker.selectOption({ label: 'Demo — Centro (EUR)' })
     await pos.getByRole('button', { name: 'Guardar' }).click()
     await expect(pos.getByText('Conectado a Demo — Centro')).toBeVisible()
 

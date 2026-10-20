@@ -1,7 +1,7 @@
 const es = {
   title: 'Proveedores',
   empty: 'Aprueba facturas escaneadas y tus proveedores aparecerán aquí automáticamente, con su gasto e ingredientes.',
-  receipts: '{n} facturas',
+  receipts: '{n} factura | {n} facturas',
   lastDelivery: 'última entrega {date}',
   totalSpend: 'Gasto total',
   detail: {
@@ -23,7 +23,7 @@ const es = {
 const en: typeof es = {
   title: 'Vendors',
   empty: 'Approve scanned invoices and your vendors appear here automatically, with spend and ingredients.',
-  receipts: '{n} invoices',
+  receipts: '{n} invoice | {n} invoices',
   lastDelivery: 'last delivery {date}',
   totalSpend: 'Total spend',
   detail: {

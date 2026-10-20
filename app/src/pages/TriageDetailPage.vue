@@ -104,10 +104,16 @@ async function confirmAsExpense(): Promise<void> {
     return
   }
   expenseBusy.value = true
-  const ok = await store.approveAsExpense(invoiceId.value, expenseTag.value.trim(), {
-    currency: docCurrency.value,
-    ...(foreign.value ? { fx: money.value.fx ?? { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } } : {}),
-  })
+  const ok = await store.approveAsExpense(
+    invoiceId.value,
+    expenseTag.value.trim(),
+    {
+      currency: docCurrency.value,
+      ...(foreign.value ? { fx: money.value.fx ?? { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } } : {}),
+    },
+    // The header edits count here too, same as a food approval.
+    { vendorName: vendorName.value.trim() || null, invoiceDate: invoiceDate.value || null },
+  )
   expenseBusy.value = false
   if (ok) {
     void kitchen.refresh() // the new expense entry
