@@ -23,6 +23,7 @@ import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { stage } from '../scripts/lib/stage.mjs'
 import { emulators } from '../scripts/lib/ports.mjs'
+import { privateTmpEnv } from '../scripts/lib/private-tmp.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
@@ -239,6 +240,9 @@ try {
         // and leaves the app with no backend. Give discovery a real budget
         // (value is in seconds).
         FUNCTIONS_DISCOVERY_TIMEOUT: '60',
+        // Private temp dir: the Storage emulator's blobs dir is shared per
+        // machine, so another repo's emulator run would wipe it under us.
+        ...privateTmpEnv(),
       },
     )
     s.done('passed')

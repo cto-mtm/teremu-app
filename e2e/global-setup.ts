@@ -54,13 +54,22 @@ async function globalSetup() {
   // "Function ... does not exist" — and the app renders a connection error
   // on every screen. GET /health is the api's only public route.
   console.log(`[e2e] Checking the api function at ${API_EMULATOR}/health...`)
+  // The emulator loads the code lazily on the FIRST request (a cold worker
+  // spawn), which on a busy machine — vite booting alongside — routinely
+  // takes longer than one short request. Retry for up to a minute before
+  // calling it down; a genuinely broken load answers "does not exist"
+  // quickly and keeps failing.
   let apiServing = false
-  try {
-    const res = await fetch(`${API_EMULATOR}/health`, { signal: AbortSignal.timeout(5000) })
-    const body = await res.text()
-    apiServing = res.ok && !/does not exist/i.test(body) && body.includes('"ok"')
-  } catch {
-    /* refused → not serving */
+  const apiDeadline = Date.now() + 60_000
+  while (!apiServing && Date.now() < apiDeadline) {
+    try {
+      const res = await fetch(`${API_EMULATOR}/health`, { signal: AbortSignal.timeout(15_000) })
+      const body = await res.text()
+      apiServing = res.ok && !/does not exist/i.test(body) && body.includes('"ok"')
+    } catch {
+      /* refused / still spawning → retry */
+    }
+    if (!apiServing) await new Promise((r) => setTimeout(r, 1000))
   }
   if (!apiServing) {
     throw new Error(

@@ -1,6 +1,5 @@
 import { GoogleAuth } from "google-auth-library";
 import { logger } from "firebase-functions/v2";
-import { defineSecret } from "firebase-functions/params";
 import type { Cuisine } from "../models.js";
 import type { Attribution, ListingProvider, PlaceDetails, PlaceMedia, PlaceSuggestion } from "./types.js";
 
@@ -26,11 +25,12 @@ import type { Attribution, ListingProvider, PlaceDetails, PlaceMedia, PlaceSugge
  *  - "key": a Places API key, for when ADC isn't an option.
  */
 
-export const GOOGLE_PLACES_API_KEY = defineSecret("GOOGLE_PLACES_API_KEY");
-// Only for the "key" mode, and not bound to the api function: a deploy that
-// references a secret missing from Secret Manager fails. Locally the key is
-// read from functions/.env.local; bind it in api.ts if production ever
-// switches from ADC to a key.
+// "key" mode reads GOOGLE_PLACES_API_KEY from the environment (listing/index.ts;
+// locally functions/.env.local). It is deliberately NOT a defineSecret: the
+// Firebase CLI registers every declared secret as a deploy param — bound or
+// not — and a deploy fails ("no value for the secret") when it is missing
+// from Secret Manager. If production ever switches from ADC to a key, add the
+// secret here AND bind it in api.ts, after creating it.
 
 export type PlacesAuth =
   | { kind: "key"; key: string }

@@ -45,3 +45,6 @@ docs/samples/real/
 .DS_Store
 .claude/*
 !.claude/skills/
+
+# Repo-private temp dir for the Firebase emulators (scripts/lib/private-tmp.mjs)
+.tmp/

@@ -161,7 +161,7 @@ describe("claim verification limits", () => {
     await claim(o, "fake-faro");
     await startWithKnownCode(o, "fake-faro");
     const guesses = await Promise.all(
-      Array.from({ length: 10 }, (_, i) => post("/listing/verify/confirm", o.token, { code: String(100000 + i) }, o.rid)),
+      Array.from({ length: 7 }, (_, i) => post("/listing/verify/confirm", o.token, { code: String(100000 + i) }, o.rid)),
     );
     // Contended transactions may give up (500) — what matters is that no
     // more than five guesses ever reached the comparison, and none won.
@@ -174,7 +174,9 @@ describe("claim verification limits", () => {
     for (let i = attempts; i < 5; i++) await post("/listing/verify/confirm", o.token, { code: "000000" }, o.rid);
     // Even the right code is locked out now.
     expect((await post("/listing/verify/confirm", o.token, { code: "123456" }, o.rid)).body.error).toBe("too_many_attempts");
-  });
+    // Seven guesses (> the limit of five) is enough to prove the cap; the
+    // emulator serializes the contended counter slowly, so budget for it.
+  }, 60_000);
 
   it("a restaurant can ask for three codes an hour", async () => {
     const o = await newOwner();

@@ -73,7 +73,9 @@ e2e/
 
 1. **`global-setup.ts`** checks the Auth/Firestore/Storage emulators *and* that
    the `api` function is actually being served (a functions emulator that failed
-   to load the code still answers port 5001), then wipes Auth + Firestore.
+   to load the code still answers port 5001 — the first request cold-starts the
+   worker, so the check retries for up to a minute before calling it down),
+   then wipes Auth + Firestore.
 2. **`auth.setup.ts`** signs in through the Auth emulator's Google picker →
    server bootstraps the restaurant → lands on "find your restaurant" (a new
    owner's first step, docs/restaurant-listing.md) and skips it, for good →
