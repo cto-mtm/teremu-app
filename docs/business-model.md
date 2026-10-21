@@ -95,8 +95,9 @@ The import (`docs/restaurant-listing.md`) is the first non-LLM, per-call paid AP
 |---|---|---|---|---|
 | Search-as-you-type | each 400 ms pause while typing (3+ characters) | Autocomplete Requests | 10,000 | $2.83 |
 | Listing details | once per import (and per verification-code send) | Place Details **Enterprise** (our mask includes hours, phone and rating) | 1,000 | $20.00 |
-| Reviews + photo list | once per review screen | Place Details **Enterprise + Atmosphere** (reviews) | 1,000 | $25.00 |
+| Reviews + photo list (+ rating, open now) | once per review screen; once per app session on the Settings card, more on "Actualizar" | Place Details **Enterprise + Atmosphere** (reviews) | 1,000 | $25.00 |
 | Each photo shown | up to 5 per review screen | Place Details Photos | 1,000 | $7.00 |
+| Assistant lookup (rating, review count, open now) | per assistant question that needs it, ≤ 10 per restaurant per day | Place Details **Enterprise** (same mask as listing details) | shares the 1,000 above | $20.00 |
 
 Google doesn't say whether Places (New) waives the autocomplete keystrokes of a session that ends in a details call, as the legacy API did. The numbers below assume they're paid, so they read high.
 
@@ -113,9 +114,15 @@ Google doesn't say whether Places (New) waives the autocomplete keystrokes of a 
 
 Against a $60 CAC target (below), even the list price is noise. Against the free tier's ~$0.20/month (§9), it is half a month of a free user's cost, paid once. **No change to the tier math.**
 
-**The real exposure is abuse, not use.** Per-restaurant daily caps bound one account at **~$0.78/day**: 30 searches ≈ $0.08, 5 imports ≈ $0.10, 10 media loads ≈ $0.60. A real onboarding uses about 3–6 searches, 1 import and 1 media load. The setup screen waits for 3 characters and a 400 ms pause before each search, because each pause while typing is a billed request. But accounts are free and Google sign-in is unlimited, so the caps alone don't bound the **total**. Two backstops belong in the Google Cloud console before launch, not in code: **per-SKU daily quotas** on Places API (New) (e.g., Place Details 3,000/day, Photos 5,000/day, Autocomplete 20,000/day — far above organic use, a hard stop for a script), and a **budget alert** on the project. A quota hit makes the import answer an error, and the owner can still continue with "Prefiero empezar de cero" or the photo wizard.
+**The assistant's lookups (2026-10-21).** Address, phone and hours are the owner's confirmed data on the restaurant doc (`docs/restaurant-listing.md`, open decision 1) and cost nothing to answer. The rating and open-now are fetched live per question — Google's terms don't allow keeping them, even for a day — at $0.02 list, capped at 10 per restaurant per day (`helpers/dailyCap.ts`), with a 10-minute in-process memo so a conversation that asks twice pays once. The Settings card's live panel rides the existing media cap (10/day) and loads once per app session. A restaurant that asks about its rating every single day spends ~$0.60/month at list price, and the free Enterprise allowance absorbs the first ~1,000 lookups a month across all restaurants. No change to the tier math.
+
+**The real exposure is abuse, not use.** Per-restaurant daily caps bound one account at **~$0.98/day**: 30 searches ≈ $0.08, 5 imports ≈ $0.10, 10 media loads ≈ $0.60, 10 assistant lookups ≈ $0.20. A real onboarding uses about 3–6 searches, 1 import and 1 media load. The setup screen waits for 3 characters and a 400 ms pause before each search, because each pause while typing is a billed request. But accounts are free and Google sign-in is unlimited, so the caps alone don't bound the **total**. Two backstops belong in the Google Cloud console before launch, not in code: **per-SKU daily quotas** on Places API (New) (e.g., Place Details 3,000/day, Photos 5,000/day, Autocomplete 20,000/day — far above organic use, a hard stop for a script), and a **budget alert** on the project. A quota hit makes the import answer an error, and the owner can still continue with "Prefiero empezar de cero" or the photo wizard.
 
 Claim verification and its emails are rare and negligible. Each code send adds one Enterprise details call ($0.02) and one mail through the shared mtmcya-mailer, with send caps per restaurant, per place and per address. Places authenticates as the function's own service account, so there is no API key and no secret to manage.
+
+### POS integration (Square)
+
+POS is on every plan since 2026-10-20 (`docs/pos.md` §Plan gating), so its running cost is a free-tier line too. Per connected restaurant it is Firestore, not inference: the 5-minute scheduler reads the integration and plan docs every tick (~17K reads/month ≈ $0.01) and polls the provider only when that restaurant's adaptive `nextPollAt` is due — hourly on Free, 5–30 min on Pro/Max — writing sales entries and dirty-day rebuilds (a busy restaurant, ~300 orders/day, lands around 10–20K writes/month ≈ $0.03). The only LLM cost is the catalog matcher's third tier, Pro/Max only, one call per catalog sync with unmatched items (≈ $0.001 at Gemini prices). Order of magnitude: **cents a month per connected restaurant on any plan**; the Free caps exist to bound the serial scheduler loop and the LLM calls, not storage. Measured through `places_usage`-style logging once real connections exist (§4 "From scenarios…").
 
 ### From scenarios to measured distributions
 
@@ -154,7 +161,7 @@ Activation: first *approved* invoice within 48 h of sign-up (not just a scan —
 
 ## 8. Implementation notes (maps to the current codebase)
 
-The permission system already carries per-member gating; plan gating is the same pattern one level up. The `plan: "free" | "pro"` field plus `scanPeriod`/`scanCount` live on the restaurant doc; the scan cap is enforced server-side in `POST /invoices` (a 402 the scanner turns into an upgrade prompt), member invites are gated in `POST /members`, and list endpoints window by plan (the `?days=` mechanism). Email features hang off the existing `sendMail()` helper.
+The permission system already carries per-member gating; plan gating is the same pattern one level up. The `plan: "free" | "pro" | "max"` field plus `scanPeriod`/`scanCount` live on the restaurant doc; the scan cap is enforced server-side in `POST /invoices` (a 402 the scanner turns into an upgrade prompt), member invites are gated in `POST /members`, and list endpoints window by plan (the `?days=` mechanism). Email features hang off the existing `sendMail()` helper.
 
 **Billing (built — Stripe).** `billing.ts` implements Stripe Checkout (monthly or yearly, chosen on the pricing page) and the customer portal (change card / switch interval / cancel). The `stripeWebhook` function is the *only* thing that flips `plan` in production: it verifies the signature and mirrors the subscription state onto `restaurants/{rid}` (`plan`, `planInterval`, `stripeCustomerId`, `stripeSubscriptionId`). Firestore is the source of truth the app reads, so a dropped webhook never unlocks Pro without payment, and a cancellation always re-locks. Configuration is all dashboard/secret, no code:
 

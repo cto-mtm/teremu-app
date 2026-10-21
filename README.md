@@ -96,6 +96,8 @@ npx cap sync && npx cap open ios          # or: npx cap open android
 
 The API CORS allow-list already includes the Capacitor origins (`capacitor://localhost`, `http://localhost`), and the Android hardware back button is already handled in `app/src/lib/native.ts`.
 
+Store releases (Play internal testing / TestFlight via `deploy:android` / `deploy:ios`) are planned in [`docs/mobile-release-plan.md`](docs/mobile-release-plan.md) — read it before running `cap add`, because the plan commits the native projects.
+
 ## Deploy
 
 1. Set your real project id in `firebase/.firebaserc` and swap the `REPLACE_ME` domains in `firebase/functions/src/helpers/cors.ts`.
