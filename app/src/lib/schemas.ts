@@ -5,7 +5,9 @@ import {
   currencySchema,
   DEFAULT_CURRENCY,
   docTypeSchema,
+  extractionPathSchema,
   fxSourceSchema,
+  invoiceSourceSchema,
   invoiceStatusSchema,
   localeSchema,
   menuItemKindSchema,
@@ -70,6 +72,19 @@ export const invoiceSchema = z.object({
   // imagePath). pagesPending = the capture is still uploading pages.
   imagePaths: z.array(z.string()).optional(),
   pagesPending: z.boolean().optional(),
+  // Email ingestion (docs/email-ingestion.md): how the document arrived
+  // and how it was read. Absent = a scan read from its page images.
+  source: invoiceSourceSchema.catch('scan'),
+  extraction: extractionPathSchema.catch('vision'),
+  email: z
+    .object({
+      from: z.string(),
+      subject: z.string(),
+      receivedAt: z.number(),
+      bodyPath: z.string().optional(),
+    })
+    .optional()
+    .catch(undefined),
   // ── Money (docs/multi-currency.md — "it's timezones") ─────────────
   // The server shapes the wire: `total` and the line amounts are BASE
   // whenever `fx` is present (the printed figures then sit under
@@ -257,6 +272,31 @@ export const posLocationListSchema = z.array(
 
 /** POST /integrations/:provider/connect — the provider consent URL. */
 export const posConnectSchema = z.object({ url: z.string().url() })
+
+/** GET /email — connected inboxes and what the plan allows
+ * (docs/email-ingestion.md). Connect answers with posConnectSchema. */
+export const emailStatusSchema = z.object({
+  providers: z.array(z.object({ provider: z.string(), available: z.boolean() })),
+  inboxes: z.array(
+    z.object({
+      id: z.string(),
+      provider: z.string(),
+      accountEmail: z.string(),
+      status: z.string(),
+      connectedAt: z.number(),
+      lastSyncAt: z.number().nullable(),
+      backfillDone: z.boolean(),
+    }),
+  ),
+  limits: z.object({ inboxes: z.number(), syncHours: z.number() }),
+})
+
+/** POST /email/oauth — outcome of finishing a connect flow. */
+export const emailOAuthResultSchema = z.object({
+  result: z.string(),
+  rid: z.string().optional(),
+  accountEmail: z.string().optional(),
+})
 
 /** POST /menu/scan — dishes extracted from a menu photo. */
 export const menuScanResponseSchema = z.object({

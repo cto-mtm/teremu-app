@@ -23,6 +23,7 @@ import {
   expenseSchema,
   inviteSchema,
   localeSchema,
+  mailProviderSchema,
   memberDocSchema,
   menuItemSchema,
   normalizeName,
@@ -99,6 +100,13 @@ import { POLL_MIN_MS, pollFloorMs, syncNowRetryAt, syncOrders } from "./pos/orde
 import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { projectDirtyDays } from "./pos/project.js";
 import { posCoversDate } from "./pos/days.js";
+import {
+  completeOAuth as completeEmailOAuth,
+  detachRestaurant as detachEmail,
+  disconnect as disconnectInbox,
+  emailStatus,
+  startConnect as startEmailConnect,
+} from "./email/oauth.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -1065,6 +1073,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // POS connections live outside the rid (one per merchant) — drop
       // this restaurant's reference, revoking the grant if it was the last.
       await detachRestaurant(rid);
+      // Same for its email inboxes (tokens revoked; the docs become tombstones).
+      await detachEmail(rid);
       // Its Google place is free for whoever really runs it now.
       await releaseClaim(rid, member.uid);
       await db.recursiveDelete(db.collection("restaurants").doc(rid));
@@ -1242,6 +1252,32 @@ async function route(req: Request, res: Response): Promise<unknown> {
         logger.warn("POS reprojection after mapping change failed", { rid, p, err }),
       );
       return json(res, 200, view);
+    }
+  }
+
+  // ── Email ingestion (docs/email-ingestion.md) ──────────────────
+  // Same permission area as POS. Every plan; the plan sets how many
+  // inboxes and how often they sync, and emailed documents spend the
+  // scan meter (PLAN_LIMITS).
+  if (head === "email") {
+    if (m === "GET" && seg.length === 1) {
+      if (!can(member, "integrations")) return forbidden(res);
+      return json(res, 200, await emailStatus(rid, planInfo.plan));
+    }
+    // Finish a connect: completeOAuth checks the CALLER started this flow
+    // and re-checks their rights on the restaurant it was for.
+    if (m === "POST" && id === "oauth" && seg.length === 2) {
+      return json(res, 200, await completeEmailOAuth(member.uid, completePosOAuthSchema.parse(req.body)));
+    }
+    if (!can(member, "integrations", "edit")) return forbidden(res);
+    if (m === "POST" && action === "connect" && seg.length === 3) {
+      const provider = mailProviderSchema.safeParse(id);
+      if (!provider.success) return json(res, 404, { error: "unknown_provider" });
+      return json(res, 200, await startEmailConnect({ rid, uid: member.uid, provider: provider.data, origin: req.headers.origin }));
+    }
+    if (m === "DELETE" && id === "inboxes" && action && seg.length === 3) {
+      await disconnectInbox(rid, decodeURIComponent(action));
+      return json(res, 200, { ok: true });
     }
   }
 

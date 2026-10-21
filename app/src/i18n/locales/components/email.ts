@@ -1,0 +1,88 @@
+const es = {
+  title: 'Facturas por correo',
+  desc: 'Conecta el correo donde te llegan las facturas de tus proveedores. Teremu revisa los últimos 31 días y, después, solo el correo nuevo; las facturas que encuentra llegan a Revisar. Solo lee: nunca envía ni borra nada.',
+  provider: {
+    gmail: 'Gmail',
+  },
+  status: {
+    active: 'Conectado',
+    needs_reauth: 'Hay que volver a conectar',
+  },
+  connect: 'Conectar {provider}',
+  connectAnother: 'Conectar otro correo de {provider}',
+  connecting: 'Abriendo…',
+  reconnect: 'Volver a conectar',
+  disconnect: 'Desconectar',
+  confirmDisconnect: '¿Desconectar {email}? Las facturas ya importadas se conservan; solo deja de revisar este correo.',
+  connectedSince: 'Conectado el {date}',
+  lastSync: 'Última revisión: {date}',
+  importSoon: 'La importación de facturas llega en la próxima fase; el correo ya queda conectado.',
+  reauthHint: 'Google retiró el acceso de Teremu a este correo. Vuelve a conectar para reanudar.',
+  cadenceDaily: 'Se revisa una vez al día.',
+  cadenceHours: 'Se revisa cada {n} horas.',
+  freeCap: 'Plan Free: un correo, revisado una vez al día. Las facturas del correo cuentan para tus 25 documentos al mes.',
+  limit: 'Tu plan permite un correo conectado. | Tu plan permite {n} correos conectados.',
+  unavailable: 'La importación por correo aún no está disponible en este entorno.',
+  error: {
+    email_inbox_limit: 'Ya tienes conectados todos los correos que permite tu plan.',
+    email_reauth: 'Google pidió volver a conectar.',
+    generic: 'No se pudo completar. Inténtalo de nuevo.',
+  },
+  result: {
+    connected: 'Correo conectado: {email}.',
+    denied: 'Conexión cancelada en Google.',
+    forbidden: 'No tienes permiso para conectar correos en este restaurante.',
+    not_configured: 'La importación por correo aún no está disponible en este entorno.',
+    invalid_state: 'El enlace de conexión caducó. Vuelve a intentarlo.',
+    failed: 'Google no aceptó la conexión. Vuelve a intentarlo.',
+    missing_scope: 'Para encontrar tus facturas, Teremu necesita permiso para leer el correo. Vuelve a conectar y deja marcada esa casilla.',
+    inbox_taken: 'Ese correo ya está conectado a otro restaurante de Teremu.',
+    inbox_limit: 'Ya tienes conectados todos los correos que permite tu plan.',
+  },
+}
+
+// Typed against es: a missing or extra key here is a compile error.
+const en: typeof es = {
+  title: 'Invoices by email',
+  desc: 'Connect the inbox where your suppliers’ invoices arrive. Teremu checks the last 31 days, then only new mail, and the invoices it finds land in Review. It only reads — it never sends or deletes anything.',
+  provider: {
+    gmail: 'Gmail',
+  },
+  status: {
+    active: 'Connected',
+    needs_reauth: 'Reconnect needed',
+  },
+  connect: 'Connect {provider}',
+  connectAnother: 'Connect another {provider} inbox',
+  connecting: 'Opening…',
+  reconnect: 'Reconnect',
+  disconnect: 'Disconnect',
+  confirmDisconnect: 'Disconnect {email}? Invoices already imported are kept; it just stops checking this inbox.',
+  connectedSince: 'Connected on {date}',
+  lastSync: 'Last checked: {date}',
+  importSoon: 'Invoice import arrives in the next phase; the inbox is already connected.',
+  reauthHint: 'Google withdrew Teremu’s access to this inbox. Reconnect to resume.',
+  cadenceDaily: 'Checked once a day.',
+  cadenceHours: 'Checked every {n} hours.',
+  freeCap: 'Free plan: one inbox, checked once a day. Emailed invoices count toward your 25 documents a month.',
+  limit: 'Your plan allows one connected inbox. | Your plan allows {n} connected inboxes.',
+  unavailable: 'Email import is not available in this environment yet.',
+  error: {
+    email_inbox_limit: 'You already have as many inboxes connected as your plan allows.',
+    email_reauth: 'Google asked to reconnect.',
+    generic: 'Could not complete that. Please try again.',
+  },
+  result: {
+    connected: 'Inbox connected: {email}.',
+    denied: 'Connection cancelled in Google.',
+    forbidden: 'You don’t have permission to connect inboxes for this restaurant.',
+    not_configured: 'Email import is not available in this environment yet.',
+    invalid_state: 'The connection link expired. Please try again.',
+    failed: 'Google did not accept the connection. Please try again.',
+    missing_scope: 'To find your invoices, Teremu needs permission to read your mail. Reconnect and leave that box ticked.',
+    inbox_taken: 'That inbox is already connected to another Teremu restaurant.',
+    inbox_limit: 'You already have as many inboxes connected as your plan allows.',
+  },
+}
+
+export default { es, en }

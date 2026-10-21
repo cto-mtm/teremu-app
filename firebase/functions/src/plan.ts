@@ -40,12 +40,21 @@ export interface PlanLimits {
   /** LLM tier of the POS matcher (bind + "buscar coincidencias"); without
    * it only the deterministic tiers run. */
   posAiMatching: boolean;
+  /** Email inboxes connected at once (docs/email-ingestion.md). Emailed
+   * documents spend `scans` like photos — on Free that meter is the cap. */
+  emailInboxes: number;
+  /** Hours between an inbox's syncs once its 31-day backfill is done
+   * (the backfill itself runs every tick on every plan). */
+  emailSyncHours: number;
+  /** Messages the text classifier may look at per restaurant per day —
+   * bounds a flood inbox's cost when the scan meter isn't the limit. */
+  emailClassifyPerDay: number;
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, posPollMinutes: 60, posAiMatching: false },
-  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, posPollMinutes: 5, posAiMatching: true },
-  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, posPollMinutes: 5, posAiMatching: true },
+  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, posPollMinutes: 60, posAiMatching: false, emailInboxes: 1, emailSyncHours: 24, emailClassifyPerDay: 50 },
+  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, posPollMinutes: 5, posAiMatching: true, emailInboxes: 1, emailSyncHours: 6, emailClassifyPerDay: 300 },
+  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, posPollMinutes: 5, posAiMatching: true, emailInboxes: 3, emailSyncHours: 6, emailClassifyPerDay: 300 },
 };
 
 /** Free locations one person may own. Creating a location costs nothing,

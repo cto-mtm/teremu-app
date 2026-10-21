@@ -15,6 +15,7 @@ import { useLocationStore } from '../stores/location'
 import type { PermArea, Perms } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import IntegrationsCard from '../components/IntegrationsCard.vue'
+import EmailCard from '../components/EmailCard.vue'
 import ListingCard from '../components/ListingCard.vue'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
@@ -424,6 +425,9 @@ async function cancelInvite(emailKey: string): Promise<void> {
 
     <!-- POS connections (integrations area; owners always) -->
     <IntegrationsCard v-if="auth.can('integrations')" />
+
+    <!-- Email inboxes (same integrations area) -->
+    <EmailCard v-if="auth.can('integrations')" />
 
     <!-- Team & granular permissions (owner only) -->
     <div v-if="isOwner" class="card space-y-4">

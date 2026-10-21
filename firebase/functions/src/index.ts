@@ -18,6 +18,7 @@ import { boundRestaurants, pollDue, pollFloorMs, syncOrders } from "./pos/orders
 import { projectDirtyDays } from "./pos/project.js";
 import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { getPlanInfo } from "./plan.js";
+import { oauthFailureUrl as emailOauthFailureUrl, oauthReturnUrl as emailOauthReturnUrl } from "./email/oauth.js";
 
 initializeApp();
 
@@ -99,6 +100,22 @@ export const posOauthCallback = onRequest({ region: REGION }, async (req, res) =
   } catch (err) {
     logger.error("POS OAuth callback failed", err);
     res.redirect(302, oauthFailureUrl());
+  }
+});
+
+/**
+ * Email OAuth redirect target (docs/email-ingestion.md). Same rule as
+ * posOauthCallback: it only bounces the browser back to Settings with
+ * `state` + `code`, and the SIGNED-IN user completes the exchange
+ * (POST /email/oauth). Register this function's URL (or
+ * EMAIL_OAUTH_REDIRECT_URL) on the Google OAuth client. No secrets.
+ */
+export const emailOauthCallback = onRequest({ region: REGION }, async (req, res) => {
+  try {
+    res.redirect(302, await emailOauthReturnUrl(req.query));
+  } catch (err) {
+    logger.error("Email OAuth callback failed", err);
+    res.redirect(302, emailOauthFailureUrl());
   }
 });
 

@@ -5,7 +5,9 @@ import {
   cuisineSchema,
   currencySchema,
   docTypeSchema,
+  extractionPathSchema,
   fxSourceSchema,
+  invoiceSourceSchema,
   invoiceStatusSchema,
   isSubcategoryOf,
   localeSchema,
@@ -114,6 +116,24 @@ export const invoiceDocSchema = z.object({
   // holds (double-tap / client retry), and /pages rejects re-adding a
   // page this capture already has. Absent on pre-hash documents.
   imageHashes: z.array(z.string()).optional(),
+  // ── Email ingestion (docs/email-ingestion.md) ─────────────────────
+  // Absent source = a scan; absent extraction = read from page images.
+  source: invoiceSourceSchema.optional(),
+  extraction: extractionPathSchema.optional(),
+  // Provenance of an emailed document. Nobody "uploaded" it: this says
+  // which message (and inbox) it came from. bodyPath = the stored body
+  // text, for an invoice written in the email itself.
+  email: z
+    .object({
+      messageId: z.string(),
+      rfc822MessageId: z.string().nullable(),
+      from: z.string(),
+      subject: z.string(),
+      receivedAt: z.number(),
+      connectionId: z.string(),
+      bodyPath: z.string().optional(),
+    })
+    .optional(),
   // ── Money (docs/multi-currency.md — "it's timezones") ─────────────
   // `total` and the line amounts are the PRINTED figures, in `currency`,
   // never rewritten. Absent currency = the restaurant's base.
@@ -510,8 +530,9 @@ export const selectPosLocationSchema = z.object({
   locationExternalId: z.string().min(1).max(128),
 });
 
-/** POST /integrations/oauth — the signed-in user finishes an OAuth flow
- * they started (the callback hands `state` + `code` back to the app). */
+/** POST /integrations/oauth and POST /email/oauth — the signed-in user
+ * finishes an OAuth flow they started (the callback hands `state` +
+ * `code` back to the app). */
 export const completePosOAuthSchema = z.object({
   state: z.string().min(1).max(128),
   code: z.string().min(1).max(2048),

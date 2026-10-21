@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { logger } from "firebase-functions/v2";
-import { defaultAppOrigin, isAllowedOrigin } from "../helpers/cors.js";
+import { appReturnBase } from "../helpers/cors.js";
 import { CURRENCIES, DEFAULT_CURRENCY, memberDocSchema, POS_PROVIDERS, type PosProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
 import { pollFloorMs, syncOrders } from "./orders.js";
@@ -49,14 +49,7 @@ interface OauthStateDoc {
   expiresAt: number;
 }
 
-/** Where the browser lands after the provider: APP_URL, else the web
- * origin that started the flow. Native shells (capacitor://) can't be
- * redirected to from the provider's page, so they get the web app. */
-function returnBase(origin?: string): string {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
-  if (isAllowedOrigin(origin) && origin.startsWith("http")) return origin;
-  return defaultAppOrigin();
-}
+const returnBase = appReturnBase;
 
 // ── Connect ─────────────────────────────────────────────────────────
 

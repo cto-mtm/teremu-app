@@ -135,6 +135,23 @@ export const POS_PROVIDERS = ["square"] as const;
 export const posProviderSchema = z.enum(POS_PROVIDERS);
 export type PosProvider = z.infer<typeof posProviderSchema>;
 
+// ── Email ingestion (docs/email-ingestion.md) ───────────────────────
+// A new mail provider is one entry here plus its adapter in functions/src/email/.
+export const MAIL_PROVIDERS = ["gmail"] as const;
+export const mailProviderSchema = z.enum(MAIL_PROVIDERS);
+export type MailProvider = z.infer<typeof mailProviderSchema>;
+
+/** How an invoice entered Teremu. Absent on a stored invoice = `scan`. */
+export const INVOICE_SOURCES = ["scan", "email"] as const;
+export const invoiceSourceSchema = z.enum(INVOICE_SOURCES);
+export type InvoiceSource = z.infer<typeof invoiceSourceSchema>;
+
+/** How the model read the document: page images (`vision`), a PDF's own
+ * text (`text_layer`), or the email body (`body`). Absent = `vision`. */
+export const EXTRACTION_PATHS = ["vision", "text_layer", "body"] as const;
+export const extractionPathSchema = z.enum(EXTRACTION_PATHS);
+export type ExtractionPath = z.infer<typeof extractionPathSchema>;
+
 /** Where a daily revenue entry came from. `pos` entries are owned by the
  * projector (docs/pos.md §Projection): deterministic id, rebuilt from the
  * raw orders, never hand-edited. Absent on a stored entry = `manual`. */
@@ -201,7 +218,8 @@ export const permsSchema = z.object({
   pantry: permLevelSchema,
   finance: permLevelSchema, // Pulse, revenue, expenses
   vendors: z.enum(["none", "read"]), // derived data — read-only by nature
-  // POS connections + menu mappings (read: status; edit: connect/map).
+  // POS connections + menu mappings, and email inboxes (read: status;
+  // edit: connect/map/disconnect).
   // Defaulted because member docs and invites written before this area
   // existed lack it — a required field would fail them closed.
   integrations: permLevelSchema.default("none"),

@@ -10,6 +10,7 @@ import assistant from './locales/components/assistant'
 import onboarding from './locales/components/onboarding'
 import locations from './locales/components/locations'
 import integrations from './locales/components/integrations'
+import email from './locales/components/email'
 import pulse from './locales/pages/pulse'
 import scan from './locales/pages/scan'
 import triage from './locales/pages/triage'
@@ -33,6 +34,7 @@ const messages = {
     onboarding: onboarding.es,
     locations: locations.es,
     integrations: integrations.es,
+    email: email.es,
     pulse: pulse.es,
     scan: scan.es,
     triage: triage.es,
@@ -52,6 +54,7 @@ const messages = {
     onboarding: onboarding.en,
     locations: locations.en,
     integrations: integrations.en,
+    email: email.en,
     pulse: pulse.en,
     scan: scan.en,
     triage: triage.en,

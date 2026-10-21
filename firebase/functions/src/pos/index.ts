@@ -1,6 +1,6 @@
 import { defineSecret } from "firebase-functions/params";
 import type { PosProvider } from "../models.js";
-import { REGION } from "../region.js";
+import { functionUrl } from "../helpers/functionUrl.js";
 import { mockAdapter } from "./providers/mock.js";
 import { square } from "./providers/square/index.js";
 import type { PosAdapter, PosProviderModule, SecretParam } from "./types.js";
@@ -38,27 +38,11 @@ export function adapterFor(provider: PosProvider): PosAdapter | null {
   return offline() ? mockAdapter : null;
 }
 
-/** The functions emulator's own host:port, for the self-referential
- * OAuth callback URL below. Deployed code must NOT import the repo-root
- * ports.json (the functions dir deploys on its own), and the emulator
- * exposes no standard env var for its OWN port — so this mirrors
- * ports.json's emulators.functions as a last resort, overridable via
- * POS_OAUTH_REDIRECT_URL (which is how a real
- * local Square test points at the proxied origin anyway). If that port
- * ever moves in ports.json, update this literal too — check-ports.mjs
- * cannot see into function source. */
-function emulatorFunctionsHost(): string {
-  return process.env.FUNCTIONS_EMULATOR_HOST ?? "127.0.0.1:10404";
-}
-
 /** Where an OAuth provider sends the browser back to — one callback for
- * every provider (the state doc says which). POS_OAUTH_REDIRECT_URL, else
- * this project's posOauthCallback function URL. Must be registered
- * verbatim in each provider's developer dashboard. */
+ * every provider (the state doc says which). POS_OAUTH_REDIRECT_URL (how
+ * a real local Square test points at the proxied origin), else this
+ * project's posOauthCallback function URL. Must be registered verbatim
+ * in each provider's developer dashboard. */
 export function oauthRedirectUrl(): string {
-  if (process.env.POS_OAUTH_REDIRECT_URL) return process.env.POS_OAUTH_REDIRECT_URL;
-  const project = process.env.GCLOUD_PROJECT ?? process.env.GOOGLE_CLOUD_PROJECT ?? "demo-app";
-  return process.env.FUNCTIONS_EMULATOR === "true"
-    ? `http://${emulatorFunctionsHost()}/${project}/${REGION}/posOauthCallback`
-    : `https://${REGION}-${project}.cloudfunctions.net/posOauthCallback`;
+  return process.env.POS_OAUTH_REDIRECT_URL || functionUrl("posOauthCallback");
 }

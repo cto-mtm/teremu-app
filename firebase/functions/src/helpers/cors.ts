@@ -28,6 +28,15 @@ export const isAllowedOrigin = (origin: string | undefined): origin is string =>
 /** The SPA's public web origin when no request origin is usable. */
 export const defaultAppOrigin = (): string => hostingOrigins[0] ?? "https://app.teremu.com";
 
+/** Where the browser lands after an OAuth provider: APP_URL, else the web
+ * origin that started the flow. Native shells (capacitor://) can't be
+ * redirected to from the provider's page, so they get the web app. */
+export function appReturnBase(origin?: string): string {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
+  if (isAllowedOrigin(origin) && origin.startsWith("http")) return origin;
+  return defaultAppOrigin();
+}
+
 /**
  * Applies CORS headers for allow-listed origins and short-circuits
  * preflight requests. Returns true when the caller should stop
