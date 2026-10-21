@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { apiFetch } from '../lib/api'
 import { CUISINES, listingStatusSchema, type Cuisine } from '../lib/schemas'
 import { useAuthStore } from '../stores/auth'
+import { useListingStore } from '../stores/listing'
 import BaseButton from './BaseButton.vue'
 import type { z } from 'zod'
 
@@ -12,18 +13,25 @@ import type { z } from 'zod'
  * Settings → "Tu restaurante" (owner only; docs/restaurant-listing.md):
  * the linked Google listing and its claim (verify / review / unlink), the
  * owner-confirmed website and cuisines, and the notes the assistant
- * answers from. Everything here is the owner's own data — Google content
- * is only ever linked to, never shown from storage.
+ * answers from. Everything here is the owner's own data; the live Google
+ * panel (rating, photos, reviews) is fetched once per app session into
+ * the store, never stored, and refreshed only when the owner asks.
  */
 type Status = z.infer<typeof listingStatusSchema>
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 const auth = useAuthStore()
+const listing = useListingStore()
 const status = ref<Status | null>(null)
 const loading = ref(true)
 
 const website = ref('')
 const cuisines = ref<Cuisine[]>([])
+// Owner-confirmed contact details: theirs once saved here, so the
+// assistant may read them (docs/restaurant-listing.md, open decision 1).
+const address = ref('')
+const phone = ref('')
+const hours = ref('')
 const notes = ref<{ text: string; origin: 'suggested' | 'owner' }[]>([])
 const newNote = ref('')
 const saving = ref(false)
@@ -33,6 +41,9 @@ function apply(s: Status): void {
   status.value = s
   website.value = s.listing?.website ?? ''
   cuisines.value = [...(s.listing?.cuisines ?? [])]
+  address.value = s.listing?.address ?? ''
+  phone.value = s.listing?.phone ?? ''
+  hours.value = s.listing?.hours ?? ''
   notes.value = s.notes.map((n) => ({ text: n.text, origin: n.origin }))
 }
 
@@ -43,6 +54,19 @@ async function load(): Promise<void> {
   if (res.ok) apply(res.data)
 }
 onMounted(load)
+
+// Live Google panel: loads when a place is linked (session-cached in the store).
+const linkedPlaceId = computed(() => status.value?.listing?.placeId ?? null)
+watch(linkedPlaceId, (id) => { if (id) void listing.loadLinked(id) }, { immediate: true })
+const live = computed(() => (listing.linked?.placeId === linkedPlaceId.value ? listing.linked.media : null))
+const livePhotos = computed(() => live.value?.photos.slice(0, 5) ?? [])
+/** Places policies: photo authors are credited visibly. */
+const photoCredits = computed(() => [...new Set(livePhotos.value.flatMap((p) => p.attributions.map((a) => a.name)).filter(Boolean))].join(', '))
+const liveError = computed(() => {
+  const e = listing.linkedError
+  if (!e) return null
+  return e.includes('media_limit') ? t('settings.listing.live.limit') : e.includes('listing_unavailable') ? t('integrations.unavailable') : t('settings.listing.live.failed')
+})
 
 const claimChip = computed(() =>
   status.value?.claim === 'verified' ? 'chip-down' : status.value?.claim === 'contested' ? 'chip-up' : 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-smoke',
@@ -75,7 +99,15 @@ async function save(): Promise<void> {
     {
       method: 'PUT',
       body: JSON.stringify({
-        ...(status.value?.listing ? { website: website.value.trim() || null, cuisines: cuisines.value } : {}),
+        ...(status.value?.listing
+          ? {
+              website: website.value.trim() || null,
+              cuisines: cuisines.value,
+              address: address.value.trim() || null,
+              phone: phone.value.trim() || null,
+              hours: hours.value.trim() || null,
+            }
+          : {}),
         notes: notes.value.filter((n) => n.text.trim()),
       }),
     },
@@ -214,11 +246,65 @@ async function requestReview(): Promise<void> {
         </div>
       </div>
 
+      <!-- Live from Google: one call per app session, refreshed on demand, never stored -->
+      <div v-if="status.listing.placeId" class="space-y-3 rounded-xl bg-cream p-3 text-xs">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-semibold">{{ t('settings.listing.live.title') }}</span>
+          <template v-if="live">
+            <span v-if="live.rating !== null" class="font-semibold text-ink">★ {{ n(live.rating, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }}</span>
+            <span v-if="live.reviewCount" class="text-smoke">{{ t('setup.review.reviewCount', { n: n(live.reviewCount) }, live.reviewCount) }}</span>
+            <span v-if="live.openNow !== null" :class="live.openNow ? 'chip-down' : 'chip-up'">{{ live.openNow ? t('setup.review.openNow') : t('setup.review.closedNow') }}</span>
+          </template>
+          <span class="flex-1" />
+          <button type="button" class="btn-ghost !py-1 text-xs" :disabled="listing.linkedBusy" @click="listing.loadLinked(status.listing.placeId, true)">
+            {{ listing.linkedBusy ? t('settings.listing.live.loading') : t('settings.listing.live.refresh') }}
+          </button>
+        </div>
+        <p v-if="liveError" class="text-coral-600">{{ liveError }}</p>
+        <template v-else-if="live">
+          <div v-if="livePhotos.length" class="grid grid-cols-5 gap-1 overflow-hidden rounded-lg">
+            <img v-for="(p, i) in livePhotos" :key="i" :src="p.url" alt="" class="aspect-square w-full object-cover" loading="lazy" referrerpolicy="no-referrer" />
+          </div>
+          <p v-if="photoCredits" class="text-[10px] text-smoke">{{ t('setup.review.photoBy', { name: photoCredits }) }}</p>
+          <div v-if="live.reviews.length" class="space-y-2">
+            <p class="text-[11px] text-smoke">{{ t('setup.review.reviewsOrder') }}</p>
+            <figure v-for="(r, i) in live.reviews" :key="i" class="space-y-1 rounded-lg bg-white p-2.5">
+              <blockquote class="leading-relaxed">“{{ r.text }}”</blockquote>
+              <figcaption class="flex flex-wrap items-center gap-1.5 text-[11px] text-smoke">
+                <img v-if="r.author.photoUri" :src="r.author.photoUri" alt="" class="h-4 w-4 rounded-full" referrerpolicy="no-referrer" />
+                <span class="text-ember" role="img" :aria-label="t('setup.review.stars', { n: r.rating })">{{ '★'.repeat(Math.round(r.rating)) }}</span>
+                <a v-if="r.author.uri" :href="r.author.uri" target="_blank" rel="noopener" class="hover:underline">{{ r.author.name }}</a>
+                <span v-else>{{ r.author.name }}</span>
+                <span v-if="r.relativeTime">· {{ r.relativeTime }}</span>
+                <a v-if="r.googleMapsUri" :href="r.googleMapsUri" target="_blank" rel="noopener" class="ml-auto font-semibold underline">{{ t('setup.review.seeOnMaps') }}</a>
+              </figcaption>
+            </figure>
+          </div>
+          <p class="text-[10px] text-smoke">{{ t('setup.review.attribution') }}</p>
+        </template>
+        <p v-else-if="listing.linkedBusy" class="text-smoke">{{ t('settings.listing.live.loading') }}</p>
+      </div>
+
       <!-- Owner-confirmed details -->
       <label class="block space-y-1">
         <span class="text-xs text-smoke">{{ t('settings.listing.website') }}</span>
         <input v-model="website" type="text" inputmode="url" autocapitalize="off" class="input" :placeholder="t('settings.listing.websitePlaceholder')" @input="saved = false" />
       </label>
+      <label class="block space-y-1">
+        <span class="text-xs text-smoke">{{ t('settings.listing.address') }}</span>
+        <input v-model="address" type="text" class="input" maxlength="200" @input="saved = false" />
+      </label>
+      <div class="grid gap-2 sm:grid-cols-2">
+        <label class="block space-y-1">
+          <span class="text-xs text-smoke">{{ t('settings.listing.phone') }}</span>
+          <input v-model="phone" type="text" inputmode="tel" class="input" maxlength="40" @input="saved = false" />
+        </label>
+        <label class="block space-y-1">
+          <span class="text-xs text-smoke">{{ t('settings.listing.hours') }}</span>
+          <input v-model="hours" type="text" class="input" maxlength="400" :placeholder="t('settings.listing.hoursPlaceholder')" @input="saved = false" />
+        </label>
+      </div>
+      <p class="text-[11px] text-smoke">{{ t('settings.listing.contactHelp') }}</p>
       <div class="space-y-1">
         <span class="text-xs text-smoke">{{ t('settings.listing.cuisines') }}</span>
         <div class="flex flex-wrap gap-1.5">

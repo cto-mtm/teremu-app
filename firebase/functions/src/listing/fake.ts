@@ -231,10 +231,13 @@ const fakePlaces: ListingProvider = {
   },
   async media(placeId): Promise<PlaceMedia> {
     const f = FIXTURES.find((x) => x.details.placeId === placeId);
-    if (!f) return { photos: [], reviews: [], googleMapsUri: null };
+    if (!f) return { photos: [], reviews: [], rating: null, reviewCount: null, openNow: null, googleMapsUri: null };
     return {
       photos: f.photos.map((p) => ({ url: photoUri(p), attributions: [{ name: "Teremu demo", uri: null, photoUri: null }] })),
       reviews: f.reviews.map((r) => ({ ...r, googleMapsUri: null })),
+      rating: f.details.rating,
+      reviewCount: f.details.reviewCount,
+      openNow: f.details.openNow,
       googleMapsUri: null,
     };
   },

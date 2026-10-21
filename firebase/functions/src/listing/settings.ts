@@ -18,7 +18,17 @@ const db = () => getFirestore();
 export async function listingStatus(rid: string) {
   const rest = await db().collection("restaurants").doc(rid).get();
   const listing = rest.get("listing") as
-    | { placeId: string | null; contestedPlaceId?: string | null; website: string | null; cuisines: Cuisine[]; priceLevel: number | null; confirmedAt: number }
+    | {
+        placeId: string | null;
+        contestedPlaceId?: string | null;
+        website: string | null;
+        cuisines: Cuisine[];
+        priceLevel: number | null;
+        address?: string | null;
+        phone?: string | null;
+        hours?: string | null;
+        confirmedAt: number;
+      }
     | undefined;
   const placeId = listing?.placeId ?? null;
   const contested = listing?.contestedPlaceId ?? null;
@@ -40,6 +50,9 @@ export async function listingStatus(rid: string) {
           website: listing.website,
           cuisines: listing.cuisines,
           priceLevel: listing.priceLevel,
+          address: listing.address ?? null,
+          phone: listing.phone ?? null,
+          hours: listing.hours ?? null,
           confirmedAt: listing.confirmedAt,
           // Google's documented place-ID link: no stored Google content needed.
           mapsUrl: reviewPlace ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(reviewPlace)}` : null,
@@ -53,7 +66,14 @@ export async function listingStatus(rid: string) {
 
 export async function updateListing(
   rid: string,
-  body: { website?: string | null; cuisines?: Cuisine[]; notes?: { text: string; origin: "suggested" | "owner" }[] },
+  body: {
+    website?: string | null;
+    cuisines?: Cuisine[];
+    address?: string | null;
+    phone?: string | null;
+    hours?: string | null;
+    notes?: { text: string; origin: "suggested" | "owner" }[];
+  },
 ): Promise<void> {
   const batch = db().batch();
   const patch: Record<string, unknown> = {};
@@ -63,6 +83,9 @@ export async function updateListing(
     patch.website = website;
   }
   if (body.cuisines !== undefined) patch.cuisines = body.cuisines;
+  for (const key of ["address", "phone", "hours"] as const) {
+    if (body[key] !== undefined) patch[key] = body[key]?.trim() || null;
+  }
   if (Object.keys(patch).length) {
     batch.set(db().collection("restaurants").doc(rid), { listing: patch }, { merge: true });
   }

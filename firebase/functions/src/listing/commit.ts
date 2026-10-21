@@ -154,6 +154,10 @@ export async function commitImport(
       website,
       cuisines: body.restaurant.cuisines,
       priceLevel: body.restaurant.priceLevel,
+      // What the owner confirmed on the review screen — theirs, not Google's.
+      address: body.restaurant.address?.trim() || null,
+      phone: body.restaurant.phone?.trim() || null,
+      hours: body.restaurant.hours?.trim() || null,
       confirmedAt: Date.now(),
     },
   };

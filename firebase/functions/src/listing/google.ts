@@ -69,7 +69,9 @@ const DETAILS_MASK = [
   "googleMapsUri",
 ].join(",");
 
-const MEDIA_MASK = "reviews,photos,googleMapsUri";
+// rating / count / open-now ride along: they are Enterprise fields, and the
+// reviews already price this request at Enterprise + Atmosphere.
+const MEDIA_MASK = "reviews,photos,rating,userRatingCount,currentOpeningHours.openNow,googleMapsUri";
 
 const MAX_PHOTOS = 5;
 
@@ -287,6 +289,9 @@ export function googleProvider(auth: PlacesAuth, ctx: PlacesContext = {}): Listi
           relativeTime: r.relativePublishTimeDescription ?? null,
           googleMapsUri: r.googleMapsUri ?? null,
         })),
+        rating: place.rating ?? null,
+        reviewCount: place.userRatingCount ?? null,
+        openNow: place.currentOpeningHours?.openNow ?? null,
         googleMapsUri: place.googleMapsUri ?? null,
       };
     },

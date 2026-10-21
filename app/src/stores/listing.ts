@@ -59,6 +59,12 @@ function toDish(c: ListingCandidate | { name: string; price: number | null; sect
 export const useListingStore = defineStore('listing', () => {
   const job = ref<ListingImport | null>(null)
   const media = ref<ListingMedia | null>(null)
+  // The LINKED place's live listing (Settings card): one Google call per
+  // app session, in memory only — never storage (Places terms) — and
+  // refetched when the owner asks. Keyed by place so a re-link refetches.
+  const linked = ref<{ placeId: string; media: ListingMedia; at: number } | null>(null)
+  const linkedBusy = ref(false)
+  const linkedError = ref<string | null>(null)
   const dishes = ref<ReviewDish[]>([])
   const busy = ref<ListingBusy>(false)
   /** API error code of the last failed step (the page maps it to copy). */
@@ -80,6 +86,8 @@ export const useListingStore = defineStore('listing', () => {
     epoch += 1
     job.value = null
     media.value = null
+    linked.value = null
+    linkedError.value = null
     dishes.value = []
     busy.value = false
     error.value = null
@@ -153,6 +161,17 @@ export const useListingStore = defineStore('listing', () => {
     if (res.ok && mine === epoch && job.value?.placeId === placeId) media.value = res.data
   }
 
+  /** The linked place's live listing for Settings; cached for the session unless `force`. */
+  async function loadLinked(placeId: string, force = false): Promise<void> {
+    if (!force && linked.value?.placeId === placeId) return
+    linkedBusy.value = true
+    linkedError.value = null
+    const res = await apiFetch(`/listing/place/${encodeURIComponent(placeId)}/media`, undefined, listingMediaSchema)
+    linkedBusy.value = false
+    if (res.ok) linked.value = { placeId, media: res.data, at: Date.now() }
+    else linkedError.value = res.error
+  }
+
   /** Re-read with a link the owner pasted. */
   async function readWebsite(url: string): Promise<boolean> {
     if (!job.value) return false
@@ -193,7 +212,15 @@ export const useListingStore = defineStore('listing', () => {
   }
 
   async function commit(input: {
-    restaurant: { name: string; website: string | null; cuisines: string[]; priceLevel: number | null }
+    restaurant: {
+      name: string
+      website: string | null
+      cuisines: string[]
+      priceLevel: number | null
+      address: string | null
+      phone: string | null
+      hours: string | null
+    }
     notes: { text: string; origin: 'suggested' | 'owner' }[]
   }): Promise<(ListingCommitResult & { ok: true }) | { ok: false; error: string }> {
     if (!job.value) return { ok: false, error: 'no_import' }
@@ -223,6 +250,10 @@ export const useListingStore = defineStore('listing', () => {
   return {
     job,
     media,
+    linked,
+    linkedBusy,
+    linkedError,
+    loadLinked,
     dishes,
     busy,
     error,

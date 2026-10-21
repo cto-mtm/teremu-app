@@ -56,6 +56,10 @@ export interface PlaceReview {
 export interface PlaceMedia {
   photos: PlacePhoto[];
   reviews: PlaceReview[];
+  /** Headline numbers, in the same request (same SKU as the reviews). */
+  rating: number | null;
+  reviewCount: number | null;
+  openNow: boolean | null;
   googleMapsUri: string | null;
 }
 

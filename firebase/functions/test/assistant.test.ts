@@ -282,6 +282,56 @@ describe("assistant", () => {
     expect(t.text).not.toContain("evil.example");
   });
 
+  it("answers address / hours from the owner-confirmed listing and the rating live from Places, never storing it", async () => {
+    const o = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(o.rid, "pro");
+    await getFirestore()
+      .doc(`restaurants/${o.rid}`)
+      .set(
+        {
+          listing: {
+            placeId: "fake-faro", // the fake backend answers rating 4.6 / 1284 reviews / open
+            website: null,
+            cuisines: ["tapas"],
+            priceLevel: 2,
+            address: "Carrer de la Reina 41, Valencia",
+            phone: "+34 900 000 000",
+            hours: "lunes a sábado 13:00–16:30 y 20:00–23:30",
+            confirmedAt: Date.now(),
+          },
+        },
+        { merge: true },
+      );
+
+    const t = await turn(o.token, o.rid, "¿Cuál es nuestro horario?");
+    expect(t.status).toBe(200);
+    expect(t.errors).toEqual([]);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["getRestaurantListing"]);
+    expect(t.toolOutputs[0]).toEqual([
+      {
+        address: "Carrer de la Reina 41, Valencia",
+        phone: "+34 900 000 000",
+        hours: "lunes a sábado 13:00–16:30 y 20:00–23:30",
+        rating: 4.6,
+        reviewCount: 1284,
+        openNow: true,
+        googleLinked: true,
+      },
+    ]);
+    // Nothing Google-sourced landed on the restaurant doc; only the lookup was counted.
+    const rest = await getFirestore().doc(`restaurants/${o.rid}`).get();
+    expect(rest.get("listing.rating")).toBeUndefined();
+    const today = new Date().toISOString().slice(0, 10);
+    expect((await getFirestore().doc(`restaurants/${o.rid}/dailyUsage/${today}`).get()).get("assistantPlaces")).toBe(1);
+
+    // Past the daily lookup cap the stored fields still answer; the live ones go null.
+    // (A different place, so the in-process memo from the first turn does not answer.)
+    await getFirestore().doc(`restaurants/${o.rid}`).set({ listing: { placeId: "fake-lucia" } }, { merge: true });
+    await getFirestore().doc(`restaurants/${o.rid}/dailyUsage/${today}`).set({ assistantPlaces: 10 }, { merge: true });
+    const capped = await turn(o.token, o.rid, "¿Que valoracion tenemos?");
+    expect(capped.toolOutputs[0]).toMatchObject([{ phone: "+34 900 000 000", rating: null, reviewCount: null, openNow: null, googleLinked: true }]);
+  });
+
   it("rejects requests without a bearer token", async () => {
     const res = await fetch(`${ASSISTANT}/conversation`, { headers: { "X-Assistant-Version": "0" } });
     expect(res.status).toBe(401);

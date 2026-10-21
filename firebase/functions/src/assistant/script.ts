@@ -27,5 +27,9 @@ export const script: MockScript = {
   scan: [toolCall("openScanner", {}), text("Opening the scanner.")],
   "que dias abrimos": [toolCall("getRestaurantNotes", {}), text("Según las notas que guardaste, esto es lo que tengo sobre tus días de apertura.")],
   "what should you know": [toolCall("getRestaurantNotes", {}), text("These are the notes you saved about your restaurant.")],
+  horario: [toolCall("getRestaurantListing", {}), text("Este es el horario que confirmaste, con la dirección y el teléfono.")],
+  "opening hours": [toolCall("getRestaurantListing", {}), text("These are the hours you confirmed, with the address and phone.")],
+  valoracion: [toolCall("getRestaurantListing", {}), text("Esta es tu valoración actual en Google y cuántas reseñas tienes.")],
+  rating: [toolCall("getRestaurantListing", {}), text("This is your current Google rating and review count.")],
   hola: [text("¡Hola! Puedo mirar precios de ingredientes, márgenes de platos, facturas, ventas y gastos de este restaurante.")],
 };

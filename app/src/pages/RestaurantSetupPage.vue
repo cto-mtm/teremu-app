@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
@@ -142,6 +142,20 @@ const photoCredits = computed(() =>
 const reviews = computed(() => listing.media?.reviews ?? [])
 /** Places' weekday lines start on Monday. */
 const hoursToday = computed(() => place.value?.weekHours[(new Date().getDay() + 6) % 7] ?? null)
+// Contact details the owner confirms (editable, saved on commit as THEIR
+// data — docs/restaurant-listing.md open decision 1). Prefilled from the
+// listing once per place, never overwritten by a later job refresh.
+const contact = reactive({ address: '', phone: '', hours: '' })
+watch(
+  () => place.value?.placeId ?? null,
+  () => {
+    const p = place.value
+    contact.address = p?.address ?? ''
+    contact.phone = p?.phone ?? ''
+    contact.hours = p?.weekHours.join('; ') ?? ''
+  },
+  { immediate: true },
+)
 
 function enterReview(): void {
   editingKey.value = null
@@ -323,6 +337,9 @@ async function confirmImport(): Promise<void> {
       website: listing.job?.website ?? null,
       cuisines: place.value?.cuisines ?? [],
       priceLevel: place.value?.priceLevel ?? null,
+      address: contact.address.trim() || null,
+      phone: contact.phone.trim() || null,
+      hours: contact.hours.trim() || null,
     },
     notes: learnings.value.filter((l) => l.text.trim()).map((l) => ({ text: l.text.trim(), origin: l.origin })),
   })
@@ -542,15 +559,29 @@ const initials = (name: string) => {
                 {{ t('setup.cuisine.' + c) }}
               </span>
             </div>
-            <dl v-if="place" class="grid gap-2 text-xs sm:grid-cols-2">
-              <div v-if="place.address" class="flex gap-2"><dt aria-hidden="true">📍</dt><dd>{{ place.address }}</dd></div>
-              <div v-if="hoursToday" class="flex gap-2"><dt aria-hidden="true">🕒</dt><dd>{{ hoursToday }}</dd></div>
+            <!-- Contact details: prefilled from the listing, confirmed (and
+                 editable) by the owner, saved on commit as their own data. -->
+            <div class="space-y-1.5 text-xs">
+              <p class="font-semibold">{{ t('setup.review.contactTitle') }}</p>
+              <p v-if="place && hoursToday" class="text-smoke">🕒 {{ t('setup.review.hoursToday', { hours: hoursToday }) }}</p>
+              <label class="flex items-center gap-2">
+                <span aria-hidden="true">📍</span>
+                <input v-model="contact.address" class="input !py-1.5 text-sm" maxlength="200" :placeholder="t('setup.review.contactAddress')" :aria-label="t('setup.review.contactAddress')" />
+              </label>
+              <label class="flex items-center gap-2">
+                <span aria-hidden="true">🕒</span>
+                <input v-model="contact.hours" class="input !py-1.5 text-sm" maxlength="400" :placeholder="t('setup.review.contactHours')" :aria-label="t('setup.review.contactHours')" />
+              </label>
+              <label class="flex items-center gap-2">
+                <span aria-hidden="true">📞</span>
+                <input v-model="contact.phone" class="input !py-1.5 text-sm" inputmode="tel" maxlength="40" :placeholder="t('setup.review.contactPhone')" :aria-label="t('setup.review.contactPhone')" />
+              </label>
               <div class="flex gap-2">
-                <dt aria-hidden="true">🌐</dt>
-                <dd :class="listing.job.website ? '' : 'text-smoke'">{{ listing.job.website ?? t('setup.review.noWebsite') }}</dd>
+                <span aria-hidden="true">🌐</span>
+                <span :class="listing.job.website ? '' : 'text-smoke'">{{ listing.job.website ?? t('setup.review.noWebsite') }}</span>
               </div>
-              <div v-if="place.phone" class="flex gap-2"><dt aria-hidden="true">📞</dt><dd>{{ place.phone }}</dd></div>
-            </dl>
+              <p class="text-[11px] text-smoke">{{ t('setup.review.contactHelp') }}</p>
+            </div>
             <p v-if="place" class="text-[11px] text-smoke">
               {{ t('setup.review.googleMaps') }}
               <a v-if="place.googleMapsUri" :href="place.googleMapsUri" target="_blank" rel="noopener" class="font-semibold underline">

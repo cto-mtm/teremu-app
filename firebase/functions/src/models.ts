@@ -372,7 +372,7 @@ export const restaurantDocSchema = z.object({
   setupListing: setupListingSchema.optional(),
   // The confirmed public listing (docs/restaurant-listing.md). Only the
   // place ID and what the owner confirmed are stored — never Google's
-  // rating, reviews, photos or hours.
+  // rating, reviews or photos.
   listing: z
     .object({
       placeId: z.string().nullable(),
@@ -381,6 +381,12 @@ export const restaurantDocSchema = z.object({
       website: z.string().nullable(),
       cuisines: z.array(cuisineSchema),
       priceLevel: z.number().int().min(1).max(4).nullable(),
+      // Owner-confirmed contact details (2026-10-21, open decision 1):
+      // prefilled from the listing, edited and saved by the owner, so they
+      // are the owner's data. Absent on restaurants set up before this.
+      address: z.string().nullable().optional(),
+      phone: z.string().nullable().optional(),
+      hours: z.string().nullable().optional(),
       confirmedAt: z.number(),
     })
     .optional(),
@@ -441,6 +447,9 @@ export const listingCommitSchema = z
         website: z.string().trim().max(500).nullable(),
         cuisines: z.array(cuisineSchema).max(4),
         priceLevel: z.number().int().min(1).max(4).nullable(),
+        address: z.string().trim().max(200).nullable().optional(),
+        phone: z.string().trim().max(40).nullable().optional(),
+        hours: z.string().trim().max(400).nullable().optional(),
       })
       .strict(),
     dishes: z
@@ -468,6 +477,9 @@ export const listingUpdateSchema = z
   .object({
     website: z.string().trim().max(500).nullable().optional(),
     cuisines: z.array(cuisineSchema).max(4).optional(),
+    address: z.string().trim().max(200).nullable().optional(),
+    phone: z.string().trim().max(40).nullable().optional(),
+    hours: z.string().trim().max(400).nullable().optional(),
     notes: z
       .array(z.object({ text: z.string().trim().min(1).max(200), origin: z.enum(["suggested", "owner"]) }).strict())
       .max(20)

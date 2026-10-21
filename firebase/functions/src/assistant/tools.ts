@@ -7,6 +7,7 @@ import { invoiceLines } from "./code/invoiceLines.js";
 import { vendors } from "./code/vendors.js";
 import { getCounts } from "./code/counts.js";
 import { getAppHelp } from "./code/appHelp.js";
+import { getRestaurantListing } from "./code/listing.js";
 
 /**
  * The assistant's capabilities, as data. Each row is a `query` the engine
@@ -126,6 +127,20 @@ const ExpenseRow = z.object({
   tag: z.string().meta(card({ label: "Etiqueta", format: "badge" })),
   vendorName: z.string().nullable().meta(card({ label: "Proveedor" })),
 });
+
+/** The restaurant's public profile (getRestaurantListing): owner-confirmed
+ *  contact details (stored) plus the live Google rating / open-now (never
+ *  stored; null when no place is linked or the daily lookup cap is hit). */
+export const ListingRow = z.object({
+  address: z.string().max(200).nullable().meta(card({ label: "Dirección" })),
+  phone: z.string().max(40).nullable().meta(card({ label: "Teléfono" })),
+  hours: z.string().max(400).nullable().meta(card({ label: "Horario" })),
+  rating: z.number().nullable().meta(card({ label: "Valoración Google", format: "number" })),
+  reviewCount: z.number().nullable().meta(card({ label: "Reseñas", format: "number" })),
+  openNow: z.boolean().nullable().meta(card({ label: "Abierto ahora", format: "badge" })),
+  googleLinked: z.boolean().meta(card({ hidden: true })),
+});
+export type ListingRowT = z.infer<typeof ListingRow>;
 
 /** One owner-written note (getRestaurantNotes) — free text, capped. */
 const NoteRow = z.object({
@@ -321,6 +336,20 @@ export const tools: ToolRow[] = [
       map: (d) => ({ text: String(d.text ?? "").slice(0, 200) }),
     },
     output: z.array(NoteRow),
+  },
+  {
+    // Owner-confirmed contact details from the restaurant doc plus a live
+    // Places lookup for the rating (docs/restaurant-listing.md). Code: a
+    // query cannot call the provider. Review text is never returned.
+    kind: "code",
+    name: "getRestaurantListing",
+    label: "Ficha del restaurante",
+    description:
+      "The restaurant's own address, phone and opening hours as the owner confirmed them, plus its current Google rating, review count and whether it is open now. Not review text.",
+    permission: "menu:read",
+    input: z.object({}),
+    output: z.array(ListingRow),
+    execute: getRestaurantListing,
   },
   {
     kind: "handoff",

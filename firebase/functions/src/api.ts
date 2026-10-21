@@ -1167,8 +1167,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
       priceLabel: planInfo.priceLevel ? `${["budget", "moderate", "upscale", "premium"][planInfo.priceLevel - 1]} (${planInfo.priceLevel} of 4)` : "not set",
       websiteLabel: (planInfo.website ?? "not set").slice(0, 80),
       countryLabel: planInfo.country ?? "not set",
-      // Google content (address, hours, phone, rating) is never stored — prompt.md says so.
-      googleLabel: planInfo.placeLinked ? "linked (address, hours and reviews are not stored)" : "not linked",
+      // Rating / open-now come live via getRestaurantListing; review text never (prompt.md).
+      googleLabel: planInfo.placeLinked ? "linked (rating via getRestaurantListing; review text not available)" : "not linked",
     };
     await toNodeHandler(assistant.fetch, () => principal)(req, res);
     return;

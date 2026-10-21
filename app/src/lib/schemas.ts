@@ -429,6 +429,9 @@ export const listingMediaSchema = z.object({
       }),
     )
     .catch([]),
+  rating: z.number().nullable().catch(null),
+  reviewCount: z.number().nullable().catch(null),
+  openNow: z.boolean().nullable().catch(null),
   googleMapsUri: z.string().nullable().catch(null),
 })
 
@@ -442,6 +445,10 @@ export const listingStatusSchema = z.object({
       website: z.string().nullable().catch(null),
       cuisines: z.array(cuisineSchema).catch([]),
       priceLevel: z.number().nullable().catch(null),
+      // Owner-confirmed contact details (editable on the card; the assistant reads them).
+      address: z.string().nullable().catch(null),
+      phone: z.string().nullable().catch(null),
+      hours: z.string().nullable().catch(null),
       confirmedAt: z.number().catch(0),
       mapsUrl: z.string().nullable().catch(null),
     })

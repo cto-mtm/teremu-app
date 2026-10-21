@@ -1,6 +1,7 @@
 /**
- * Plans: the pricing page reflects the restaurant's plan, and the
- * Pro-only surfaces (POS integrations) are gated on Free.
+ * Plans: the pricing page reflects the restaurant's plan, and the POS
+ * card tells Free about its cap (hourly sync, no AI matching) while still
+ * letting it connect — the cap is the upgrade nudge, not a gate.
  *
  * Billing is not configured in the emulator, so "upgrade" ends in the
  * checkout placeholder — the spec asserts that hand-off, not a payment.
@@ -34,16 +35,19 @@ test.describe('Pricing & plan gates', () => {
     expect(await dialog).toContain('Los pagos aún no están configurados')
   })
 
-  test('Free gates POS integrations; Pro opens them', async ({ page }) => {
+  test('Free sees the POS cap and can still connect; Pro has no cap note', async ({ page }) => {
     await setPlanEverywhere('free')
     await page.goto('/settings')
     const pos = page.locator('.card').filter({ hasText: 'Punto de venta (TPV)' })
-    await expect(pos.getByText('Las integraciones con TPV están incluidas en Pro.')).toBeVisible()
-    await expect(pos.getByRole('button', { name: 'Conectar' })).toHaveCount(0)
+    const capNote = pos.getByText(/^Plan Free: las ventas se actualizan cada hora/)
+    await expect(capNote).toBeVisible()
+    await expect(capNote.getByRole('link', { name: 'Ver planes y funciones' })).toBeVisible()
+    await expect(pos.getByRole('button', { name: 'Conectar' })).toBeVisible()
 
     await setPlanEverywhere('pro')
     await page.reload()
     await expect(pos.getByRole('button', { name: 'Conectar' })).toBeVisible()
+    await expect(pos.getByText(/^Plan Free:/)).toHaveCount(0)
     await expect(page.locator('.card').filter({ hasText: 'Plan' }).first()).toContainText('Pro')
 
     await page.goto('/pricing')

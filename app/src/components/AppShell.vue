@@ -24,6 +24,9 @@ const authStore = useAuthStore()
 
 // Chromeless routes: the scanner owns the viewport, login has no nav.
 const bare = computed(() => route.name === 'scan' || route.name === 'login')
+// Focused flows keep the nav but lose the phone FABs: the restaurant
+// setup's sticky action bar sits exactly where they float.
+const focused = computed(() => route.name === 'restaurant-setup')
 
 // Mobile: the sidebar is an off-canvas drawer toggled by the hamburger;
 // from md up it's always visible and this flag is ignored.
@@ -273,9 +276,9 @@ watch(
     <!-- Mobile FABs: the assistant bottom-left (secondary: white, ember
          icon) and the launcher bottom-right (primary). Both phone-only
          (md:hidden); desktop uses the sidebar. Hidden on bare routes (the
-         scanner owns the viewport); the assistant one also steps aside
-         while either overlay is up. -->
-    <template v-if="authStore.user && authStore.profile && !bare">
+         scanner owns the viewport) and focused flows (setup); the
+         assistant one also steps aside while either overlay is up. -->
+    <template v-if="authStore.user && authStore.profile && !bare && !focused">
       <button
         v-show="!launcherOpen && !assistantOpen"
         class="pb-safe fixed bottom-4 left-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full border border-ember-200 bg-white text-ember-700 shadow-lg transition-transform active:scale-90 md:hidden"

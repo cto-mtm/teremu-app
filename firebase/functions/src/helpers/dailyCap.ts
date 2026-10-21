@@ -14,6 +14,9 @@ const DAILY_CAPS = {
   listingMedia: 10,
   /** Menu AI: photo-of-the-menu reads and recipe drafts (2–4 per wizard run). */
   menuAi: 30,
+  /** Google Places details the assistant fetches live for rating / open-now
+   * (getRestaurantListing; docs/business-model.md §4 "Google Places"). */
+  assistantPlaces: 10,
 } as const;
 
 export type DailyKind = keyof typeof DAILY_CAPS;

@@ -143,7 +143,7 @@ describe("google adapter: requests and mapping", () => {
       "/photos/p1/media": { photoUri: "https://lh3.googleusercontent.com/p1" },
     });
     const m = await googleProvider(SA).media("ChIJfaro", { language: "es" });
-    expect(calls[0].headers["X-Goog-FieldMask"]).toBe("reviews,photos,googleMapsUri");
+    expect(calls[0].headers["X-Goog-FieldMask"]).toBe("reviews,photos,rating,userRatingCount,currentOpeningHours.openNow,googleMapsUri");
     expect(calls[1].url.searchParams.get("skipHttpRedirect")).toBe("true");
     expect(m.photos).toEqual([{ url: "https://lh3.googleusercontent.com/p1", attributions: [{ name: "Marta", uri: "https://maps.google.com/u/1", photoUri: null }] }]);
     expect(m.reviews[0]).toMatchObject({ rating: 5, text: "Muy buena paella", author: { name: "Marta G." }, relativeTime: "hace un mes" });
