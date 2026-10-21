@@ -31,10 +31,12 @@ const navOpen = ref(false)
 watch(() => route.path, () => (navOpen.value = false))
 
 // The shared assistant (@mtmcya/assistant): opened from the sidebar
-// entry; the server scopes every tool by the member's perms. It keeps one
+// entry (desktop) or the bottom-left FAB (phones); the server scopes
+// every tool by the member's perms. It keeps one
 // conversation per person PER LOCATION, so a location switch resets the
 // client state (and the keyed modal below remounts its transcript).
 const assistant = useAssistant()
+const assistantOpen = assistant.isOpen
 watch(() => authStore.profile?.restaurantId, () => void assistant.reset())
 
 // Mobile launcher (full-screen hub). Auto-opens ONCE per app session on
@@ -268,10 +270,20 @@ watch(
          rather than carry the old one across (see multi-location-plan.md). -->
     <AssistantModal v-if="authStore.user" :key="authStore.profile?.restaurantId" />
 
-    <!-- Mobile launcher: full-screen hub + its bottom-right FAB. Both
-         phone-only (md:hidden); desktop uses the sidebar. Hidden on bare
-         routes (the scanner owns the viewport). -->
+    <!-- Mobile FABs: the assistant bottom-left (secondary: white, ember
+         icon) and the launcher bottom-right (primary). Both phone-only
+         (md:hidden); desktop uses the sidebar. Hidden on bare routes (the
+         scanner owns the viewport); the assistant one also steps aside
+         while either overlay is up. -->
     <template v-if="authStore.user && authStore.profile && !bare">
+      <button
+        v-show="!launcherOpen && !assistantOpen"
+        class="pb-safe fixed bottom-4 left-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full border border-ember-200 bg-white text-ember-700 shadow-lg transition-transform active:scale-90 md:hidden"
+        :aria-label="t('assistant.open')"
+        @click="assistant.open()"
+      >
+        <NavIcon name="assistant" class="h-6 w-6" />
+      </button>
       <button
         class="pb-safe fixed right-4 bottom-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full bg-ember text-white shadow-lg transition-transform active:scale-90 md:hidden"
         :aria-label="t('shell.launcher.open')"
@@ -284,7 +296,7 @@ watch(
           <rect x="14" y="14" width="7" height="7" rx="1.5" />
         </svg>
       </button>
-      <MobileLauncher v-model="launcherOpen" @assistant="assistant.open()" />
+      <MobileLauncher v-model="launcherOpen" />
     </template>
 
     <OnboardingWizard v-if="authStore.user" v-model="onboardingOpen" />

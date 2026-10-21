@@ -32,7 +32,6 @@ export interface PlanLimits {
   /** Assistant questions per month, per location (the package counts turns, not tokens). */
   assistantTurns: number;
   mailsPerDay: number; // invites + supplier orders per UTC day (abuse cap, see mail.ts)
-  integrations: boolean; // POS connections (docs/pos.md) — per location, like billing
   /** POS sales poll floor in minutes (docs/pos.md §Plan gating): once a
    * pass is complete the scheduler waits at least this long, and "sync
    * now" is throttled to it (`syncNowRetryAt`). A pass still in flight —
@@ -44,9 +43,9 @@ export interface PlanLimits {
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, integrations: true, posPollMinutes: 60, posAiMatching: false },
-  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, integrations: true, posPollMinutes: 5, posAiMatching: true },
-  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, integrations: true, posPollMinutes: 5, posAiMatching: true },
+  free: { scans: 25, members: 1, historyDays: 90, expenseTags: 3, assistantTurns: 20, mailsPerDay: 10, posPollMinutes: 60, posAiMatching: false },
+  pro: { scans: 500, members: 5, historyDays: 3650, expenseTags: Infinity, assistantTurns: 300, mailsPerDay: 50, posPollMinutes: 5, posAiMatching: true },
+  max: { scans: 1500, members: 10, historyDays: 3650, expenseTags: Infinity, assistantTurns: 1000, mailsPerDay: 100, posPollMinutes: 5, posAiMatching: true },
 };
 
 /** Free locations one person may own. Creating a location costs nothing,

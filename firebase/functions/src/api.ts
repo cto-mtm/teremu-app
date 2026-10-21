@@ -1176,11 +1176,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
 
   // ── POS integrations (docs/pos.md) ─────────────────────────────
   // Provider-generic: every route takes :provider and the engine never
-  // branches on it. Reading and disconnecting stay open on any plan — a
-  // downgraded location must be able to see why sync paused and to let
-  // go. Everything that calls the provider or edits mappings needs
-  // `limits.integrations` (every plan today; Free is capped — hourly sales
-  // poll, no LLM matching — see PLAN_LIMITS).
+  // branches on it. POS is on every plan; the plan only tunes the cap
+  // (Free: hourly sales poll, no LLM matching — PLAN_LIMITS). A future
+  // pause would be a per-restaurant flag, not a plan limit (docs/pos.md).
   if (head === "integrations") {
     if (m === "GET" && seg.length === 1) {
       if (!can(member, "integrations")) return forbidden(res);
@@ -1206,7 +1204,6 @@ async function route(req: Request, res: Response): Promise<unknown> {
       await disconnect(rid, p);
       return json(res, 200, { ok: true });
     }
-    if (!planInfo.limits.integrations) return paywall("integrations_pro");
     if (m === "POST" && action === "connect" && seg.length === 3) {
       return json(res, 200, await startConnect({ rid, uid: member.uid, provider: p, origin: req.headers.origin }));
     }

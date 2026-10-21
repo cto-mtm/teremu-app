@@ -16,7 +16,7 @@ import { connect, db, integration, proOwner, selectLocation } from "./pos-helper
 // Order ingestion edge cases on the deterministic mock provider
 // (docs/pos.md §Order ingestion): what happens to orders that are open,
 // canceled, moved, sold before the catalog knew them, or arrive while the
-// plan is paused or the grant is gone.
+// plan is capped (Free) or the grant is gone.
 // Complements pos-orders.test.ts, which covers the happy paths.
 
 type Entry = {

@@ -105,15 +105,12 @@ export const posOauthCallback = onRequest({ region: REGION }, async (req, res) =
 /** Daily POS upkeep, every provider: refresh credentials expiring within
  * 7 days (re-sealing under the current key; a rejected refresh flips the
  * connection to needs_reauth), then re-sync every bound location's
- * catalog — skipping locations whose plan no longer includes POS. */
+ * catalog. */
 export const posDaily = onSchedule(
   { schedule: "every day 03:30", timeZone: "UTC", region: REGION, secrets: POS_SECRETS, timeoutSeconds: 540 },
   async () => {
     logger.info("POS credential refresh", await refreshExpiringCredentials());
-    logger.info(
-      "POS catalog sync",
-      await syncAllCatalogs(async (rid) => (await getPlanInfo(rid)).limits.integrations),
-    );
+    logger.info("POS catalog sync", await syncAllCatalogs());
   },
 );
 
@@ -135,7 +132,6 @@ export const posSync = onSchedule(
     for (const { rid, provider } of await boundRestaurants()) {
       try {
         const { limits } = await getPlanInfo(rid);
-        if (!limits.integrations) continue; // paused, data kept
         const integ = (await integrationRef(rid, provider).get()).data() as IntegrationDoc | undefined;
         if (integ && pollDue(integ, now)) {
           await syncOrders(rid, provider, { pollFloorMs: pollFloorMs(limits) });

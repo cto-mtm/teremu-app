@@ -38,7 +38,7 @@ const message = ref<{ ok: boolean; text: string } | null>(null)
 const canEdit = computed(() => auth.can('integrations', 'edit'))
 const onFreePlan = computed(() => auth.profile?.plan === 'free')
 
-const RESULTS = ['connected', 'denied', 'forbidden', 'upgrade', 'not_configured', 'invalid_state', 'failed'] as const
+const RESULTS = ['connected', 'denied', 'forbidden', 'not_configured', 'invalid_state', 'failed'] as const
 const ERRORS = ['currency_mismatch', 'location_taken', 'pos_reauth'] as const
 
 function errorText(error: string): string {
@@ -71,7 +71,7 @@ async function connect(provider: string): Promise<void> {
     return
   }
   busy.value = null
-  message.value = { ok: false, text: res.error.includes('integrations_pro') ? t('integrations.proOnly') : errorText(res.error) }
+  message.value = { ok: false, text: errorText(res.error) }
 }
 
 async function startPicking(provider: string): Promise<void> {

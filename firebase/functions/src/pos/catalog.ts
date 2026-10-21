@@ -351,9 +351,8 @@ export async function updateLink(rid: string, provider: PosProvider, linkId: str
   return viewOf(linkId, next);
 }
 
-/** Daily: re-sync every bound location on a plan that includes POS — a
- * downgraded location simply pauses (data kept). Cheap tiers only. */
-export async function syncAllCatalogs(planAllows: (rid: string) => Promise<boolean>): Promise<{ synced: number; failed: number }> {
+/** Daily: re-sync every bound location. Cheap tiers only. */
+export async function syncAllCatalogs(): Promise<{ synced: number; failed: number }> {
   let synced = 0;
   let failed = 0;
   const conns = await db().collection("posConnections").where("status", "==", "active").get();
@@ -361,7 +360,6 @@ export async function syncAllCatalogs(planAllows: (rid: string) => Promise<boole
     const provider = conn.get("provider") as PosProvider;
     for (const rid of Object.values((conn.get("locations") as Record<string, string> | undefined) ?? {})) {
       try {
-        if (!(await planAllows(rid))) continue;
         await syncCatalog(rid, provider, { llm: false });
         synced += 1;
       } catch (err) {

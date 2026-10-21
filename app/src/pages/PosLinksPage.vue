@@ -58,7 +58,6 @@ function drift(l: Link): number | null {
 
 function errorText(error: string): string {
   if (error.includes('pos_reauth')) return t('integrations.error.pos_reauth')
-  if (error.includes('integrations_pro')) return t('integrations.proOnly')
   return t('integrations.error.generic')
 }
 

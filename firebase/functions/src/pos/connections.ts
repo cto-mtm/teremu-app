@@ -128,7 +128,7 @@ export async function oauthReturnUrl(query: { state?: unknown; code?: unknown; e
 /** Where the callback sends the browser when it could not even read the state. */
 export const oauthFailureUrl = (): string => `${returnBase()}/settings?pos=failed`;
 
-export type OAuthResult = "connected" | "forbidden" | "upgrade" | "not_configured" | "invalid_state" | "failed";
+export type OAuthResult = "connected" | "forbidden" | "not_configured" | "invalid_state" | "failed";
 
 /**
  * POST /integrations/oauth — the signed-in caller finishes a flow THEY
@@ -143,12 +143,11 @@ export async function completeOAuth(
   if (!state) return { result: "invalid_state" };
   if (state.uid !== callerUid) return { result: "forbidden" };
 
-  // The starter may have lost the right (or the plan) since.
+  // The starter may have lost the right since.
   const member = memberDocSchema.safeParse((await db().doc(`restaurants/${state.rid}/members/${state.uid}`).get()).data());
   if (!member.success || !can({ uid: state.uid, rid: state.rid, ...member.data }, "integrations", "edit")) {
     return { result: "forbidden" };
   }
-  if (!(await getPlanInfo(state.rid)).limits.integrations) return { result: "upgrade" };
   const adapter = adapterFor(state.provider);
   if (!adapter || adapter.connect.kind !== "oauth" || !encryptionConfigured()) return { result: "not_configured" };
 
