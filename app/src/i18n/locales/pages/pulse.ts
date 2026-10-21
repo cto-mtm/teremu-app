@@ -49,13 +49,57 @@ const es = {
   vendorSpendTitle: 'Gasto por proveedor · 8 semanas',
   otherVendors: 'otros',
   matrixTitle: 'Ingeniería de menú',
-  matrixHint: 'Popularidad vs margen — toca un plato para editarlo',
+  matrixHint: 'Pellizca o usa + / − para ampliar · toca un plato para ver su detalle',
   soldUnits: '{n} vendidos',
   quadrant: {
     star: 'Estrellas',
     plowhorse: 'Caballos de tiro',
     puzzle: 'Incógnitas',
     dog: 'Perros',
+  },
+  // What to do with a dish in each quadrant (detail card + explainer).
+  quadrantAdvice: {
+    star: 'Se vende mucho y deja buen margen: mantenlo visible y no toques la receta.',
+    plowhorse: 'Se vende mucho pero deja poco: revisa la porción o la receta, o sube un poco el precio.',
+    puzzle: 'Deja buen margen pero se vende poco: dale visibilidad en la carta o pide al equipo que lo recomiende.',
+    dog: 'Se vende poco y deja poco: rediseña el plato o plantéate quitarlo de la carta.',
+  },
+  matrix: {
+    axisUnits: 'Popularidad (unidades vendidas) →',
+    axisMargin: 'Margen →',
+    zoomIn: 'Acercar',
+    zoomOut: 'Alejar',
+    zoomReset: 'Ver todo',
+    margin: 'margen {pct}',
+    editDish: 'Editar plato',
+  },
+  // The ⓘ explainers on each chart.
+  info: {
+    revenue: {
+      p1: 'Compara, semana a semana, lo que vendiste (verde) con lo que gastaste (rojo): compras a proveedores y otros gastos registrados.',
+      p2: 'Si la línea roja se acerca a la verde, esa semana casi no queda margen. Es la forma más rápida de ver si el negocio va bien.',
+    },
+    foodCost: {
+      p1: 'Qué parte de tus ventas se va en comprar comida: compras ÷ ventas de cada semana.',
+      p2: 'La franja verde (28–35 %) es el rango sano habitual en restaurantes. Si te sales por arriba, revisa precios de proveedores, mermas o porciones.',
+    },
+    vendorSpend: {
+      p1: 'Cuánto gastaste cada semana, repartido entre tus principales proveedores.',
+      p2: 'Te ayuda a ver de quién dependes y a detectar a tiempo un gasto que se dispara. Toca una barra o un nombre para abrir el proveedor.',
+    },
+    matrix: {
+      p1: 'Cada punto es un plato: cuanto más a la derecha, más se vende; cuanto más arriba, más margen deja.',
+      p2: 'Las líneas discontinuas marcan la media de tu carta y la dividen en cuatro grupos:',
+      p3: 'Sirve para decidir qué destacar, qué reajustar de precio y qué quitar. Con muchos platos, amplía para separar los nombres.',
+    },
+    priceWatch: {
+      p1: 'Los ingredientes cuyo precio más ha cambiado entre tus últimas compras, con su evolución.',
+      p2: 'Una subida aquí encarece todos los platos que lo usan: revisa sus márgenes o negocia con el proveedor.',
+    },
+    topSpend: {
+      p1: 'Los ingredientes en los que más dinero gastas.',
+      p2: 'Unos pocos suelen concentrar casi todo el gasto: negociar su precio o ajustar su uso es lo que más impacto tiene.',
+    },
   },
   priceWatchTitle: 'Vigilancia de precios',
   priceWatchEmpty: 'Aprueba más facturas para ver tendencias de precios.',
@@ -140,13 +184,55 @@ const en: typeof es = {
   vendorSpendTitle: 'Spend by vendor · 8 weeks',
   otherVendors: 'others',
   matrixTitle: 'Menu engineering',
-  matrixHint: 'Popularity vs margin — tap a dish to edit it',
+  matrixHint: 'Pinch or use + / − to zoom · tap a dish for details',
   soldUnits: '{n} sold',
   quadrant: {
     star: 'Stars',
     plowhorse: 'Plowhorses',
     puzzle: 'Puzzles',
     dog: 'Dogs',
+  },
+  quadrantAdvice: {
+    star: 'Sells a lot and earns well: keep it visible and leave the recipe alone.',
+    plowhorse: 'Sells a lot but earns little: review the portion or recipe, or nudge the price up.',
+    puzzle: 'Earns well but rarely sells: give it a better spot on the menu or have staff recommend it.',
+    dog: 'Rarely sells and earns little: rework the dish or consider dropping it.',
+  },
+  matrix: {
+    axisUnits: 'Popularity (units sold) →',
+    axisMargin: 'Margin →',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    zoomReset: 'Show all',
+    margin: '{pct} margin',
+    editDish: 'Edit dish',
+  },
+  info: {
+    revenue: {
+      p1: 'Compares, week by week, what you sold (green) with what you spent (red): vendor purchases plus other logged expenses.',
+      p2: 'When the red line gets close to the green one, that week left almost no margin. It is the quickest read on how the business is doing.',
+    },
+    foodCost: {
+      p1: 'How much of your sales goes to buying food: purchases ÷ sales for each week.',
+      p2: 'The green band (28–35%) is the usual healthy range for restaurants. Above it, check vendor prices, waste or portions.',
+    },
+    vendorSpend: {
+      p1: 'How much you spent each week, split across your main vendors.',
+      p2: 'Shows who you depend on and catches a vendor bill that is creeping up. Tap a bar or a name to open the vendor.',
+    },
+    matrix: {
+      p1: 'Each dot is a dish: the further right, the more it sells; the higher up, the more margin it earns.',
+      p2: 'The dashed lines mark your menu average and split it into four groups:',
+      p3: 'Use it to decide what to promote, what to reprice and what to drop. With many dishes, zoom in to separate the names.',
+    },
+    priceWatch: {
+      p1: 'The ingredients whose price moved the most between your recent purchases, with their trend.',
+      p2: 'A rise here makes every dish that uses it more expensive: check those margins or talk to the vendor.',
+    },
+    topSpend: {
+      p1: 'The ingredients you spend the most money on.',
+      p2: 'A handful usually make up most of your spend: negotiating their price or tightening their use has the biggest impact.',
+    },
   },
   priceWatchTitle: 'Price watch',
   priceWatchEmpty: 'Approve more invoices to see price trends.',

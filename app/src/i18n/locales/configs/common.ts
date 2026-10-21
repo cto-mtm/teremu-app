@@ -113,6 +113,8 @@ const es = {
     delete: 'Eliminar',
     confirmDelete: '¿Eliminar este registro? Los ajustes de despensa se revierten.',
     saveFailed: 'No se pudo guardar — inténtalo de nuevo.',
+    info: '¿Qué significa?',
+    close: 'Cerrar',
   },
   label: {
     unit: 'Unidad',
@@ -229,6 +231,8 @@ const en: typeof es = {
     delete: 'Delete',
     confirmDelete: 'Delete this entry? Pantry adjustments are reverted.',
     saveFailed: 'Could not save — try again.',
+    info: 'What does this mean?',
+    close: 'Close',
   },
   label: {
     unit: 'Unit',

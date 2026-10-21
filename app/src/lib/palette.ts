@@ -16,3 +16,12 @@ export const CHART_COLORS = [
 
 /** Aggregated-tail / "others" slices and segments. */
 export const CHART_REST_COLOR = '#d1d5db'
+
+/** Menu-engineering quadrants: good → herb, busy-but-thin → ember,
+ *  quiet → smoke, losing → coral. */
+export const QUADRANT_COLORS = {
+  star: '#2e9e5b',
+  plowhorse: '#ff751f',
+  puzzle: '#7a6f66',
+  dog: '#dc3448',
+} as const

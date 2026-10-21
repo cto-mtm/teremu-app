@@ -139,6 +139,7 @@ export const tools: ToolRow[] = [
   {
     kind: "query",
     name: "searchIngredients",
+    label: "Ingredientes",
     description: "Find pantry ingredients by (the start of) their name: last price, previous price, unit, vendor and theoretical stock.",
     permission: "pantry:read",
     // Prefix match on the normalized `nameKey` the API already stores; the
@@ -172,6 +173,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getPriceChanges",
+    label: "Cambios de precio",
     description:
       "Pantry ingredients whose price moved since a date: up, down or either, biggest move first. Use for 'what got more expensive this month' and vendor price-hike questions.",
     permission: "pantry:read",
@@ -186,6 +188,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getDishCosts",
+    label: "Coste de platos",
     description:
       "Plate cost and margin of menu dishes (escandallo): by dish name, or ranked by margin (lowest = least profitable, highest = most profitable). The only source of dish cost.",
     permission: "menu:read",
@@ -200,6 +203,7 @@ export const tools: ToolRow[] = [
   {
     kind: "query",
     name: "getRecentInvoices",
+    label: "Facturas recientes",
     description: "The 20 most recent approved supplier invoices and delivery notes, newest first, with vendor, date and base-currency total.",
     permission: "triage:read",
     input: z.object({}),
@@ -222,6 +226,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getInvoiceLineItems",
+    label: "Líneas de factura",
     description:
       "The line items of one approved invoice (its id from getRecentInvoices): what was bought, quantity and base-currency unit price and total. Use to answer 'what was on that invoice' or an ingredient's price on a specific bill.",
     permission: "triage:read",
@@ -232,6 +237,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getVendors",
+    label: "Proveedores",
     description:
       "Vendors (proveedores) derived from approved invoices: total spend, number of deliveries, last order date and contact. By vendor name, or the top vendors by spend. Excludes non-food expense bills.",
     permission: "vendors:read",
@@ -245,6 +251,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getCounts",
+    label: "Tus datos en Teremu",
     description:
       "How much data this restaurant has: approved invoices scanned so far, invoices waiting in triage, active dishes, ingredients. Use for 'how many invoices have I seen', 'how many are pending'.",
     permission: "triage:read",
@@ -255,6 +262,7 @@ export const tools: ToolRow[] = [
   {
     kind: "code",
     name: "getAppHelp",
+    label: "Cómo funciona Teremu",
     description:
       "How Teremu itself works: what a screen or feature does and where to find it. Use for 'what can you do', 'how does X work', 'where do I …', and plan/billing/account questions. Static product help, not restaurant data.",
     permission: "app:read",
@@ -267,6 +275,7 @@ export const tools: ToolRow[] = [
   {
     kind: "query",
     name: "getRevenue",
+    label: "Ventas",
     description: "Daily sales (revenue) from a start date, newest first, up to 90 days.",
     permission: "finance:read",
     input: z.object({ from: z.string().regex(DATE).describe("Start date inclusive, YYYY-MM-DD") }),
@@ -282,6 +291,7 @@ export const tools: ToolRow[] = [
   {
     kind: "query",
     name: "getExpenses",
+    label: "Gastos",
     description: "Tagged expenses (rent, utilities, non-food bills) from a start date, newest first, up to 90 rows.",
     permission: "finance:read",
     input: z.object({ from: z.string().regex(DATE).describe("Start date inclusive, YYYY-MM-DD") }),
@@ -300,6 +310,7 @@ export const tools: ToolRow[] = [
     // Owner-written text, never review text; capped and plain.
     kind: "query",
     name: "getRestaurantNotes",
+    label: "Notas del restaurante",
     description: "The owner's own notes about the restaurant (opening days, specialties, policies, anything they asked you to know).",
     permission: "menu:read",
     input: z.object({}),
@@ -314,6 +325,7 @@ export const tools: ToolRow[] = [
   {
     kind: "handoff",
     name: "openScanner",
+    label: "Escanear factura",
     description: "The user wants to scan, photograph or upload a supplier invoice, receipt or delivery note.",
     permission: "scan:write",
     input: z.object({}),
@@ -322,6 +334,7 @@ export const tools: ToolRow[] = [
   {
     kind: "handoff",
     name: "openTriage",
+    label: "Revisar facturas",
     description: "The user wants to review, approve or fix scanned invoices waiting in triage.",
     permission: "triage:read",
     input: z.object({}),
@@ -330,6 +343,7 @@ export const tools: ToolRow[] = [
   {
     kind: "handoff",
     name: "openDish",
+    label: "Abrir plato",
     description: "Open a dish card (ficha de plato) to edit its recipe or price.",
     permission: "menu:read",
     input: z.object({ id: z.string().describe("Dish id from getDishCosts") }),
@@ -338,6 +352,7 @@ export const tools: ToolRow[] = [
   {
     kind: "handoff",
     name: "openIngredient",
+    label: "Abrir ingrediente",
     description: "Open an ingredient's pantry page (price history, stock).",
     permission: "pantry:read",
     input: z.object({ id: z.string().describe("Ingredient id from searchIngredients") }),
@@ -346,6 +361,7 @@ export const tools: ToolRow[] = [
   {
     kind: "handoff",
     name: "openVendor",
+    label: "Abrir proveedor",
     description: "Open a vendor's page (proveedor): their invoices, ingredients supplied, and contact.",
     permission: "vendors:read",
     input: z.object({ id: z.string().describe("Vendor key from getVendors") }),

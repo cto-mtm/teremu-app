@@ -21,8 +21,10 @@ import {
   weeklySeries,
 } from '../lib/domain'
 import type { ExpenseEntry, Ingredient, MenuItem, RevenueEntry } from '../lib/types'
-import { CHART_COLORS, CHART_REST_COLOR } from '../lib/palette'
+import { CHART_COLORS, CHART_REST_COLOR, QUADRANT_COLORS } from '../lib/palette'
 import BaseButton from '../components/BaseButton.vue'
+import InfoButton from '../components/InfoButton.vue'
+import MenuMatrix from '../components/MenuMatrix.vue'
 import PageLoader from '../components/PageLoader.vue'
 import ProvidersPanel from '../components/ProvidersPanel.vue'
 import SpendDrilldown from '../components/SpendDrilldown.vue'
@@ -144,38 +146,11 @@ const vendorRects = computed(() => {
   return { rects, barW, max }
 })
 
-// ── Menu engineering matrix (click a dot → dish editor) ─────────
-const QUADRANT_COLORS: Record<string, string> = {
-  star: '#2e9e5b',
-  plowhorse: '#ff751f',
-  puzzle: '#7a6f66',
-  dog: '#dc3448',
-}
-const ME = { w: 640, h: 300, pad: 34 }
+// ── Menu engineering matrix (MenuMatrix: zoom, tap → detail) ────
+const QUADRANTS = ['star', 'plowhorse', 'puzzle', 'dog'] as const
 const engineering = computed(() =>
   menuEngineering(kitchen.menuItems, kitchen.revenue, kitchen.ingredientMap, laborRate.value),
 )
-const matrix = computed(() => {
-  const { points: pts, avgUnits, avgMargin } = engineering.value
-  const maxU = Math.max(1, ...pts.map((p) => p.units)) * 1.15
-  const minM = Math.min(0, ...pts.map((p) => p.margin))
-  const maxM = Math.max(80, ...pts.map((p) => p.margin + 8))
-  const x = (u: number) => ME.pad + (u / maxU) * (ME.w - 2 * ME.pad)
-  const y = (m: number) => ME.h - ME.pad - ((m - minM) / (maxM - minM)) * (ME.h - 2 * ME.pad)
-  return {
-    dots: pts.map((p) => ({
-      id: p.item.id,
-      name: p.item.name,
-      units: p.units,
-      margin: p.margin,
-      cx: x(p.units),
-      cy: y(p.margin),
-      color: QUADRANT_COLORS[p.quadrant],
-    })),
-    avgX: x(avgUnits),
-    avgY: y(avgMargin),
-  }
-})
 
 // ── Price watch: most volatile ingredients, with sparklines ─────
 const priceWatch = computed(() =>
@@ -542,7 +517,13 @@ watch(showExpense, (open) => {
     <!-- Expenses vs revenue -->
     <div class="card">
       <div class="mb-2 flex items-center justify-between text-sm">
-        <span class="font-semibold">{{ t('pulse.chartTitle') }}</span>
+        <span class="flex items-center gap-1">
+          <span class="font-semibold">{{ t('pulse.chartTitle') }}</span>
+          <InfoButton :title="t('pulse.chartTitle')">
+            <p>{{ t('pulse.info.revenue.p1') }}</p>
+            <p>{{ t('pulse.info.revenue.p2') }}</p>
+          </InfoButton>
+        </span>
         <span class="flex items-center gap-3 text-[11px] text-smoke">
           <span class="flex items-center gap-1"><span class="h-1.5 w-4 rounded bg-herb" />{{ t('pulse.legendRevenue') }}</span>
           <span class="flex items-center gap-1"><span class="h-1.5 w-4 rounded bg-coral" />{{ t('pulse.legendExpenses') }}</span>
@@ -562,7 +543,13 @@ watch(showExpense, (open) => {
       <!-- Food-cost % with target band -->
       <div class="card">
         <div class="mb-2 flex items-center justify-between text-sm">
-          <span class="font-semibold">{{ t('pulse.foodCostTitle') }}</span>
+          <span class="flex items-center gap-1">
+            <span class="font-semibold">{{ t('pulse.foodCostTitle') }}</span>
+            <InfoButton :title="t('pulse.foodCostTitle')">
+              <p>{{ t('pulse.info.foodCost.p1') }}</p>
+              <p>{{ t('pulse.info.foodCost.p2') }}</p>
+            </InfoButton>
+          </span>
           <span class="text-[11px] text-smoke">{{ t('pulse.foodCostBand') }}</span>
         </div>
         <svg :viewBox="`0 0 ${FC.w} ${FC.h}`" class="h-44 w-full md:h-36" role="img" :aria-label="t('pulse.foodCostTitle')">
@@ -584,7 +571,13 @@ watch(showExpense, (open) => {
 
       <!-- Vendor spend stacked bars: click a segment to open the vendor -->
       <div class="card">
-        <div class="mb-2 text-sm font-semibold">{{ t('pulse.vendorSpendTitle') }}</div>
+        <div class="mb-2 flex items-center gap-1 text-sm">
+          <span class="font-semibold">{{ t('pulse.vendorSpendTitle') }}</span>
+          <InfoButton :title="t('pulse.vendorSpendTitle')">
+            <p>{{ t('pulse.info.vendorSpend.p1') }}</p>
+            <p>{{ t('pulse.info.vendorSpend.p2') }}</p>
+          </InfoButton>
+        </div>
         <svg :viewBox="`0 0 ${VS.w} ${VS.h}`" class="h-44 w-full md:h-36" role="img" :aria-label="t('pulse.vendorSpendTitle')">
           <line v-for="f in [1 / 3, 2 / 3]" :key="f" :x1="VS.pad" :x2="VS.w - VS.pad" :y1="VS.pad + f * (VS.h - 2 * VS.pad)" :y2="VS.pad + f * (VS.h - 2 * VS.pad)" stroke="#F3F4F6" />
           <line :x1="VS.pad" :x2="VS.w - VS.pad" :y1="VS.h - VS.pad" :y2="VS.h - VS.pad" stroke="#E5E7EB" />
@@ -623,40 +616,35 @@ watch(showExpense, (open) => {
       </div>
     </div>
 
-    <!-- Menu engineering matrix: click a dish to edit it -->
-    <div v-if="matrix.dots.length" class="card">
-      <div class="mb-1 flex items-center justify-between text-sm">
-        <span class="font-semibold">{{ t('pulse.matrixTitle') }}</span>
-        <span class="text-[11px] text-smoke">{{ t('pulse.matrixHint') }}</span>
-      </div>
-      <!-- On phones the matrix keeps a readable size and scrolls sideways
-           instead of shrinking its labels into illegibility -->
-      <div class="overflow-x-auto">
-        <svg :viewBox="`0 0 ${ME.w} ${ME.h}`" class="w-full min-w-[560px]" role="img" :aria-label="t('pulse.matrixTitle')">
-        <line :x1="matrix.avgX" :x2="matrix.avgX" :y1="ME.pad / 2" :y2="ME.h - ME.pad / 2" stroke="#E5E7EB" stroke-dasharray="4 4" />
-        <line :x1="ME.pad / 2" :x2="ME.w - ME.pad / 2" :y1="matrix.avgY" :y2="matrix.avgY" stroke="#E5E7EB" stroke-dasharray="4 4" />
-        <text :x="ME.w - ME.pad / 2" :y="ME.pad" text-anchor="end" font-size="11" fill="#2E9E5B">{{ t('pulse.quadrant.star') }}</text>
-        <text :x="ME.pad / 2" :y="ME.pad" font-size="11" fill="#7A6F66">{{ t('pulse.quadrant.puzzle') }}</text>
-        <text :x="ME.w - ME.pad / 2" :y="ME.h - 6" text-anchor="end" font-size="11" fill="#FF751F">{{ t('pulse.quadrant.plowhorse') }}</text>
-        <text :x="ME.pad / 2" :y="ME.h - 6" font-size="11" fill="#DC3448">{{ t('pulse.quadrant.dog') }}</text>
-        <g
-          v-for="dot in matrix.dots"
-          :key="dot.id"
-          class="cursor-pointer"
-          @click="router.push(`/menu/${dot.id}`)"
-        >
-          <circle :cx="dot.cx" :cy="dot.cy" r="9" :fill="dot.color" fill-opacity="0.9" />
-          <text :x="dot.cx + 13" :y="dot.cy + 4" font-size="12" fill="#1C1410">{{ dot.name }}</text>
-          <title>{{ dot.name }} · {{ t('pulse.soldUnits', { n: dot.units }) }} · {{ n(dot.margin / 100, 'percent') }}</title>
-        </g>
-        </svg>
-      </div>
+    <!-- Menu engineering matrix: zoomable, tap a dish for its detail -->
+    <div v-if="engineering.points.length" class="card">
+      <MenuMatrix :points="engineering.points" :avg-units="engineering.avgUnits" :avg-margin="engineering.avgMargin">
+        <template #info>
+          <InfoButton :title="t('pulse.matrixTitle')">
+            <p>{{ t('pulse.info.matrix.p1') }}</p>
+            <p>{{ t('pulse.info.matrix.p2') }}</p>
+            <ul class="space-y-1.5">
+              <li v-for="q in QUADRANTS" :key="q" class="flex gap-2">
+                <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" :style="{ background: QUADRANT_COLORS[q] }" />
+                <span><strong class="text-ink">{{ t(`pulse.quadrant.${q}`) }}</strong> — {{ t(`pulse.quadrantAdvice.${q}`) }}</span>
+              </li>
+            </ul>
+            <p>{{ t('pulse.info.matrix.p3') }}</p>
+          </InfoButton>
+        </template>
+      </MenuMatrix>
     </div>
 
     <div class="grid gap-3 md:grid-cols-2">
       <!-- Price watch: click through to the ingredient -->
       <div class="card">
-        <div class="mb-2 text-sm font-semibold">{{ t('pulse.priceWatchTitle') }}</div>
+        <div class="mb-2 flex items-center gap-1 text-sm">
+          <span class="font-semibold">{{ t('pulse.priceWatchTitle') }}</span>
+          <InfoButton :title="t('pulse.priceWatchTitle')">
+            <p>{{ t('pulse.info.priceWatch.p1') }}</p>
+            <p>{{ t('pulse.info.priceWatch.p2') }}</p>
+          </InfoButton>
+        </div>
         <div v-if="priceWatch.length === 0" class="text-xs text-smoke">{{ t('pulse.priceWatchEmpty') }}</div>
         <div v-else class="divide-y divide-gray-100">
           <RouterLink
@@ -681,7 +669,13 @@ watch(showExpense, (open) => {
 
       <!-- Pareto: top ingredients by spend, click through -->
       <div class="card">
-        <div class="mb-2 text-sm font-semibold">{{ t('pulse.topSpendTitle') }}</div>
+        <div class="mb-2 flex items-center gap-1 text-sm">
+          <span class="font-semibold">{{ t('pulse.topSpendTitle') }}</span>
+          <InfoButton :title="t('pulse.topSpendTitle')">
+            <p>{{ t('pulse.info.topSpend.p1') }}</p>
+            <p>{{ t('pulse.info.topSpend.p2') }}</p>
+          </InfoButton>
+        </div>
         <div class="space-y-2">
           <component
             :is="row.ingredientId ? RouterLink : 'div'"
