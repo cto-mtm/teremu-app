@@ -26,7 +26,7 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | | **Gratis** | **Pro** — *el plan del chef* | **Max** | **Grupo** |
 |---|---|---|---|---|
 | Price (live in Stripe) | $0 | **$39/mo** or $390/yr (2 months free) | **$59/mo** or $590/yr | Pro or Max, billed per location |
-| Invoice scans (OCR) | 25 / month | 500 / month fair use | 1,500 / month fair use | Per location |
+| Invoice documents (photo scans + emailed invoices) | 25 / month | 500 / month fair use | 1,500 / month fair use | Per location |
 | Team members | Owner only | Up to 5, granular permissions | Up to 10, granular permissions | Per location |
 | History window | 90 days | Full history | Full history | Full history, per location |
 | Menu items (dishes + drinks) | **Unlimited** | Unlimited | Unlimited | Unlimited |
@@ -43,6 +43,7 @@ History depth and proactive intelligence (alerts, digests) reinforce the boundar
 | Data export (CSV) | — | ✓ | ✓ | ✓ |
 | POS integration (Square — built, `docs/pos.md`) | Hourly sales sync, no AI matching | ✓ (5-min sync, AI matching) | ✓ | ✓, per location |
 | "Find your restaurant" import (Google listing + website menu) | ✓ | ✓ | ✓ | ✓, per location |
+| Email invoice import (Gmail — designed, `docs/email-ingestion.md`) | 1 inbox, daily sync, counts toward the 25 | 1 inbox, every 6 h | Up to 3 inboxes, every 6 h | ✓, per location |
 | Support | Community | Priority (48 h) | Priority (48 h) | Dedicated |
 
 **Pricing update (2026-07-27).** Pro re-anchored from the $29 placeholder to **$39** (the recovered-margin math supports it, and lowering later is painless where raising is a churn event), and **Max** added at **$59** — 1,500 scans, 10 seats — to harvest the price umbrella under Haddock's 85–159€ entry from the customers who resemble Haddock's, without taxing free→Pro conversion. §9's breakeven tables still assume $29, so they now read conservative. Max costs ~$4.50/month worst-case to serve at Gemini prices, so its margin profile matches Pro's.
@@ -58,6 +59,8 @@ Design intents behind the numbers: 25 scans ≈ one delivery-heavy week — enou
 **Why the assistant gets a free taste (2026-10-19).** Free restaurants get **20 assistant questions a month**; Pro gets 300 and Max 1,000, and everyone has 60 per person per day. The assistant is the feature that turns "my data is in Teremu" into "Teremu answers me" ("¿qué plato me deja menos margen?"). Letting a free owner feel that is a conversion lever, and it costs almost nothing: a typical turn is ~$0.002 on Vertex Flash-Lite (`docs/llm.md`), so 20 questions are **~$0.04/month**. Even the worst case, every turn hitting the package's caps of 4 steps and 1,024 output tokens per step, is ~$0.60. Twenty is enough to try it on real questions a few times a week, and far short of running the kitchen on it, so the upgrade pressure stays: hitting the limit shows the upgrade notice in the modal. The caps count **questions (turns), not tokens**. Each turn is reserved before the model runs, on `restaurants/{rid}.aiUsage` (`{ period, used, daily: { <uid>: { date, used } } }`, in the restaurant's timezone), and its cost is bounded by those per-turn caps. Tokens are logged per turn (`ai_usage`, with `estimatedCostMicros`) for COGS, not for gating. The numbers live in `plan.ts` `PLAN_LIMITS.assistantTurns`, which the assistant manifest reads.
 
 **Why the listing import is free too (2026-10-19).** "Find your restaurant" (`docs/restaurant-listing.md`) is the same bet one step earlier: the owner's Google listing and website prefill the restaurant and its menu before the photo wizard is even needed. It costs about **$0.10 once per restaurant** at list price, and **$0 for the first ~200 onboardings a month** because of Google's free monthly caps (§4, "Google Places"). It is the cheapest activation step we have. Metering it would be the paywall-at-minute-one mistake. Like the wizard, it gets abuse valves instead of a price: 5 imports, 30 searches and 10 photo/review loads per restaurant per day (`helpers/dailyCap.ts`), plus project-wide quotas in Google Cloud (§4).
+
+**Why email import is on Free, capped (2026-10-21).** Connecting Gmail (`docs/email-ingestion.md`) reads the last 31 days once, then only new mail, and puts the invoices it finds into Triage. It is on every plan, and on Free its cap is the meter Free already has: emailed invoices count toward the **25 documents a month**, one per document, refunded if discarded; Free syncs daily, paid plans every 6 hours. The feature's real cost is fixed — Google's annual security assessment (CASA), **~$540–1,800/yr** — and a fixed cost does not grow when free users connect, so keeping Free out would save nothing and shrink the funnel that pays it back. What a free connection adds is marginal: about **$0.12/month at the cap, $0.25 at the absolute worst** (§4 "Email import"). Free sees invoices enter themselves (activation), then sees them wait when the 25 run out — "12 facturas esperando en tu correo" — which is the most concrete upgrade prompt the product has (§5). Same shape as POS: on every plan, Free capped.
 
 ## 4. Unit economics (order-of-magnitude)
 
@@ -124,6 +127,25 @@ Claim verification and its emails are rare and negligible. Each code send adds o
 
 POS is on every plan since 2026-10-20 (`docs/pos.md` §Plan gating), so its running cost is a free-tier line too. Per connected restaurant it is Firestore, not inference: the 5-minute scheduler reads the integration and plan docs every tick (~17K reads/month ≈ $0.01) and polls the provider only when that restaurant's adaptive `nextPollAt` is due — hourly on Free, 5–30 min on Pro/Max — writing sales entries and dirty-day rebuilds (a busy restaurant, ~300 orders/day, lands around 10–20K writes/month ≈ $0.03). The only LLM cost is the catalog matcher's third tier, Pro/Max only, one call per catalog sync with unmatched items (≈ $0.001 at Gemini prices). Order of magnitude: **cents a month per connected restaurant on any plan**; the Free caps exist to bound the serial scheduler loop and the LLM calls, not storage. Measured through `places_usage`-style logging once real connections exist (§4 "From scenarios…").
 
+### Email import (Gmail)
+
+Designed, not built — `docs/email-ingestion.md` § AI cost has the full model; the numbers here are its summary at Gemini 3.1 Flash-Lite prices.
+
+**Fixed:** Google's restricted-scope verification plus the annual CASA assessment, **$540–1,800/yr (≈ $45–150/month)** whatever the number of connected restaurants. At Pro's ~$25 contribution it is covered by 2–6 Pro subscriptions. The Gmail API itself is $0 at our volumes.
+
+**Per connected restaurant, per month:**
+
+| | Classification (text, cheap) | Extraction | Email AI total | Added over photographing the same invoices |
+|---|---|---|---|---|
+| Free at its 25-document cap | ~$0.02–0.03 | ≤ $0.09 | **≈ $0.12** | ≈ $0.03–0.05 |
+| Free, absolute worst (flood inbox, classifier daily cap hit every day) | ~$0.15 | ≤ $0.09 | **≈ $0.25** | ≈ $0.15 |
+| Typical Pro (~400 emails, ~48 documents) | ~$0.01 | ~$0.18 | **≈ $0.19** | ≈ $0.09 |
+| Heavy Pro (~600 emails, ~72 documents) | ~$0.02 | ~$0.27 | **≈ $0.29** | ≈ $0.14 |
+
+Extraction is priced as if every document were read as an image. Digital PDFs (read from their text layer) and invoices written in the email body (read as text) cost ~25–40% less, so these are upper bounds until `llm_usage` (labels `email-classify`, `ocr`, `ocr-text`) measures the real mix. The Free bounds come from code, not assumptions: the 25-document meter caps extraction, and a per-restaurant daily cap on classification (50/day Free, 300 Pro/Max — `helpers/dailyCap.ts`) caps the rest.
+
+**No change to prices or quotas.** Pro's typical serving cost goes from ~$1.50 to ~$1.70. For Free, see §9.
+
 ### From scenarios to measured distributions
 
 Low/avg/worst is the right *planning prior*, but it is not how AI COGS is modeled operationally. LLM cost distributions are **right-skewed**: most calls are cheap, a small fraction are expensive, and the arithmetic mean is systematically misleading — industry practice (the discipline is being called *TokenOps*, FinOps applied to tokens) is to track **percentiles**. The scenarios above should be retired the month real telemetry exists. What replaces them:
@@ -144,7 +166,7 @@ Payback target: CAC under $60 (2-month payback). The realistic channels at this 
 
 ## 5. Conversion moments
 
-The product already produces the upgrade triggers; the paywall just needs to sit on them honestly. Hitting the scan cap mid-month with a stack of invoices in hand is the primary one. Inviting a team member is the second. Wanting the price-hike email instead of having to open the app is the third. Each should show what the user is about to lose or gain *in their own data* ("Este mes Teremu detectó $340 en subidas de precio — Pro te habría avisado por correo"), never a generic feature grid.
+The product already produces the upgrade triggers; the paywall just needs to sit on them honestly. Hitting the scan cap mid-month with a stack of invoices in hand is the primary one — and once email import ships, the stack is literal: a capped Free inbox keeps finding invoices and counts them ("12 facturas esperando en tu correo"), one email per month. Inviting a team member is the second. Wanting the price-hike email instead of having to open the app is the third. Each should show what the user is about to lose or gain *in their own data* ("Este mes Teremu detectó $340 en subidas de precio — Pro te habría avisado por correo"), never a generic feature grid.
 
 Benchmarks to steer by: free→paid conversion of 4–8% is healthy for prosumer SaaS; below 3% means the free tier is too generous or the wedge features are wrong. Monthly logo churn under 3% for a tool embedded in weekly operations.
 
@@ -210,6 +232,8 @@ And the same table at Gemini inference costs:
 Reading: on NVIDIA-era numbers, a bootstrapped solo operation ($300/mo of tooling) breaks even at roughly **500 total restaurants with 5% conversion (25 paying)** — a reachable first-year number in one city. A $2,500/mo operation needs ~4,000 restaurants at 5%, which is a regional business. In the conservative cost case, 5% conversion *loses* money — the levers that restore it are the scan cap, cheaper inference (prices keep falling), or nudging Pro to $35–39.
 
 **What the Gemini scenario changes structurally.** Solo breakeven drops to ~275 total restaurants at 5%, and even a 3% conversion — below the healthy-freemium floor — is comfortably profitable, so the model stops being fragile to a generous free tier. The conversion floor falls from 2.3–5.4% to under 1%, which converts the scan cap from a *cost-survival* mechanism into a pure *conversion-pressure* mechanism: raising free from 25 to 50 scans would cost ~$0.06/user/month, so if activation data ever says the cap bites before the "aha" moment, raising it is nearly free. The caveats: these are July 2026 list prices for a model tier Google retires aggressively (re-verify in `docs/llm.md` before flipping), extraction quality on the lite tier must hold on real crumpled invoices (mis-extractions cost retries and, worse, user trust — validate on `docs/ocr-samples.md` first), and once inference is ~$2, **Firestore reads become the biggest COGS line**, moving the rollup/caching pass from "if reads grow" to the first optimization worth scheduling.
+
+**Email import on Free (2026-10-21).** A connected Free restaurant costs ~$0.12/month more at its 25-document cap and ~$0.25 at the absolute worst (§4 "Email import"). Stress case: *every* free user connects a flood inbox. The Gemini free-user cost then goes from ~$0.20 to ~$0.45, the free-rider ceiling from 128:1 to ~57:1, and the conversion floor from 0.8% to ~1.8% — still well under the healthy 4–8%. Realistically most free restaurants never connect an inbox, so the blended change is a few cents and the tables above stand. The fixed CASA cost (~$45–150/month) belongs in the fixed-cost columns, not per user: at the Gemini 5% row ($21.86 net per Pro) it takes ~2–7 more paying restaurants to cover.
 
 ## 10. Competitive: Haddock (haddock.app, YC W22)
 
