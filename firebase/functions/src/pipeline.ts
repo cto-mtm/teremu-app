@@ -55,6 +55,60 @@ function contentTerms(li: LineItem): { qty: number; unit: LineItem["unit"]; unit
   return { qty: li.qty, unit: li.unit, unitPrice: li.unitPrice };
 }
 
+/** qty × unitPrice disagrees with the line total (2% or 5¢ tolerance —
+ * receipts round in odd ways). */
+const lineOff = (li: Pick<LineItem, "qty" | "unitPrice" | "total">): boolean => {
+  const expected = +(li.qty * li.unitPrice).toFixed(2);
+  return Math.abs(expected - li.total) > Math.max(0.05, expected * 0.02);
+};
+
+/**
+ * Undo the decimal-separator misread: "3,000" kg or "26,140" €/u printed
+ * with three decimals comes back from the model as 3000 / 26140 — a
+ * value exactly 1000× too big. Only the arithmetic decides, never the
+ * locale: a figure ≥ 1000 is divided by 1000 when that makes its own line
+ * add up (qty × price = total), or — when the line math is consistent but
+ * the lines sum to far more than the printed total — when it brings the
+ * document back to the printed total's order of magnitude (×½ to ×2).
+ * Repaired lines are flagged so the reviewer checks them against the image.
+ */
+function repairThousands(lineItems: LineItem[], statedTotal: number): { lineItems: LineItem[]; repaired: boolean } {
+  let repaired = false;
+  const lines = lineItems.map((li) => {
+    if (!lineOff(li)) return li;
+    for (const field of ["qty", "unitPrice", "total"] as const) {
+      if (li[field] < 1000) continue;
+      const fixed = { ...li, [field]: li[field] / 1000 };
+      if (!lineOff(fixed)) {
+        repaired = true;
+        return { ...fixed, flagged: true };
+      }
+    }
+    return li;
+  });
+
+  const sum = (ls: LineItem[]) => ls.reduce((s, l) => s + l.total, 0);
+  // A printed total with more than 2 decimals ("1.307,50" read as 1.3075)
+  // is itself the misread — the lines are not to blame.
+  const totalSuspect = Math.abs(statedTotal * 100 - Math.round(statedTotal * 100)) > 1e-6;
+  if (!(statedTotal > 0) || totalSuspect || sum(lines) <= statedTotal * 1.25) return { lineItems: lines, repaired };
+  // Biggest lines first, until the sum is no longer above the printed total.
+  const trial = [...lines];
+  const order = trial.map((_, i) => i).sort((a, b) => trial[b].total - trial[a].total);
+  let changed = false;
+  for (const i of order) {
+    if (sum(trial) <= statedTotal * 1.25) break;
+    const li = trial[i];
+    const field = li.qty >= 1000 ? "qty" : li.unitPrice >= 1000 ? "unitPrice" : null;
+    if (!field) continue;
+    trial[i] = { ...li, [field]: li[field] / 1000, total: +(li.total / 1000).toFixed(2), flagged: true };
+    changed = true;
+  }
+  const ratio = statedTotal / sum(trial);
+  if (changed && ratio >= 0.5 && ratio <= 2) return { lineItems: trial, repaired: true };
+  return { lineItems: lines, repaired };
+}
+
 /**
  * Arithmetic validation stage: cross-check the model's numbers against
  * themselves. Cheap, deterministic, and catches most OCR misreads —
@@ -62,15 +116,15 @@ function contentTerms(li: LineItem): { qty: number; unit: LineItem["unit"]; unit
  * Returns warning codes and flags suspect lines (Triage highlights them).
  */
 export function validateArithmetic(
-  lineItems: LineItem[],
+  rawLineItems: LineItem[],
   statedTotal: number
 ): { lineItems: LineItem[]; warnings: string[] } {
   const warnings: string[] = [];
+  const { lineItems, repaired } = repairThousands(rawLineItems, statedTotal);
+  if (repaired) warnings.push("thousands_repaired");
   let anyLineOff = false;
   const checked = lineItems.map((li) => {
-    const expected = +(li.qty * li.unitPrice).toFixed(2);
-    // 2% or 5¢ tolerance — receipts round in odd ways.
-    const off = Math.abs(expected - li.total) > Math.max(0.05, expected * 0.02);
+    const off = lineOff(li);
     if (off) anyLineOff = true;
     return off ? { ...li, flagged: true } : li;
   });

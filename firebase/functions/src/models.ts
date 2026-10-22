@@ -153,7 +153,9 @@ export const invoiceDocSchema = z.object({
   lineItems: z.array(lineItemSchema),
   total: z.number().nullable(),
   // Validation-stage warning codes: "total_mismatch", "line_math",
-  // "currency_assumed" (OCR could not read a currency; base assumed).
+  // "currency_assumed" (OCR could not read a currency; base assumed),
+  // "thousands_repaired" (a figure read 1000× too big, e.g. 3 kg as 3000,
+  // was divided back; the repaired lines are flagged).
   // Cleared on approval (the human reviewed the numbers).
   warnings: z.array(z.string()),
   // Set when the bill was approved AS AN EXPENSE (non-food): the invoice
