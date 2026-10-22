@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
 import { FAKE_PDFS } from "../src/email/fake";
 import { inspectPdf } from "../src/email/pdf";
@@ -73,6 +73,10 @@ async function byMessage(o: Owner): Promise<Map<string, EmailedInvoice[]>> {
 
 const scanCount = async (rid: string): Promise<number> =>
   ((await db().doc(`restaurants/${rid}`).get()).get("scanCount") as number | undefined) ?? 0;
+
+// Draining a backlog is several "check now" rounds with PDF rendering and
+// extraction — past the suite's 20 s default on a loaded machine.
+vi.setConfig({ testTimeout: 60_000 });
 
 let o: Owner;
 beforeEach(async () => {

@@ -285,7 +285,8 @@ export const emailStatusSchema = z.object({
       status: z.string(),
       connectedAt: z.number(),
       lastSyncAt: z.number().nullable(),
-      backfillDone: z.boolean(),
+      working: z.boolean().catch(false),
+      checked: z.number().catch(0),
       found: z.number().catch(0),
       waiting: z.number().catch(0),
       paused: z.boolean().catch(false),
@@ -304,6 +305,8 @@ export const emailSyncResultSchema = z.object({
   accepted: z.number(),
   backfillDone: z.boolean(),
 })
+  // Invoices this round created — the card tells the invoices store.
+  ingested: z.number().catch(0),
 
 /** POST /email/oauth — outcome of finishing a connect flow. */
 export const emailOAuthResultSchema = z.object({

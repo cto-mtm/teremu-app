@@ -256,6 +256,12 @@ export interface InboxView {
   connectedAt: number;
   lastSyncAt: number | null;
   backfillDone: boolean;
+  /** There is work left that "check now" would do: the 31-day backfill
+   * is unfinished, or accepted invoices are still to import. The card
+   * keeps checking while this is true, and says "done" when it is not. */
+  working: boolean;
+  /** Messages looked at so far (the progress count). */
+  checked: number;
   /** Messages taken as invoices: in Triage, on the way, or waiting. */
   found: number;
   /** Of those, not in Triage yet (on the way, or held by the meter). */
@@ -290,6 +296,7 @@ export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusV
         connectedAt: conn.connectedAt,
         lastSyncAt: conn.lastSyncAt,
         backfillDone: conn.sync?.backfillDone ?? false,
+        working: conn.status === "active" && (!conn.sync?.backfillDone || Boolean(conn.ingestPending)),
         ...(await inboxCounts(rid, id)),
         paused: conn.quotaPausedPeriod === monthKey(),
         nextCheckAt: nextSyncAt(conn, PLAN_LIMITS[plan]),

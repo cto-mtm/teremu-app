@@ -38,10 +38,12 @@ test.describe('Email import', () => {
     await expect(card.getByText('Correo conectado: fake-inbox@restaurante.test.')).toBeVisible({ timeout: 15_000 })
     await expect(card.getByText('fake-inbox@restaurante.test', { exact: true })).toBeVisible()
 
-    // ── Check now: the 31-day backfill, the funnel, the first invoices ──
-    await card.getByRole('button', { name: 'Revisar ahora' }).click()
-    await expect(card.getByText('Correo revisado.')).toBeVisible({ timeout: 60_000 })
+    // ── The first check starts by itself: a loader with a running count,
+    //    then a plain "up to date" once the 31 days and the imports are done ──
+    await expect(card.getByRole('status').filter({ hasText: 'Revisando tus correos…' })).toBeVisible({ timeout: 15_000 })
+    await expect(card.getByText(/Al día: \d+ correos revisados\./)).toBeVisible({ timeout: 90_000 })
     await expect(card.getByText(/\d+ facturas encontradas\./)).toBeVisible()
+    await expect(card.getByText('Revisión terminada.')).toBeVisible()
 
     // ── Triage: emailed documents carry their source ──
     // A new location's owner is sent to "find your restaurant" first

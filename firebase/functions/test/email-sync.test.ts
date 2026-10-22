@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
 import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, uniqueId, type Owner } from "./helpers";
 import { NO_PERMS } from "./pos-helpers";
@@ -73,6 +73,10 @@ const ALL = { taken: 7, classified_no: 4, skipped_prefilter: 1, duplicate: 1, go
 /** Make the inbox due again without waiting a day. */
 const age = (hours: number) => inbox().update({ lastSyncAt: Date.now() - hours * 3_600_000 });
 
+// Draining a backlog is several "check now" rounds with PDF rendering and
+// extraction — past the suite's 20 s default on a loaded machine.
+vi.setConfig({ testTimeout: 60_000 });
+
 let o: Owner;
 beforeEach(async () => {
   await clearFirestore();
@@ -105,7 +109,8 @@ describe("email sync: backfill + funnel", () => {
     expect(conn.ingestPending).toBe(true); // 4 accepted messages left for the next calls
 
     const status = await get("/email", o.token);
-    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, found: 7, waiting: 4, paused: false, nextCheckAt: 0 });
+    // working: invoices are still to import, so the card keeps checking; checked: every message seen.
+    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, working: true, checked: 14, found: 7, waiting: 4, paused: false, nextCheckAt: 0 });
 
     // 12 candidates reserved the daily cap; 015, deleted before the model saw it, gave its slot back.
     const today = new Date().toISOString().slice(0, 10);
@@ -141,7 +146,9 @@ describe("email sync: incremental", () => {
     expect(again.body.error).toBe("email_sync_throttled");
     // The card shows when it opens again, as the server computes it (Free: 24 h).
     const lastSyncAt = (await inbox().get()).get("lastSyncAt") as number;
-    expect((await get("/email", o.token)).body.inboxes[0].nextCheckAt).toBe(lastSyncAt + 24 * 3_600_000);
+    const view = (await get("/email", o.token)).body.inboxes[0];
+    expect(view.nextCheckAt).toBe(lastSyncAt + 24 * 3_600_000);
+    expect(view.working).toBe(false); // the card says "up to date"
   });
 
   it("the hourly pass syncs every due inbox and skips the ones that are not", async () => {

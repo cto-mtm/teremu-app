@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
 import { emailOAuthResultSchema, emailStatusSchema, emailSyncResultSchema, posConnectSchema } from '../lib/schemas'
 import { useAuthStore } from '../stores/auth'
+import { useInvoicesStore } from '../stores/invoices'
 import { useLocationStore } from '../stores/location'
 import BaseButton from './BaseButton.vue'
+import BaseSpinner from './BaseSpinner.vue'
 
 // Email inboxes (docs/email-ingestion.md): connect → Google consent →
 // back here → disconnect. Same flow as IntegrationsCard: the API's OAuth
@@ -19,6 +21,7 @@ type Inbox = Status['inboxes'][number]
 
 const { t, d } = useI18n()
 const auth = useAuthStore()
+const invoices = useInvoicesStore()
 const location = useLocationStore()
 const route = useRoute()
 const router = useRouter()
@@ -54,20 +57,67 @@ function errorText(error: string): string {
   return known ? t(`email.error.${known}`) : t('email.error.generic')
 }
 
-async function syncNow(inbox: Inbox): Promise<void> {
-  busy.value = inbox.id
-  const res = await apiFetch(
-    `/email/inboxes/${encodeURIComponent(inbox.id)}/sync`,
-    { method: 'POST' },
-    emailSyncResultSchema,
-  )
-  busy.value = null
-  // When it opens again comes from the server (GET /email nextCheckAt).
-  if (res.ok) message.value = { ok: true, text: t('email.synced') }
-  else if (res.error.includes('email_sync_throttled') && inbox.nextCheckAt > 0) {
-    message.value = { ok: false, text: t('email.throttled', { date: d(new Date(inbox.nextCheckAt), 'short') }) }
-  } else message.value = { ok: false, text: errorText(res.error) }
-  await load()
+/** Inboxes this card is checking right now (the loader shows on them). */
+const running = ref(new Set<string>())
+const isRunning = (inbox: Inbox): boolean => running.value.has(inbox.id)
+const current = (id: string): Inbox | undefined => status.value?.inboxes.find((i) => i.id === id)
+let mounted = true
+onUnmounted(() => (mounted = false))
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Rounds of "check now" one run may make — a 31-day backfill of a busy
+ * inbox is a few dozen; past that the hourly job finishes it. */
+const MAX_ROUNDS = 60
+
+/**
+ * Check an inbox until there is nothing left to do (`working` false), so
+ * the owner watches it finish instead of guessing: each round is one
+ * "check now" (a page of mail, a few invoices), then the counts refresh.
+ * Stops when done, when the card unmounts, or on an error. If the hourly
+ * job holds the inbox, it waits and looks again. `manual` = the button,
+ * which also reports a throttle; the automatic start stays quiet.
+ */
+async function runSync(id: string, manual: boolean): Promise<void> {
+  if (running.value.has(id)) return
+  running.value.add(id)
+  let finished = false
+  try {
+    for (let round = 0; round < MAX_ROUNDS && mounted; round += 1) {
+      const res = await apiFetch(`/email/inboxes/${encodeURIComponent(id)}/sync`, { method: 'POST' }, emailSyncResultSchema)
+      if (!res.ok && res.error.includes('email_sync_running')) {
+        // The hourly job is on it: wait, then look — it may have finished.
+        await pause(10_000)
+      } else if (!res.ok) {
+        const next = current(id)?.nextCheckAt ?? 0
+        if (res.error.includes('email_sync_throttled')) {
+          if (manual && next > 0) message.value = { ok: false, text: t('email.throttled', { date: d(new Date(next), 'short') }) }
+        } else message.value = { ok: false, text: errorText(res.error) }
+        await load() // whatever stopped us, show where the inbox really is
+        break
+      } else if (res.data.ingested > 0 && auth.can('triage')) {
+        // New invoices belong to the invoices store (Triage, its badge):
+        // tell it, rather than keep a second copy of them here.
+        void invoices.refresh()
+      }
+      await load()
+      if (!current(id)?.working) {
+        finished = true
+        break
+      }
+    }
+  } finally {
+    running.value.delete(id)
+  }
+  if (finished && mounted) message.value = { ok: true, text: t('email.synced') }
+}
+
+/** Pick up any inbox with work left (after connecting, or after a reload
+ * mid-backfill) — only for someone allowed to run "check now". */
+function resumeWork(): void {
+  if (!canEdit.value) return
+  for (const inbox of status.value?.inboxes ?? []) {
+    if (inbox.status === 'active' && inbox.working) void runSync(inbox.id, false)
+  }
 }
 
 async function load(): Promise<void> {
@@ -123,7 +173,10 @@ onMounted(async () => {
   } else {
     showResult(email)
   }
-  void load()
+  await load()
+  // A fresh connection starts its 31-day check right away, in front of
+  // the owner, instead of waiting for the hourly job.
+  resumeWork()
 })
 </script>
 
@@ -156,8 +209,24 @@ onMounted(async () => {
               : t('email.connectedSince', { date: d(new Date(inbox.connectedAt), 'short') })
           }}
         </p>
-        <p v-if="inbox.status === 'active' && !inbox.backfillDone" class="text-xs text-smoke">{{ t('email.backfilling') }}</p>
-        <p v-if="inbox.lastSyncAt" class="text-xs">{{ t('email.found', inbox.found) }}</p>
+        <!-- Progress: a loader and the running count while checking; a
+             plain "done" once nothing is left (docs/email-ingestion.md). -->
+        <div
+          v-if="inbox.status === 'active' && (isRunning(inbox) || inbox.working)"
+          class="flex items-center gap-2 text-xs text-smoke"
+          role="status"
+        >
+          <BaseSpinner v-if="isRunning(inbox)" aria-hidden="true" />
+          <span>{{ isRunning(inbox) ? t('email.progress', inbox.checked) : t('email.progressIdle', inbox.checked) }}</span>
+        </div>
+        <!-- Not while paused: invoices are waiting, so it isn't "up to date". -->
+        <p v-else-if="inbox.status === 'active' && inbox.lastSyncAt && !inbox.paused" class="text-xs font-medium text-ink">
+          ✓ {{ t('email.done', inbox.checked) }}
+        </p>
+        <p v-if="inbox.lastSyncAt || inbox.checked" class="text-xs">{{ t('email.found', inbox.found) }}</p>
+        <p v-if="inbox.status === 'active' && !inbox.working && inbox.nextCheckAt > 0" class="text-xs text-smoke">
+          {{ t('email.nextCheck', { date: d(new Date(inbox.nextCheckAt), 'short') }) }}
+        </p>
         <p v-if="inbox.paused" class="text-xs text-coral-600">
           {{ t('email.paused', { n: inbox.waiting }) }}
           <RouterLink to="/pricing" class="font-medium text-ember-700 hover:underline">{{ t('pricing.seePlans') }}</RouterLink>
@@ -166,10 +235,10 @@ onMounted(async () => {
           <BaseButton
             v-if="inbox.status === 'active'"
             variant="ghost"
-            :disabled="busy === inbox.id"
-            @click="syncNow(inbox)"
+            :disabled="isRunning(inbox) || busy === inbox.id"
+            @click="runSync(inbox.id, true)"
           >
-            {{ busy === inbox.id ? t('email.syncing') : t('email.syncNow') }}
+            {{ isRunning(inbox) ? t('email.syncing') : t('email.syncNow') }}
           </BaseButton>
           <BaseButton
             v-if="inbox.status === 'needs_reauth'"
@@ -186,20 +255,22 @@ onMounted(async () => {
 
       <div v-for="p in status.providers" :key="p.provider">
         <p v-if="!p.available" class="text-xs text-smoke">{{ t('email.unavailable') }}</p>
-        <p v-if="p.available && p.testing" class="text-xs text-smoke">{{ t('email.testing') }}</p>
-        <template v-else-if="canEdit">
-          <BaseButton v-if="!atLimit" :disabled="busy === p.provider" @click="connect(p.provider)">
-            {{
-              busy === p.provider
-                ? t('email.connecting')
-                : t(status.inboxes.length ? 'email.connectAnother' : 'email.connect', {
-                    provider: t('email.provider.' + p.provider),
-                  })
-            }}
-          </BaseButton>
-          <p v-else-if="status.limits.inboxes > 1 || !onFreePlan" class="text-xs text-smoke">
-            {{ t('email.limit', status.limits.inboxes) }}
-          </p>
+        <template v-else>
+          <p v-if="p.testing" class="text-xs text-smoke">{{ t('email.testing') }}</p>
+          <template v-if="canEdit">
+            <BaseButton v-if="!atLimit" :disabled="busy === p.provider" @click="connect(p.provider)">
+              {{
+                busy === p.provider
+                  ? t('email.connecting')
+                  : t(status.inboxes.length ? 'email.connectAnother' : 'email.connect', {
+                      provider: t('email.provider.' + p.provider),
+                    })
+              }}
+            </BaseButton>
+            <p v-else-if="status.limits.inboxes > 1 || !onFreePlan" class="text-xs text-smoke">
+              {{ t('email.limit', status.limits.inboxes) }}
+            </p>
+          </template>
         </template>
       </div>
     </template>

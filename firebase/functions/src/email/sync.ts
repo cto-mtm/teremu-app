@@ -467,14 +467,16 @@ async function classifyCandidates(
 }
 
 /** For the Settings card: messages taken as invoices (in Triage, on the
- * way, or waiting for the meter), and how many are not in Triage yet. */
-export async function inboxCounts(rid: string, connId: string): Promise<{ found: number; waiting: number }> {
+ * way, or waiting for the meter), how many are not in Triage yet, and how
+ * many messages were looked at in all (the card's progress count). */
+export async function inboxCounts(rid: string, connId: string): Promise<{ checked: number; found: number; waiting: number }> {
   const byConn = ingests(rid).where("connectionId", "==", connId);
-  const [found, waiting] = await Promise.all([
+  const [checked, found, waiting] = await Promise.all([
+    byConn.count().get(),
     byConn.where("verdict", "in", ["accepted", "ingested", "deferred_quota"]).count().get(),
     byConn.where("verdict", "in", ["accepted", "deferred_quota"]).count().get(),
   ]);
-  return { found: found.data().count, waiting: waiting.data().count };
+  return { checked: checked.data().count, found: found.data().count, waiting: waiting.data().count };
 }
 
 /**

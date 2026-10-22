@@ -426,8 +426,10 @@ async function cancelInvite(emailKey: string): Promise<void> {
     <!-- POS connections (integrations area; owners always) -->
     <IntegrationsCard v-if="auth.can('integrations')" />
 
-    <!-- Email inboxes (same integrations area) -->
-    <EmailCard v-if="auth.can('integrations')" />
+    <!-- Email inboxes (same integrations area). Keyed on the location like
+         ListingCard: a switch remounts it, which also stops a check still
+         running for the previous location's inbox. -->
+    <EmailCard v-if="auth.can('integrations')" :key="auth.profile?.restaurantId" />
 
     <!-- Team & granular permissions (owner only) -->
     <div v-if="isOwner" class="card space-y-4">

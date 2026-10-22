@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
+import BaseSpinner from '../components/BaseSpinner.vue'
 import { parseAmount } from '../lib/csv'
 import { useAuthStore } from '../stores/auth'
 import { useKitchenStore } from '../stores/kitchen'
@@ -405,9 +406,11 @@ const initials = (name: string) => {
             :placeholder="t('setup.search.placeholder')"
             :aria-label="t('setup.search.placeholder')"
           />
-          <span
+          <BaseSpinner
             v-if="searching"
-            class="absolute top-1/2 right-4 h-5 w-5 -translate-y-1/2 animate-spin rounded-full border-2 border-ember-100 border-t-ember"
+            size="md"
+            tone="soft"
+            class="absolute top-1/2 right-4 -translate-y-1/2"
             aria-hidden="true"
           />
         </div>
@@ -492,10 +495,11 @@ const initials = (name: string) => {
               <span v-else-if="rowState(s) === 'done'" key="done" class="chip-down">
                 ✓ {{ listing.job?.steps[s].count !== undefined ? t('setup.importing.' + s + '.found', { n: listing.job?.steps[s].count }, listing.job?.steps[s].count ?? 0) : t('setup.importing.' + s + '.ready') }}
               </span>
-              <span
+              <BaseSpinner
                 v-else-if="rowState(s) === 'busy'"
                 key="busy"
-                class="h-4 w-4 animate-spin rounded-full border-2 border-ember-100 border-t-ember"
+                size="sm"
+                tone="soft"
                 aria-hidden="true"
               />
               <span v-else key="wait" class="h-1.5 w-1.5 rounded-full bg-gray-200" aria-hidden="true" />
@@ -722,7 +726,7 @@ const initials = (name: string) => {
                 :disabled="!!listing.busy"
               />
               <button type="submit" class="btn-primary shrink-0 !py-1.5" :disabled="!!listing.busy || !websiteUrl.trim()">
-                <span v-if="listing.busy === 'website' || listing.busy === 'menu'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+                <BaseSpinner v-if="listing.busy === 'website' || listing.busy === 'menu'" tone="light" aria-hidden="true" />
                 {{ listing.busy === 'website' || listing.busy === 'menu' ? t('setup.review.websiteReading') : t('setup.review.websiteRead') }}
               </button>
             </div>
@@ -733,7 +737,7 @@ const initials = (name: string) => {
           <div class="flex flex-wrap gap-2 border-t border-gray-100 pt-3">
             <button class="btn-ghost" :disabled="editingKey !== null" @click="addDish">＋ {{ t('setup.review.addDish') }}</button>
             <button class="btn-ghost" :disabled="!!listing.busy" @click="photoInput?.click()">
-              <span v-if="listing.busy === 'photo'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-ink" aria-hidden="true" />
+              <BaseSpinner v-if="listing.busy === 'photo'" tone="ink" aria-hidden="true" />
               <span v-else aria-hidden="true">📷</span>
               {{ listing.busy === 'photo' ? t('setup.review.photoReading') : t('setup.review.scanPhoto') }}
             </button>
@@ -814,7 +818,7 @@ const initials = (name: string) => {
               {{ isManual ? t('common.action.back') : t('setup.review.notMine') }}
             </BaseButton>
             <BaseButton :disabled="!!listing.busy" @click="confirmImport">
-              <span v-if="listing.busy === 'commit'" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+              <BaseSpinner v-if="listing.busy === 'commit'" tone="light" aria-hidden="true" />
               {{ listing.busy === 'commit' ? t('common.action.saving') : selectedCount ? t('setup.review.confirm', { n: selectedCount }, selectedCount) : t('setup.review.confirmNoDishes') }}
             </BaseButton>
           </div>
