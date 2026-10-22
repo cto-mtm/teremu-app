@@ -10,6 +10,10 @@ const es = {
   capture: 'Capturar factura',
   addFromLibrary: 'Añadir foto de tu galería',
   addPdf: 'Añadir factura en PDF',
+  // Short captions under the bottom source buttons
+  toolPages: 'Varias páginas',
+  toolGallery: 'Galería',
+  toolPdf: 'PDF',
   uploadFailed: 'Falló la subida — revisa tu conexión e inténtalo de nuevo.',
   pdfUnreadable: 'No se pudo leer el PDF — puede estar protegido o dañado.',
   pdfTruncated: 'PDF de {total} páginas — solo se escanean las primeras {n}.',
@@ -30,6 +34,11 @@ const es = {
   multiPageHint: 'Modo varias páginas: cada foto añade una página a la misma factura. Cuando las tengas todas, toca "Terminar".',
   pageCount: 'Página {n}',
   finishInvoice: 'Terminar factura · {n} pág.',
+  sharedTitle: 'Compartido con Teremu',
+  sharedReady: 'Nada que escanear. | 1 archivo listo para escanear. | {n} archivos listos para escanear.',
+  sharedAsPages: 'Son páginas de una misma factura',
+  sharedScan: 'Escanear',
+  sharedDiscard: 'Descartar',
 }
 
 // Typed against es: a missing or extra key here is a compile error.
@@ -45,6 +54,9 @@ const en: typeof es = {
   capture: 'Capture invoice',
   addFromLibrary: 'Add a photo from your library',
   addPdf: 'Add a PDF invoice',
+  toolPages: 'Multi-page',
+  toolGallery: 'Gallery',
+  toolPdf: 'PDF',
   uploadFailed: 'Upload failed — check your connection and try again.',
   pdfUnreadable: 'Could not read the PDF — it may be protected or damaged.',
   pdfTruncated: '{total}-page PDF — only the first {n} pages are scanned.',
@@ -65,6 +77,11 @@ const en: typeof es = {
   multiPageHint: 'Multi-page mode: every shot adds a page to the same invoice. When you have them all, tap "Finish".',
   pageCount: 'Page {n}',
   finishInvoice: 'Finish invoice · {n} pages',
+  sharedTitle: 'Shared to Teremu',
+  sharedReady: 'Nothing to scan. | 1 file ready to scan. | {n} files ready to scan.',
+  sharedAsPages: 'These are pages of one invoice',
+  sharedScan: 'Scan',
+  sharedDiscard: 'Discard',
 }
 
 export default { es, en }

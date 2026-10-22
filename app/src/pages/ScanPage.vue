@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useAuthStore } from '../stores/auth'
 import { PDF_MAX_PAGES, isPdf, renderPdfPages, type RenderedPdf } from '../lib/pdf'
+import { pendingShare, releaseShared } from '../lib/shareTarget'
 import logoWhite from '../assets/logo-white.svg'
 
 /**
@@ -281,7 +282,15 @@ function onFiles(event: Event): void {
   const input = event.target as HTMLInputElement
   const files = input.files
   if (!files || files.length === 0) return
-  const picked = Array.from(files)
+  void ingest(Array.from(files))
+  input.value = '' // let the same file be re-picked
+}
+
+/**
+ * Picked or shared files → the same uploads as the shutter. Resolves
+ * once every image and PDF has been sent (or failed).
+ */
+async function ingest(picked: File[]): Promise<void> {
   const pdfs = picked.filter(isPdf)
   const images = picked.filter((f) => !isPdf(f))
   if (images.length > 0) {
@@ -290,16 +299,40 @@ function onFiles(event: Event): void {
     lastThumb.value = URL.createObjectURL(images[images.length - 1])
     thumbIsObjectUrl = true
   }
-  if (multiPage.value) {
-    // Pages of ONE invoice — upload sequentially so page order holds.
-    void (async () => {
-      for (const f of images) await send(f)
-    })()
-  } else {
-    images.forEach((f) => void send(f))
-  }
+  const sent = multiPage.value
+    ? // Pages of ONE invoice — upload sequentially so page order holds.
+      (async () => {
+        for (const f of images) await send(f)
+      })()
+    : Promise.all(images.map(send))
   pdfs.forEach(enqueuePdf)
-  input.value = '' // let the same file be re-picked
+  await Promise.all([sent, pdfQueue])
+}
+
+/**
+ * Files shared into Teremu from another app (lib/shareTarget.ts) wait
+ * for one tap — a share sheet is easy to hit by mistake. Several photos
+ * can be the pages of one long invoice; the operator says which.
+ */
+const shareAsPages = ref(false)
+const sharedImages = computed(() => pendingShare.value?.files.filter((f) => !isPdf(f)).length ?? 0)
+
+async function scanShared(): Promise<void> {
+  const batch = pendingShare.value
+  if (!batch) return
+  const asPages = shareAsPages.value && sharedImages.value > 1 && !multiPage.value
+  shareAsPages.value = false
+  releaseShared()
+  if (!asPages) return ingest(batch.files)
+  multiPage.value = true
+  await ingest(batch.files)
+  multiPage.value = false
+  await store.finishMultipage()
+}
+
+function discardShared(): void {
+  shareAsPages.value = false
+  releaseShared()
 }
 </script>
 
@@ -376,43 +409,7 @@ function onFiles(event: Event): void {
             :aria-label="t('scan.uploading')"
           />
         </div>
-        <div class="flex items-center gap-2">
-          <!-- Multi-page mode: each shot = another page of ONE invoice -->
-          <button
-            class="flex h-10 w-10 items-center justify-center rounded-full backdrop-blur-md"
-            :class="multiPage ? 'bg-white text-ink' : 'bg-black/40 text-white'"
-            :aria-label="t('scan.multiPage')"
-            :aria-pressed="multiPage"
-            @click="toggleMultiPage"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M8 3h8a2 2 0 0 1 2 2v12" />
-              <rect x="5" y="7" width="11" height="14" rx="2" />
-            </svg>
-          </button>
-          <button
-            class="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md"
-            :aria-label="t('scan.addFromLibrary')"
-            @click="fileInput?.click()"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <circle cx="9" cy="9" r="1.8" />
-              <path d="M21 15l-5-5-8 8" />
-            </svg>
-          </button>
-          <button
-            class="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md"
-            :aria-label="t('scan.addPdf')"
-            @click="pdfInput?.click()"
-          >
-            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <text x="12" y="17.5" text-anchor="middle" font-size="6.5" font-weight="800" fill="currentColor" stroke="none">PDF</text>
-            </svg>
-          </button>
-        </div>
+        <div class="h-10 w-10" aria-hidden="true" />
       </div>
 
       <!-- Capture confirmation flash: keyed so each snap re-runs it -->
@@ -455,6 +452,30 @@ function onFiles(event: Event): void {
               {{ t('scan.upgradeCta') }}
             </button>
           </template>
+        </div>
+      </Transition>
+
+      <!-- Shared from another app: confirm before it's scanned -->
+      <Transition name="pop">
+        <div
+          v-if="pendingShare"
+          class="absolute inset-x-6 top-1/3 mx-auto max-w-sm space-y-3 rounded-2xl bg-black/70 p-4 text-center backdrop-blur-md"
+          role="dialog"
+          :aria-label="t('scan.sharedTitle')"
+        >
+          <p class="text-sm font-semibold text-white">{{ t('scan.sharedReady', pendingShare.files.length) }}</p>
+          <label v-if="sharedImages > 1" class="flex items-center justify-center gap-2 text-xs text-white/85">
+            <input v-model="shareAsPages" type="checkbox" class="accent-ember" />
+            {{ t('scan.sharedAsPages') }}
+          </label>
+          <div class="flex justify-center gap-2">
+            <button class="rounded-full bg-white px-4 py-2 text-xs font-bold text-ink" @click="scanShared">
+              {{ t('scan.sharedScan') }}
+            </button>
+            <button class="rounded-full bg-white/20 px-4 py-2 text-xs font-semibold text-white" @click="discardShared">
+              {{ t('scan.sharedDiscard') }}
+            </button>
+          </div>
         </div>
       </Transition>
 
@@ -515,8 +536,59 @@ function onFiles(event: Event): void {
       </div>
     </div>
 
+    <!-- Source buttons: bottom row, within thumb reach and with room to
+         hit them — the top chrome only keeps the close button. -->
+    <div class="flex items-start justify-center gap-6 bg-black px-8 pt-4">
+      <button
+        class="flex w-20 flex-col items-center gap-1.5 text-[11px] font-semibold"
+        :class="multiPage ? 'text-white' : 'text-white/75'"
+        :aria-label="t('scan.multiPage')"
+        :aria-pressed="multiPage"
+        @click="toggleMultiPage"
+      >
+        <span
+          class="flex h-12 w-12 items-center justify-center rounded-full"
+          :class="multiPage ? 'bg-white text-ink' : 'bg-white/15 text-white'"
+        >
+          <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 3h8a2 2 0 0 1 2 2v12" />
+            <rect x="5" y="7" width="11" height="14" rx="2" />
+          </svg>
+        </span>
+        {{ t('scan.toolPages') }}
+      </button>
+      <button
+        class="flex w-20 flex-col items-center gap-1.5 text-[11px] font-semibold text-white/75"
+        :aria-label="t('scan.addFromLibrary')"
+        @click="fileInput?.click()"
+      >
+        <span class="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white">
+          <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="3" />
+            <circle cx="9" cy="9" r="1.8" />
+            <path d="M21 15l-5-5-8 8" />
+          </svg>
+        </span>
+        {{ t('scan.toolGallery') }}
+      </button>
+      <button
+        class="flex w-20 flex-col items-center gap-1.5 text-[11px] font-semibold text-white/75"
+        :aria-label="t('scan.addPdf')"
+        @click="pdfInput?.click()"
+      >
+        <span class="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white">
+          <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+            <text x="12" y="17.5" text-anchor="middle" font-size="6.5" font-weight="800" fill="currentColor" stroke="none">PDF</text>
+          </svg>
+        </span>
+        {{ t('scan.toolPdf') }}
+      </button>
+    </div>
+
     <!-- Bottom controls: last-capture thumbnail · shutter · review pill -->
-    <div class="pb-safe flex items-center justify-between gap-4 bg-black px-8 py-5">
+    <div class="pb-safe flex items-center justify-between gap-4 bg-black px-8 pt-4 pb-5">
       <div class="flex w-20 justify-start">
         <Transition name="pop">
           <button

@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Puts Teremu in the system share sheet for photos and PDFs.
+      The manifest merger folds these intent filters into the app's own
+      MainActivity (matched by android:name), so `cap add android` /
+      `cap sync` need no hand edit of app/android. The plugin reads the
+      intent (ShareTargetPlugin.java). See docs/share-target.md.
+    -->
+    <application>
+        <activity android:name="com.teremu.app.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

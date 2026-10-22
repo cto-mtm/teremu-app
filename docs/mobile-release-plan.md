@@ -86,7 +86,8 @@ The pilot writes the full runbook (`docs/mobile-release.md`); this plan only lis
 
 - **App id / name:** `com.teremu.app` / Teremu.
 - **Version field:** Add `"version": "0.1.0"` to `app/package.json`; it becomes the source of truth.
-- **Capacitor plugins installed:** `@capacitor/app`, `@capacitor/keyboard`, `@capacitor/status-bar`
+- **Capacitor plugins installed:** `@capacitor/app`, `@capacitor/keyboard`, `@capacitor/status-bar`, and the local share-sheet plugin `@teremu/share-target` (`app/plugins/share-target`).
+- **Share Extension:** iOS needs a second target (`ShareExtension`) with the App Group `group.com.teremu.app` on both targets, a provisioning profile for `com.teremu.app.ShareExtension`, and the `teremu` URL scheme — one-time Xcode steps in `docs/share-target.md`. Android needs nothing extra.
 - **Native permissions:** Camera: `ScanPage.vue` opens the camera with `getUserMedia` for receipt capture, so iOS needs `NSCameraUsageDescription` and Android `android.permission.CAMERA`. Nothing else.
 - **Icons / splash:** Complete: `icon.png`, adaptive `icon-foreground.png` / `icon-background.png`, `splash.png`, `splash-dark.png`.
 - **Sign-in today:** Google popup only (`signInWithGoogle` in `app/src/lib/firebase.ts`, which already carries the "needs `@capacitor-firebase/authentication`" note). All of it goes through `signInWithPopup`, which does not work inside the Capacitor WebView (phase 2).
