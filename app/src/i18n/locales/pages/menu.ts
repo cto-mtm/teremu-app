@@ -17,6 +17,21 @@ const es = {
     unitCost: '{cost} / {unit}',
     usedIn: 'Sin usar | En {n} plato | En {n} platos',
   },
+  // The menu-setup interview: the assistant asks, drafts, the user confirms
+  interview: {
+    cta: 'Cuéntaselo al asistente',
+    prompt: 'Ayúdame a añadir mis platos y preparaciones',
+  },
+  archive: {
+    title: 'Archivados',
+    intro: 'Fuera de la carta: no cuentan en márgenes ni ventas nuevas, pero su historial se conserva.',
+    action: 'Archivar',
+    restore: 'Restaurar',
+    badge: 'Archivado',
+    confirm: '¿Archivar «{name}»? Desaparece de la carta; sus ventas pasadas se conservan y puedes restaurarlo cuando quieras.',
+    usedBy: 'Aún lo usan {n} recetas activas; seguirán costeándose con él.',
+    failed: 'No se pudo guardar. Inténtalo de nuevo.',
+  },
   detail: {
     notFound: 'Plato no encontrado.',
     edit: 'Editar',
@@ -129,6 +144,20 @@ const en: typeof es = {
     batchCost: 'Batch {cost}',
     unitCost: '{cost} / {unit}',
     usedIn: 'Unused | In {n} dish | In {n} dishes',
+  },
+  interview: {
+    cta: 'Tell the assistant',
+    prompt: 'Help me add my dishes and preps',
+  },
+  archive: {
+    title: 'Archived',
+    intro: 'Off the menu: they no longer count in margins or new sales, but their history is kept.',
+    action: 'Archive',
+    restore: 'Restore',
+    badge: 'Archived',
+    confirm: 'Archive “{name}”? It leaves the menu; its past sales are kept and you can restore it anytime.',
+    usedBy: '{n} active recipes still use it; they keep costing with it.',
+    failed: 'Could not save. Try again.',
   },
   detail: {
     notFound: 'Dish not found.',

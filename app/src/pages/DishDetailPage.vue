@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useKitchenStore } from '../stores/kitchen'
@@ -38,6 +38,20 @@ const sold14 = computed(() => weekly.value.slice(-2).reduce((s, v) => s + v, 0))
 const breakdown = computed(() =>
   dish.value ? costBreakdown(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value) : [],
 )
+// ── Archive: an old menu item leaves the carta, its history stays ──
+const archiveBusy = ref(false)
+const activeUsers = computed(() => new Set(usedIn.value.filter((u) => u.item.active).map((u) => u.item.id)).size)
+async function setActive(active: boolean): Promise<void> {
+  if (!dish.value) return
+  if (!active) {
+    const usedBy = activeUsers.value ? '\n\n' + t('menu.archive.usedBy', { n: activeUsers.value }, activeUsers.value) : ''
+    if (!confirm(t('menu.archive.confirm', { name: dish.value.name }) + usedBy)) return
+  }
+  archiveBusy.value = true
+  const ok = await kitchen.setMenuItemActive(dish.value.id, active)
+  archiveBusy.value = false
+  if (!ok) alert(t('menu.archive.failed'))
+}
 const weekStarts = computed(() => {
   // Same 8-week window the bars use — first and last for the axis.
   const DAY = 86_400_000
@@ -70,11 +84,21 @@ const weekStarts = computed(() => {
         {{ dish.name }}
       </h1>
       <BaseButton
-        v-if="auth.can('menu', 'edit')"
+        v-if="auth.can('menu', 'edit') && dish.active"
         variant="ghost"
         @click="router.push({ path: '/menu', query: { edit: dish.id } })"
       >
         {{ t('menu.detail.edit') }}
+      </BaseButton>
+    </div>
+
+    <div v-if="!dish.active" class="card flex flex-wrap items-center justify-between gap-3" role="status">
+      <div class="min-w-0">
+        <p class="text-sm font-semibold">{{ t('menu.archive.badge') }}</p>
+        <p class="text-xs text-smoke">{{ t('menu.archive.intro') }}</p>
+      </div>
+      <BaseButton v-if="auth.can('menu', 'edit')" :disabled="archiveBusy" @click="setActive(true)">
+        {{ t('menu.archive.restore') }}
       </BaseButton>
     </div>
 
@@ -210,5 +234,15 @@ const weekStarts = computed(() => {
         </component>
       </div>
     </div>
+
+    <BaseButton
+      v-if="auth.can('menu', 'edit') && dish.active"
+      variant="ghost"
+      class="w-full"
+      :disabled="archiveBusy"
+      @click="setActive(false)"
+    >
+      {{ t('menu.archive.action') }}
+    </BaseButton>
   </div>
 </template>

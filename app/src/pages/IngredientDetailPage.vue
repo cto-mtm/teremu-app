@@ -53,6 +53,21 @@ async function setNotInRecipes(value: boolean): Promise<void> {
   dismissBusy.value = false
   if (!ok) alert(t('pantry.detail.dismissFailed'))
 }
+// ── Archive: hide an old product (or a line approved by mistake) ──
+const archiveBusy = ref(false)
+async function setArchived(archived: boolean): Promise<void> {
+  if (!ingredient.value) return
+  if (archived) {
+    const users = new Set(dishes.value.filter((u) => u.item.active).map((u) => u.item.id)).size
+    const usedBy = users ? '\n\n' + t('pantry.archive.usedBy', { n: users }, users) : ''
+    if (!confirm(t('pantry.archive.confirm', { name: ingredient.value.name }) + usedBy)) return
+  }
+  archiveBusy.value = true
+  const ok = await kitchen.setIngredientArchived(ingredient.value.id, archived)
+  archiveBusy.value = false
+  if (!ok) alert(t('pantry.archive.failed'))
+  else if (archived) void router.push('/pantry')
+}
 const history = computed(() =>
   ingredient.value ? priceHistory(invoicesStore.invoices, ingredient.value) : [],
 )
@@ -263,5 +278,22 @@ const suppliers = computed(() => {
         </div>
       </div>
     </div>
+
+    <div v-if="ingredient.archived" class="card space-y-2" role="status">
+      <p class="text-sm font-semibold">{{ t('pantry.archive.badge') }}</p>
+      <p class="text-xs text-smoke">{{ t('pantry.archive.intro') }}</p>
+      <BaseButton v-if="canDismiss" :disabled="archiveBusy" @click="setArchived(false)">
+        {{ t('pantry.archive.restore') }}
+      </BaseButton>
+    </div>
+    <BaseButton
+      v-else-if="canDismiss"
+      variant="ghost"
+      class="w-full"
+      :disabled="archiveBusy"
+      @click="setArchived(true)"
+    >
+      {{ t('pantry.archive.action') }}
+    </BaseButton>
   </div>
 </template>

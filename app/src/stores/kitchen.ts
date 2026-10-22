@@ -39,7 +39,13 @@ export const useKitchenStore = defineStore('kitchen', () => {
   const error = ref<string | null>(null)
 
   const ingredientMap = computed(() => new Map(ingredients.value.map((i) => [i.id, i])))
+  /** What the pantry shows: archived ingredients stay for history only. */
+  const pantry = computed(() => ingredients.value.filter((i) => !i.archived))
+  const archivedIngredients = computed(() => ingredients.value.filter((i) => i.archived))
   const activeMenuItems = computed(() => menuItems.value.filter((m) => m.active))
+  /** Archived dishes and preps (an old menu): kept so past sales and the
+   * recipes that use them still cost correctly. */
+  const archivedMenuItems = computed(() => menuItems.value.filter((m) => !m.active))
   /** What is sold — sales, margins, POS (docs/prep-recipes.md). */
   const dishes = computed(() => activeMenuItems.value.filter(isDish))
   /** Batch recipes used inside other recipes; never sold. */
@@ -47,7 +53,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
   /** Ingredients in no recipe. Empty until there is a recipe at all — with
    * no menu yet, "everything is unused" is noise, not a warning. */
   const unused = computed(() =>
-    activeMenuItems.value.length ? unusedIngredients(ingredients.value, menuItems.value) : [],
+    activeMenuItems.value.length ? unusedIngredients(pantry.value, menuItems.value) : [],
   )
   /** Distinct tags already used — feeds the expense form's suggestions. */
   const expenseTags = computed(() => [...new Map(expenses.value.map((e) => [e.tagKey, e.tag])).values()])
@@ -64,11 +70,16 @@ export const useKitchenStore = defineStore('kitchen', () => {
     revenue?: boolean
     expenses?: boolean
     contacts?: boolean
-  }): Promise<void> {
+  }, only?: (keyof typeof lastFlags)[]): Promise<void> {
     // Remember what this member may fetch — internal re-refreshes (after
     // revenue edits etc.) must not hit endpoints their perms forbid.
     if (flags) lastFlags = { ...lastFlags, ...flags }
-    const f = lastFlags
+    // `only` narrows a reload to some datasets (never widens the perms).
+    const f = only
+      ? (Object.fromEntries(
+          Object.entries(lastFlags).map(([k, v]) => [k, v && only.includes(k as keyof typeof lastFlags)]),
+        ) as typeof lastFlags)
+      : lastFlags
     loading.value = true
     const gen = generation
     const epoch = writeEpoch()
@@ -85,7 +96,7 @@ export const useKitchenStore = defineStore('kitchen', () => {
     // of writes can't loop forever.
     if (writeEpoch() !== epoch && staleRetries < 3) {
       staleRetries += 1
-      return refresh()
+      return refresh(undefined, only)
     }
     staleRetries = 0
     const [ing, menu, rev, exp, contacts] = results
@@ -346,6 +357,29 @@ export const useKitchenStore = defineStore('kitchen', () => {
     return res.ok
   }
 
+  /** Archive (or restore) an ingredient — hidden, never deleted. */
+  async function setIngredientArchived(ingredientId: string, archived: boolean): Promise<boolean> {
+    const res = await apiFetch<Ingredient>(
+      `/ingredients/${ingredientId}/archive`,
+      { method: 'PUT', body: JSON.stringify({ archived }) },
+      ingredientSchema,
+    )
+    if (res.ok) {
+      ingredients.value = replaceById(ingredients.value, ingredientId, res.data)
+    } else {
+      error.value = res.error
+    }
+    return res.ok
+  }
+
+  /** Archive (or restore) a dish or prep: `active` off, everything else kept. */
+  async function setMenuItemActive(id: string, active: boolean): Promise<boolean> {
+    const item = menuItems.value.find((m) => m.id === id)
+    if (!item) return false
+    const { id: _id, ...doc } = item
+    return (await saveMenuItem({ ...doc, active }, id)) != null
+  }
+
   /** Monthly true-up: overwrite the AI estimate with a physical count. */
   async function trueUp(ingredientId: string, qty: number): Promise<boolean> {
     const res = await apiFetch<Ingredient>(
@@ -385,7 +419,10 @@ export const useKitchenStore = defineStore('kitchen', () => {
     loading,
     error,
     ingredientMap,
+    pantry,
+    archivedIngredients,
     activeMenuItems,
+    archivedMenuItems,
     dishes,
     preps,
     unused,
@@ -405,6 +442,8 @@ export const useKitchenStore = defineStore('kitchen', () => {
     deleteExpense,
     setCategory,
     setNotInRecipes,
+    setIngredientArchived,
+    setMenuItemActive,
     trueUp,
   }
 })

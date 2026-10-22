@@ -56,11 +56,12 @@ e2e/
 └── tests/
     ├── auth.setup.ts        # sign in → skip "find your restaurant" → first-login tour → saves storageState
     ├── auth/login.spec.ts   # signed-OUT: login page + route guard
-    ├── menu/                # dish costing, target-margin flagging, prep recipes
-    ├── pantry/              # manual ingredient creation, physical count
+    ├── menu/                # dish costing, target-margin flagging, prep recipes, archive → restore
+    ├── pantry/              # manual ingredient creation, physical count, archive → restore
     ├── pulse/               # revenue entry → pantry depletion
     ├── scan/                # the golden path: scan → triage → approve
-    ├── triage/              # dismiss → restore → approve as expense; albarán ↔ factura reconciliation
+    ├── triage/              # dismiss → restore → approve as expense; albarán ↔ factura reconciliation;
+    │                        #   first-approval main-currency prompt (fresh location)
     ├── vendors/             # directory search, vendor page, ordering contact
     ├── settings/            # team invite + per-area permissions (second signed-in user),
     │                        #   location name / labor rate / units / health, new location + POS

@@ -154,7 +154,7 @@ const engineering = computed(() =>
 
 // ── Price watch: most volatile ingredients, with sparklines ─────
 const priceWatch = computed(() =>
-  kitchen.ingredients
+  kitchen.pantry
     .map((ing) => ({ ing, hist: priceHistory(invoicesStore.invoices, ing), change: priceChangePct(ing) }))
     .filter((x) => x.hist.length >= 2)
     .sort((a, b) => Math.abs(b.change ?? 0) - Math.abs(a.change ?? 0))
@@ -171,7 +171,7 @@ const stockValue = computed(() => pantryValue(kitchen.ingredients))
 // ── Alerts ──────────────────────────────────────────────────────
 const priceAlerts = computed(() => {
   const list: { ing: Ingredient; change: number }[] = []
-  for (const ing of kitchen.ingredients) {
+  for (const ing of kitchen.pantry) {
     const change = priceChangePct(ing)
     if (change != null && Math.abs(change) >= 5) list.push({ ing, change })
   }

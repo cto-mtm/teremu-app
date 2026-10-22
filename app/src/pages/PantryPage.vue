@@ -63,10 +63,11 @@ const sortBy = ref<'name' | 'stock' | 'value'>('name')
 // the banner narrow the list to them (the fix lives on each one's page).
 const unusedIds = computed(() => new Set(kitchen.unused.map((i) => i.id)))
 const onlyUnused = ref(false)
+const showArchived = ref(false)
 
 const filtered = computed(() => {
   const q = normalizeName(search.value)
-  const list = kitchen.ingredients.filter(
+  const list = kitchen.pantry.filter(
     (i) =>
       (catFilter.value === 'all' || i.category === catFilter.value) &&
       // The banner (and its toggle) goes away once nothing is unused.
@@ -105,6 +106,8 @@ const showGrocery = ref(false)
 const copied = ref(false)
 
 const grocery = computed(() =>
+  // All ingredients, archived too: the list only holds what sales use, and
+  // an archived ingredient an active recipe still uses must still be bought.
   groceryList(kitchen.ingredients, kitchen.menuItems, kitchen.revenue, COVER_DAYS),
 )
 
@@ -196,7 +199,7 @@ async function commit(id: string): Promise<void> {
         <BaseButton v-if="kitchen.dishes.length" variant="ghost" @click="showPlan = true">
           {{ t('pantry.plan.cta') }}
         </BaseButton>
-        <BaseButton v-if="kitchen.ingredients.length" @click="showGrocery = true">
+        <BaseButton v-if="kitchen.pantry.length" @click="showGrocery = true">
           {{ t('pantry.grocery.cta') }}
         </BaseButton>
       </div>
@@ -312,7 +315,7 @@ async function commit(id: string): Promise<void> {
 
     <PageLoader v-if="kitchen.loading && !kitchen.ingredients.length" :cards="0" :lines="6" />
 
-    <div v-else-if="kitchen.ingredients.length === 0" class="card py-10 text-center text-sm text-smoke">
+    <div v-else-if="kitchen.pantry.length === 0" class="card py-10 text-center text-sm text-smoke">
       {{ t('pantry.empty') }}
     </div>
 
@@ -398,9 +401,31 @@ async function commit(id: string): Promise<void> {
       </div>
     </template>
 
-    <p v-if="kitchen.ingredients.length > 0" class="px-1 text-xs text-smoke">
+    <p v-if="kitchen.pantry.length > 0" class="px-1 text-xs text-smoke">
       {{ t('pantry.tip') }}
     </p>
+
+    <!-- Archived ingredients: out of the way, one tap to see -->
+    <div v-if="kitchen.archivedIngredients.length" class="space-y-2">
+      <button
+        class="px-1 text-xs font-semibold text-smoke hover:text-ink"
+        :aria-expanded="showArchived"
+        @click="showArchived = !showArchived"
+      >
+        {{ t('pantry.archive.title') }} · {{ kitchen.archivedIngredients.length }} {{ showArchived ? '↑' : '↓' }}
+      </button>
+      <template v-if="showArchived">
+        <p class="px-1 text-xs text-smoke">{{ t('pantry.archive.intro') }}</p>
+        <RouterLink
+          v-for="ing in kitchen.archivedIngredients"
+          :key="ing.id"
+          :to="`/pantry/${ing.id}`"
+          class="card block w-full text-left text-sm text-smoke hover:border-ember/40"
+        >
+          {{ ing.name }}
+        </RouterLink>
+      </template>
+    </div>
 
     <!-- Grocery list sheet -->
     <Transition name="list">

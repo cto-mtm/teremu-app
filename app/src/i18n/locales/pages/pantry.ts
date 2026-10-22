@@ -35,6 +35,16 @@ const es = {
     exists: 'Ya existe un ingrediente con ese nombre.',
     failed: 'No se pudo crear el ingrediente.',
   },
+  archive: {
+    title: 'Archivados',
+    intro: 'Ocultos de la despensa y de las recetas; las facturas y costos pasados se conservan. Si vuelve a llegar en una factura, reaparece solo.',
+    action: 'Archivar',
+    restore: 'Restaurar',
+    badge: 'Archivado',
+    confirm: '¿Archivar «{name}»? Se oculta de la despensa y de las recetas; nada de su historial se borra.',
+    usedBy: 'Aún lo usan {n} recetas activas: siguen costeándose con él y sigue en la lista de compra.',
+    failed: 'No se pudo guardar. Inténtalo de nuevo.',
+  },
   detail: {
     notFound: 'Ingrediente no encontrado.',
     stock: 'Existencias teóricas',
@@ -124,6 +134,16 @@ const en: typeof es = {
     stock: 'Starting stock (optional)',
     exists: 'An ingredient with that name already exists.',
     failed: 'Could not create the ingredient.',
+  },
+  archive: {
+    title: 'Archived',
+    intro: 'Hidden from the pantry and recipes; past invoices and costs are kept. If it shows up on an invoice again, it comes back on its own.',
+    action: 'Archive',
+    restore: 'Restore',
+    badge: 'Archived',
+    confirm: 'Archive “{name}”? It is hidden from the pantry and recipes; none of its history is deleted.',
+    usedBy: '{n} active recipes still use it: they keep costing with it and it stays on the grocery list.',
+    failed: 'Could not save. Try again.',
   },
   detail: {
     notFound: 'Ingredient not found.',

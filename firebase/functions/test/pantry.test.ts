@@ -9,6 +9,7 @@ import {
   put,
   del,
   seedIngredient,
+  seedInvoice,
   seedMember,
   seedMenuItem,
   uniqueId,
@@ -174,6 +175,40 @@ describe("pantry & revenue", () => {
     expect(set).toMatchObject({ status: 200, body: { id: bags.id, notInRecipes: true } });
     expect((await ing(owner.rid, bags.id)).notInRecipes).toBe(true);
     expect((await put(path, owner.token, { notInRecipes: false })).body.notInRecipes).toBe(false);
+  });
+
+  it("PUT /ingredients/:id/archive hides an ingredient and restores it; buying it again restores it too", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const other = await makeOwner({ uid: `other-${uniqueId()}`, email: `other-${uniqueId()}@example.com` });
+    const bags = await seedIngredient(owner.rid, { name: "Bolsas", nameKey: "bolsas", unit: "each" });
+    const path = `/ingredients/${bags.id}/archive`;
+
+    expect((await put(path, undefined, { archived: true })).status).toBe(401);
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "none", menu: "edit", pantry: "read", finance: "none", vendors: "none", integrations: "none", scan: false });
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await put(path, reader, { archived: true }, owner.rid)).status).toBe(403);
+    // Another restaurant's owner: the id does not exist in THEIR restaurant.
+    expect((await put(path, other.token, { archived: true })).status).toBe(404);
+    expect((await ing(owner.rid, bags.id)).archived).toBeUndefined();
+
+    expect((await put(path, owner.token, { archived: "yes" })).status).toBe(400);
+    expect((await put("/ingredients/nope/archive", owner.token, { archived: true })).status).toBe(404);
+
+    const set = await put(path, owner.token, { archived: true });
+    expect(set).toMatchObject({ status: 200, body: { id: bags.id, archived: true } });
+    expect((await put(path, owner.token, { archived: false })).body.archived).toBe(false);
+
+    // Archived, then bought again → back in the pantry.
+    await put(path, owner.token, { archived: true });
+    const invoice = await seedInvoice(owner.rid);
+    const approved = await put(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Papelera Sur",
+      invoiceDate: "2026-10-20",
+      lineItems: [{ name: "Bolsas", qty: 100, unit: "each", unitPrice: 0.05, total: 5 }],
+    });
+    expect(approved.status).toBe(200);
+    expect((await ing(owner.rid, bags.id)).archived).toBe(false);
   });
 
   it("PUT /ingredients/:id re-categorizes, clears the subcategory on omission, and 400s a crossed pair", async () => {

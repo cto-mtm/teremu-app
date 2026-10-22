@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useAssistant } from '@mtmcya/assistant/vue'
 import { armHero, heroStyle } from '../composables/useHero'
 import { currencySymbol } from '../i18n'
 import { useKitchenStore } from '../stores/kitchen'
@@ -39,6 +40,7 @@ const needRecipes = computed(() =>
 
 // Dishes (sold, with margins) or preps (batch recipes used inside them).
 // /menu?tab=preps opens the second one (the prep detail page links back).
+const assistant = useAssistant()
 const tab = ref<'dishes' | 'preps'>(route.query.tab === 'preps' ? 'preps' : 'dishes')
 const recipeSeed = ref<{ key: string; name: string; price: number | null; menuItemId: string }[] | undefined>()
 function estimateImported(): void {
@@ -132,6 +134,14 @@ function closeEditor(): void {
 
 /** Other active items usable as sub-recipes (excluding the one open):
  * preps first — that is what they are for — then dishes. */
+/** Archived dishes or preps of the open tab — restored from their page. */
+const archivedRows = computed(() =>
+  kitchen.archivedMenuItems
+    .filter((m) => (tab.value === 'preps') === (m.kind === 'prep'))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+)
+const showArchived = ref(false)
+
 const notOpen = (m: MenuItem) => editing.value === 'new' || m.id !== editing.value?.id
 const prepChoices = computed(() => kitchen.preps.filter(notOpen))
 const dishChoices = computed(() => kitchen.dishes.filter(notOpen))
@@ -284,6 +294,10 @@ async function save(): Promise<void> {
             </svg>
             {{ t('menu.scan.cta') }}
           </span>
+        </BaseButton>
+        <!-- Easier than the form for many: the assistant asks, one question at a time -->
+        <BaseButton variant="ghost" @click="assistant.ask(t('menu.interview.prompt'), { send: true })">
+          💬 {{ t('menu.interview.cta') }}
         </BaseButton>
         <BaseButton variant="ghost" @click="openEditor('new')">
           + {{ tab === 'preps' ? t('menu.addPrep') : t('menu.addDish') }}
@@ -440,6 +454,28 @@ async function save(): Promise<void> {
     </div>
     </template>
 
+    <!-- Archived (old menu items): out of the way, one tap to see -->
+    <div v-if="archivedRows.length" class="space-y-2">
+      <button
+        class="text-xs font-semibold text-smoke hover:text-ink"
+        :aria-expanded="showArchived"
+        @click="showArchived = !showArchived"
+      >
+        {{ t('menu.archive.title') }} · {{ archivedRows.length }} {{ showArchived ? '↑' : '↓' }}
+      </button>
+      <template v-if="showArchived">
+        <p class="text-xs text-smoke">{{ t('menu.archive.intro') }}</p>
+        <RouterLink
+          v-for="m in archivedRows"
+          :key="m.id"
+          :to="`/menu/${m.id}`"
+          class="card block w-full text-left text-sm text-smoke hover:border-ember/40"
+        >
+          {{ m.name }}
+        </RouterLink>
+      </template>
+    </div>
+
     <MenuScanWizard v-model="wizardOpen" :seed="recipeSeed" :title="recipeSeed ? t('menu.listing.wizardTitle') : undefined" />
 
     <!-- Dish editor (within-page overlay) -->
@@ -523,7 +559,11 @@ async function save(): Promise<void> {
                   </option>
                 </optgroup>
                 <optgroup :label="t('menu.editor.groupIngredients')">
-                  <option v-for="ing in kitchen.ingredients" :key="ing.id" :value="'ing:' + ing.id">
+                  <option
+                    v-for="ing in kitchen.ingredients.filter((i) => !i.archived || i.id === line.ingredientId)"
+                    :key="ing.id"
+                    :value="'ing:' + ing.id"
+                  >
                     {{ ing.name }} ({{ n(ing.lastUnitPrice ?? 0, 'currency') }}/{{ t('common.unit.' + ing.unit) }})
                   </option>
                 </optgroup>
@@ -599,7 +639,7 @@ async function save(): Promise<void> {
             <button class="btn-ghost w-full" @click="recipe.push({ ingredientId: '', qty: 0 })">
               + {{ t('menu.editor.addIngredient') }}
             </button>
-            <div v-if="kitchen.ingredients.length === 0" class="text-xs text-smoke">
+            <div v-if="kitchen.pantry.length === 0" class="text-xs text-smoke">
               {{ t('menu.editor.noIngredientsHint') }}
             </div>
           </div>
