@@ -20,6 +20,7 @@ import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { getPlanInfo } from "./plan.js";
 import { oauthFailureUrl as emailOauthFailureUrl, oauthReturnUrl as emailOauthReturnUrl } from "./email/oauth.js";
 import { syncDueInboxes } from "./email/sync.js";
+import { EMAIL_SECRETS } from "./email/index.js";
 
 initializeApp();
 
@@ -126,11 +127,11 @@ export const emailOauthCallback = onRequest({ region: REGION }, async (req, res)
  * and one still in its 31-day backfill syncs every tick, so the first
  * month lands within hours of connecting. Sequential, and it stops
  * starting new inboxes near the timeout — the rest are due next hour.
- * Binds the LLM key (stage-1 classifier); EMAIL_SECRETS join it after
- * Phase 0 — until then there are no deployed inboxes to sync.
+ * Binds the LLM key (classifier, extraction) and EMAIL_SECRETS (inbox
+ * tokens, the Gmail client).
  */
 export const emailSync = onSchedule(
-  { schedule: "every 60 minutes", timeZone: "UTC", region: REGION, timeoutSeconds: 540, memory: "1GiB", secrets: [NVIDIA_API_KEY] },
+  { schedule: "every 60 minutes", timeZone: "UTC", region: REGION, timeoutSeconds: 540, memory: "1GiB", secrets: [NVIDIA_API_KEY, ...EMAIL_SECRETS] },
   async () => {
     logger.info("Email sync", await syncDueInboxes());
   },

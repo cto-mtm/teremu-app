@@ -98,27 +98,38 @@ describe.skipIf(!present || covered.length === 0)("real corpus (one client month
   });
 
   it("uploads every recorded document and each lands in a terminal state", async () => {
-    for (const d of covered) {
-      const [first, ...rest] = d.pages;
-      const multi = rest.length > 0;
-      const res = await upload("/invoices", owner.token, bytes(first), owner.rid, multi ? { "X-More-Pages": "1" } : undefined);
-      expect(res.status, `${d.file}: ${JSON.stringify(res.body)}`).toBe(201);
-      const id = res.body.id as string;
-      docIdByFile.set(d.file, id);
-      for (const p of rest) {
-        const r = await upload(`/invoices/${id}/pages`, owner.token, bytes(p), owner.rid);
-        if (r.status === 409) pageRejections.push(`${d.file} ${p.path.split("/").pop()}`);
-        else expect(r.status, `${d.file} ${p.path}: ${JSON.stringify(r.body)}`).toBe(201);
+    // In small batches, each settled before the next: an upload returns
+    // before its Storage trigger runs, so ~250 back-to-back uploads queue
+    // ~250 triggers and the functions emulator spawns a worker per one in
+    // flight — dozens at once, which on Windows cannot load the bundle
+    // within the discovery timeout ("Failed to load function"), and those
+    // documents never leave `processing`. A bounded batch keeps the worker
+    // pool to a handful; what is asserted is unchanged.
+    const BATCH = 4;
+    for (let i = 0; i < covered.length; i += BATCH) {
+      const batch = covered.slice(i, i + BATCH);
+      for (const d of batch) {
+        const [first, ...rest] = d.pages;
+        const multi = rest.length > 0;
+        const res = await upload("/invoices", owner.token, bytes(first), owner.rid, multi ? { "X-More-Pages": "1" } : undefined);
+        expect(res.status, `${d.file}: ${JSON.stringify(res.body)}`).toBe(201);
+        const id = res.body.id as string;
+        docIdByFile.set(d.file, id);
+        for (const p of rest) {
+          const r = await upload(`/invoices/${id}/pages`, owner.token, bytes(p), owner.rid);
+          if (r.status === 409) pageRejections.push(`${d.file} ${p.path.split("/").pop()}`);
+          else expect(r.status, `${d.file} ${p.path}: ${JSON.stringify(r.body)}`).toBe(201);
+        }
+        if (multi) {
+          const c = await put(`/invoices/${id}/complete`, owner.token, undefined, owner.rid);
+          expect(c.status, d.file).toBe(200);
+        }
       }
-      if (multi) {
-        const c = await put(`/invoices/${id}/complete`, owner.token, undefined, owner.rid);
-        expect(c.status, d.file).toBe(200);
+      for (const d of batch) {
+        const inv = await waitForStatus(owner.token, docIdByFile.get(d.file)!, undefined, { timeoutMs: 60_000 });
+        expect(["needs_review", "failed"], d.file).toContain(inv.status);
+        results.set(d.file, inv);
       }
-    }
-    for (const d of covered) {
-      const inv = await waitForStatus(owner.token, docIdByFile.get(d.file)!, undefined, { timeoutMs: 60_000 });
-      expect(["needs_review", "failed"], d.file).toContain(inv.status);
-      results.set(d.file, inv);
     }
 
     // Byte-identical repeated pages (and only those) are rejected — the

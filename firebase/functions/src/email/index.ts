@@ -21,12 +21,10 @@ export const EMAIL_TOKEN_ENC_KEY: SecretParam = defineSecret("EMAIL_TOKEN_ENC_KE
 export const sealer = makeSealer("EMAIL_TOKEN_ENC_KEY", "email token", "teremu-dev-email-key");
 
 /**
- * Every function that touches inbox tokens or a provider binds these.
- * NOT bound yet: a declared secret that does not exist in Secret Manager
- * fails the deploy, and none exist until Google's OAuth client is set up
- * (docs/email-ingestion.md, Phase 0). Until then a deployed function has
- * neither, `adapterFor` returns null, and the Settings card says email
- * import is not available here. The emulator runs on the fake inbox.
+ * Every function that touches inbox tokens or a provider binds these
+ * (`api`, `emailSync`). They must exist in Secret Manager before a deploy
+ * — `node scripts/email-secrets.mjs` — or the deploy fails. The emulator
+ * runs without them on the fake inbox and the dev key.
  */
 export const EMAIL_SECRETS: SecretParam[] = [
   EMAIL_TOKEN_ENC_KEY,
@@ -54,9 +52,20 @@ export const emailAvailable = (provider: MailProvider): boolean => adapterFor(pr
 /** Whether the provider's OAuth app is still unverified (types.ts `testing`). */
 export const providerInTesting = (provider: MailProvider): boolean => PROVIDERS[provider].testing();
 
-/** Where Google sends the browser back to: EMAIL_OAUTH_REDIRECT_URL, else
- * this project's emailOauthCallback function URL. Must be registered
- * verbatim as an authorized redirect URI on the OAuth client. */
+/** The callback's path on the app's own domain — Firebase Hosting rewrites
+ * it to emailOauthCallback (firebase.json). */
+export const EMAIL_OAUTH_CALLBACK_PATH = "/oauth/email/callback";
+
+/**
+ * Where Google sends the browser back to; registered verbatim as the
+ * OAuth client's authorized redirect URI. Deployed, it is on the app's
+ * own domain (APP_URL + EMAIL_OAUTH_CALLBACK_PATH): Google's verification
+ * only accepts redirect URIs on domains you own and have verified, which
+ * the function's cloudfunctions.net URL is not. The emulator calls the
+ * function directly. EMAIL_OAUTH_REDIRECT_URL overrides both.
+ */
 export function oauthRedirectUrl(): string {
-  return process.env.EMAIL_OAUTH_REDIRECT_URL || functionUrl("emailOauthCallback");
+  if (process.env.EMAIL_OAUTH_REDIRECT_URL) return process.env.EMAIL_OAUTH_REDIRECT_URL;
+  if (process.env.FUNCTIONS_EMULATOR === "true") return functionUrl("emailOauthCallback");
+  return `${(process.env.APP_URL || "https://app.teremu.com").replace(/\/+$/, "")}${EMAIL_OAUTH_CALLBACK_PATH}`;
 }

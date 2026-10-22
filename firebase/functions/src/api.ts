@@ -108,6 +108,7 @@ import {
   emailStatus,
   startConnect as startEmailConnect,
 } from "./email/oauth.js";
+import { EMAIL_SECRETS } from "./email/index.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
 import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox } from "./email/sync.js";
 import { recordOutcome } from "./email/stats.js";
@@ -1399,7 +1400,7 @@ export const api = onRequest(
     // locally; `cors: false` is the opt-out (test/cors.test.ts guards it).
     cors: false,
     maxInstances: 10,
-    secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY, ...POS_SECRETS],
+    secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY, ...POS_SECRETS, ...EMAIL_SECRETS],
     memory: "512MiB",
     timeoutSeconds: 120,
   },
