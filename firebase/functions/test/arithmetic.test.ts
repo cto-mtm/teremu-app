@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { looseNumber } from "../src/ocr";
 import { validateArithmetic } from "../src/pipeline";
 import type { LineItem } from "../src/models";
 
@@ -58,12 +59,43 @@ describe("validateArithmetic", () => {
   it("never rescales a genuinely big bill", () => {
     const lines = [line("Oven", 1, 2400, 2400), line("Install", 1, 300, 300)];
     expect(validateArithmetic(lines, 3267).lineItems).toEqual(lines);
-    // …nor one whose printed total is itself the misread: "1.080,00"
-    // read as 1.08 → 1.080 has no third decimal, but "1.307,50" → 1.3075
-    // does, and money never has more than two.
+  });
+
+  it("repairs a printed total read 1000× too small when the lines were read right", () => {
+    // "1.080,50" read as 1.0805: money never has a third decimal.
     const big = [line("Flour sacks", 1200, 0.9, 1080)];
-    const { lineItems, warnings } = validateArithmetic(big, 1.0805);
+    const { lineItems, total, warnings } = validateArithmetic(big, 1.0805);
     expect(lineItems[0].qty).toBe(1200);
-    expect(warnings).toEqual(["total_mismatch"]);
+    expect(total).toBe(1080.5);
+    expect(warnings).toEqual(["thousands_repaired"]);
+  });
+
+  it("repairs a whole document read 1000× too small (\"9.312,00\" as 9.312)", () => {
+    // A bolívar invoice: the second line is a round thousand ("4.500,00"
+    // → 4.5) with no third decimal to give it away; the third was read right.
+    const lines = [line("Harina", 2, 2.406, 4.812), line("Queso", 1, 4.5, 4.5), line("Sal", 1, 0.5, 0.5)];
+    const { lineItems, total, warnings } = validateArithmetic(lines, 9.8125);
+    expect(total).toBe(9812.5);
+    expect(lineItems.map((l) => [l.unitPrice, l.total, !!l.flagged])).toEqual([
+      [2406, 4812, true],
+      [4500, 4500, true],
+      [0.5, 0.5, false],
+    ]);
+    expect(warnings).toEqual(["thousands_repaired"]);
+  });
+
+  it("leaves a two-decimal total alone", () => {
+    const lines = [line("Harina", 2, 2.406, 4.812)];
+    expect(validateArithmetic(lines, 4.81).total).toBe(4.81);
+  });
+});
+
+describe("looseNumber", () => {
+  it("reads a number the model sent as a string in the document's convention", () => {
+    expect(looseNumber("9.312,00")).toBe("9312.00");
+    expect(looseNumber("1,234.56")).toBe("1234.56");
+    expect(looseNumber("Bs. 1.234.567")).toBe("1234567");
+    expect(looseNumber("12,5")).toBe("12.5");
+    expect(looseNumber(9.31)).toBe(9.31);
   });
 });

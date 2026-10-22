@@ -24,6 +24,9 @@ export interface CountryPack {
   ocrHints?: string;
   /** Tax/fee line names OCR must fold into `total` (IGTF, …). */
   nonProductLineNames?: string[];
+  /** Names printed on receipts that are never the seller (a tax
+   * authority's fiscal mark) — the OCR vendor is dropped if it is one. */
+  notVendorNames?: string[];
   /** Currency spellings → ISO code ("Bs.D" → "VES"), applied in sanitize(). */
   currencyAliases?: Record<string, Currency>;
   /** Pulse cards the pack contributes (Phase 3). */

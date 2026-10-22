@@ -54,6 +54,7 @@ Rules:
 - "subcategory" must come from ITS OWN category's list (or be null when unsure): ${SUBCATEGORY_GUIDE}.
 - Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
 - Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
+- Numbers: write every quantity and amount as a plain JSON number with "." as the decimal point and NO thousands separators. Work out the document's own convention first: many documents print "9.312,00", where "." groups thousands and "," is the decimal — that is 9312.00, never 9.312. Money totals never have more than 2 decimals.
 - "currency" is the currency the LINE prices are printed in; report every amount in that one currency. If the document ALSO prints an exchange rate ("tasa", "tipo de cambio", "T/C", "exchange rate") — typically next to a grand total shown in a second currency — copy that rate as a plain number into "printedFxRate" and still report "total" in the line currency. Otherwise "printedFxRate" is null.
 - Never write a " character inside a value: spell inches as "in" ("12 in", not 12") and drop quotes around brand names.
 - If the image is a purchase document but too blurry/dark to read, reply {"error": "unreadable"}.`;
@@ -90,16 +91,41 @@ export interface ExtractionContext {
 // arrive as strings, units may be off-list. coerce + catch absorb all
 // of that so a sloppy model reply degrades gracefully instead of
 // failing the invoice.
+/**
+ * A number the model sent as a STRING in the document's own convention
+ * ("9.312,00", "1,234.56", "12,5"): when both separators appear the last
+ * one is the decimal; a separator repeated is grouping; a lone one is the
+ * decimal. Real JSON numbers pass through — their misreads are the
+ * arithmetic stage's job (pipeline.ts repairThousands).
+ */
+export function looseNumber(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  let s = value.replace(/[^\d.,-]/g, "");
+  const dot = s.lastIndexOf(".");
+  const comma = s.lastIndexOf(",");
+  if (dot >= 0 && comma >= 0) {
+    const [group, decimal] = dot > comma ? [",", "."] : [".", ","];
+    s = s.split(group).join("").replace(decimal, ".");
+  } else {
+    for (const sep of [".", ","]) {
+      if (s.split(sep).length > 2) s = s.split(sep).join("");
+    }
+    s = s.replace(",", ".");
+  }
+  return s;
+}
+const num = () => z.preprocess(looseNumber, z.coerce.number());
+
 const ocrLineSchema = z.object({
   name: z.string().catch(""),
   match: z.string().nullable().catch(null),
-  qty: z.coerce.number().positive().catch(1),
+  qty: num().pipe(z.number().positive()).catch(1),
   unit: unitSchema.catch("each"),
-  unitPrice: z.coerce.number().min(0).catch(0),
-  total: z.coerce.number().min(0).catch(0),
+  unitPrice: num().pipe(z.number().min(0)).catch(0),
+  total: num().pipe(z.number().min(0)).catch(0),
   category: categorySchema.catch("other"),
   subcategory: subcategorySchema.nullable().catch(null),
-  packQty: z.coerce.number().positive().nullable().catch(null),
+  packQty: num().pipe(z.number().positive()).nullable().catch(null),
   packUnit: unitSchema.nullable().catch(null),
 });
 
@@ -113,9 +139,9 @@ const ocrResponseSchema = z.object({
   // Three states on purpose (see OcrResult.currency): an off-vocabulary
   // code degrades to "not reported", never to "assumed".
   currency: currencySchema.nullable().optional().catch(undefined),
-  printedFxRate: z.coerce.number().positive().nullable().optional().catch(null),
+  printedFxRate: num().pipe(z.number().positive()).nullable().optional().catch(null),
   lineItems: z.array(ocrLineSchema).catch([]),
-  total: z.coerce.number().positive().catch(0),
+  total: num().pipe(z.number().positive()).catch(0),
 });
 
 /**
@@ -140,16 +166,17 @@ function sanitize(
   parsed: z.infer<typeof ocrResponseSchema>,
   knownIngredients: string[],
   restaurantName: string | null,
+  notVendorNames: string[] = [],
 ): OcrResult {
   // Deterministic backstop for the prompt's buyer/seller rule: when the
   // model still hands back the restaurant's own name as the vendor
   // (it's often the most prominent text on the page), drop it — an
   // unknown vendor beats a wrong one. Exact normalized match only, so
   // a supplier whose name merely CONTAINS the restaurant's survives.
-  const vendor =
-    parsed.vendor && restaurantName && normalizeName(parsed.vendor) === normalizeName(restaurantName)
-      ? null
-      : parsed.vendor;
+  // Same for a name the country pack says is never a seller (a tax
+  // authority's fiscal mark — see countries/<cc>/ notVendorNames).
+  const notVendors = new Set([restaurantName, ...notVendorNames].filter(Boolean).map((n) => normalizeName(n!)));
+  const vendor = parsed.vendor && notVendors.has(normalizeName(parsed.vendor)) ? null : parsed.vendor;
   // AI catalog matching: when the model recognized an existing product,
   // adopt the canonical name so approval merges instead of duplicating
   // ("TOMATE ROMA 25#" lands on "Roma Tomatoes", not a new ingredient).
@@ -250,15 +277,16 @@ function contextPrompt(context: ExtractionContext): string {
   return prompt;
 }
 
-/** Model reply → OcrResult, the same for images and text. */
-function toResult(raw: string, context: ExtractionContext): OcrResult {
+/** Model reply → OcrResult, the same for images and text. Exported for
+ * the country-pack tests (aliases and never-a-vendor names). */
+export function toResult(raw: string, context: ExtractionContext): OcrResult {
   const parsed = ocrResponseSchema.parse(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases));
   if (parsed.error)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, printedFxRate: null, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).
   if (parsed.kind === "other" || parsed.confidence < 0.3)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, printedFxRate: null, notDocument: true };
-  return sanitize(parsed, context.knownIngredients ?? [], context.restaurantName ?? null);
+  return sanitize(parsed, context.knownIngredients ?? [], context.restaurantName ?? null, context.pack?.notVendorNames);
 }
 
 /**
