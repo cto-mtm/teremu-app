@@ -34,7 +34,7 @@ Read this before touching any email-ingestion code. Companion docs: `llm.md` (ev
 
 **Token storage.** Refresh tokens go in **Firestore, envelope-encrypted** — AES-256-GCM with a key from Secret Manager (`EMAIL_TOKEN_ENC_KEY`, `defineSecret`, key-version prefix on the ciphertext for painless rotation) — the exact scheme `pos.md` specifies for Square tokens, now one shared helper (`helpers/sealer.ts`, `makeSealer(envVar, …)`) with a key ring per integration.
 
-**Secrets are declared but not bound yet.** `EMAIL_SECRETS` (`EMAIL_TOKEN_ENC_KEY`, `GMAIL_CLIENT_SECRET`) is exported from `email/index.ts` but deliberately left out of the `api` function's `secrets`: a declared secret that does not exist in Secret Manager fails the deploy, and none exist until Phase 0 creates the Google OAuth client. Until then a deployed `api` has neither, `GET /email` reports the provider unavailable, and the Settings card says so; the emulator runs on the fake inbox. Binding them (plus `GMAIL_CLIENT_ID` in `functions/.env`, and registering the `emailOauthCallback` URL on the OAuth client) is the first step after Phase 0. Secret Manager itself is *not* a per-user token store (per-version pricing and admin overhead make it wrong for N users); it holds only the KEK. Access tokens are short-lived and cached in memory per invocation, never persisted. Tokens never appear in logs (a CASA check item).
+**Secrets are declared but not bound yet.** `EMAIL_SECRETS` (`EMAIL_TOKEN_ENC_KEY`, `GMAIL_CLIENT_SECRET`) is exported from `email/index.ts` but deliberately left out of the `api` function's `secrets`: a declared secret that does not exist in Secret Manager fails the deploy, and none exist until Phase 0 creates the Google OAuth client. Until then a deployed `api` has neither, `GET /email` reports the provider unavailable, and the Settings card says so; the emulator runs on the fake inbox. Binding them is the first step after Phase 0 — see §Going live after Phase 0 for the exact order. Secret Manager itself is *not* a per-user token store (per-version pricing and admin overhead make it wrong for N users); it holds only the KEK. Access tokens are short-lived and cached in memory per invocation, never persisted. Tokens never appear in logs (a CASA check item).
 
 **Revocation & re-consent.** Disconnect in Settings calls `https://oauth2.googleapis.com/revoke` and deletes the token fields. Google-side revocation (user removes access in their Google Account) surfaces as `invalid_grant` on refresh → connection flips to `needs_reauth`, Settings shows a reconnect banner, and the owner gets a `sendMail` alert — same lifecycle as `pos.md`'s `needs_reauth`. Nothing errors loudly in the background forever; sync just pauses.
 
@@ -240,6 +240,24 @@ Week 1 = the week of 2026-10-26.
 | Revocation / re-consent | `invalid_grant` → `needs_reauth` + banner + owner email (pos.md lifecycle); disconnect revokes + retains data |
 | Provider lock-in | `MailProvider` interface; forwarding webhook and future Outlook/IMAP feed the same funnel from stage 1 |
 | AI cost blowout | Funnel math: classification ~$0.02/mo, extraction bounded by real invoice count (and by 25 on Free); totals $0.10–0.29/restaurant/mo, ≤ $0.25 on Free — noise vs Pro price |
+
+## Going live after Phase 0
+
+The code is complete and deploys safely as is: nothing email-related is bound to a secret, so production shows "not available in this environment" until these steps run. Do them in this order — a function that declares a secret Secret Manager does not have fails the deploy, so the secrets come before the code that binds them.
+
+1. **The Google OAuth client** (Phase 0 output). In the `teremu-app` Cloud project, Google Auth Platform: a *Web application* client with the scopes `openid`, `email` and `https://www.googleapis.com/auth/gmail.readonly`, and this **authorized redirect URI**, verbatim: `https://us-east1-teremu-app.cloudfunctions.net/emailOauthCallback` (`functionUrl("emailOauthCallback")` — `REGION` is us-east1; or whatever `EMAIL_OAUTH_REDIRECT_URL` will say). While the app is unverified it stays in *Testing*: add each beta tester's Google account as a test user (≤ 100).
+2. **The secrets.** `node scripts/email-secrets.mjs --dry-run` to see what exists, then `node scripts/email-secrets.mjs`: it prompts for `GMAIL_CLIENT_SECRET` (or reads it from the environment) and creates `EMAIL_TOKEN_ENC_KEY` if missing. It never regenerates an existing key — that would orphan every sealed inbox token — and `--rotate` prepends a new one. The script talks to the real project's Secret Manager, so it runs on a machine logged in to it, on purpose, by a person.
+3. **The environment** — in `firebase/functions/.env.teremu-app`: `GMAIL_CLIENT_ID=<the client id>` (public, not a secret), and `GMAIL_OAUTH_TESTING=true` for as long as the OAuth client is in Testing (Settings then warns that the permission expires every few days).
+4. **Bind the secrets in code** — one change, after step 2 has succeeded:
+   - `api.ts`, the `api` function: `secrets: [NVIDIA_API_KEY, STRIPE_SECRET_KEY, ...POS_SECRETS, ...EMAIL_SECRETS]`
+   - `index.ts`, `emailSync`: `secrets: [NVIDIA_API_KEY, ...EMAIL_SECRETS]`
+   - `emailOauthCallback` needs none (it only redirects).
+   - `EMAIL_SECRETS` is exported from `email/index.ts`; delete its "NOT bound yet" comment in the same change.
+5. **Deploy** with `node scripts/deploy.mjs` (the test gate runs first). Cloud Scheduler must allow `emailSync`; `firestore.indexes.json` carries the two `emailIngests` indexes the sync and the expiry sweep query.
+6. **Check it live** with a test account: Settings → "Facturas por correo" shows the Beta note → *Conectar Gmail* → Google's consent (with the "unverified app" warning while in Testing) → back in Settings, connected → *Revisar ahora* → the first invoices in Triage with the 📧 badge. `email_ingest_outcome`, `llm_usage` (`email-classify`, `ocr-text`) and the `Email sync` log line are the first things to watch.
+7. **When Google verifies the app:** remove `GMAIL_OAUTH_TESTING` from `.env.teremu-app` and redeploy — grants stop expiring, and the note goes away.
+
+Not done, on purpose: a TTL policy on `emailOauthStates`. Its `expiresAt` is epoch milliseconds, and a Firestore TTL needs a Timestamp field. States are single-use and refused once expired; an abandoned one is a tiny doc. If they ever pile up, switch `expiresAt` to a Timestamp (and `posOauthStates` with it) and add the policy.
 
 ## Verify against live Google docs before Phase 1
 
