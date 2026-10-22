@@ -61,7 +61,9 @@ function priceDiffs(note: Invoice, invoice: Invoice): ReconciliationRow['diffs']
  * Pair each delivery note with its most plausible invoice: same vendor,
  * dated within the window, closest total. A manual link
  * (note.reconInvoiceId) overrides the auto-matcher; notes marked
- * handled are excluded entirely. Price differences on shared line items
+ * handled are excluded entirely, and so are notes diverted to an
+ * expense — the expense ledger already carries that money, and only
+ * food facturas are candidates. Price differences on shared line items
  * (>2%) surface as diffs — that's the billing-error catch.
  */
 export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[] {
@@ -69,6 +71,7 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
     (i) =>
       i.docType === 'delivery_note' &&
       !i.reconHandled &&
+      !i.expenseTag &&
       (i.status === 'approved' || i.status === 'needs_review'),
   )
   const bills = invoices.filter((i) => isFoodInvoice(i) && i.vendorName)

@@ -64,6 +64,7 @@ const es = {
       currency_assumed: 'No se pudo leer la moneda del documento; se asume {base}. Confírmala abajo.',
       possible_duplicate: 'Puede estar repetida: hay otra factura del mismo proveedor, fecha y total. Compárala antes de aprobar.',
       pages_truncated: 'El PDF tiene más páginas de las que se leen (8). Revisa que no falten líneas.',
+      thousands_repaired: 'En las líneas resaltadas un número salió 1000 veces mayor (p. ej. 3 kg leídos como 3000) y lo hemos corregido. Compruébalo con la imagen.',
     },
     currency: 'Moneda del documento',
     fx: {
@@ -166,6 +167,7 @@ const en: typeof es = {
       currency_assumed: "Couldn't read the document's currency; {base} is assumed. Confirm it below.",
       possible_duplicate: "This may be a repeat: another invoice has the same vendor, date and total. Compare before approving.",
       pages_truncated: "The PDF has more pages than are read (8). Check that no lines are missing.",
+      thousands_repaired: "On the highlighted lines a number came out 1000× too big (e.g. 3 kg read as 3000) and was corrected. Check it against the image.",
     },
     currency: 'Document currency',
     fx: {
