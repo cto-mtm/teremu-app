@@ -3,7 +3,8 @@ import { mockMenuFromText } from "../src/menuscan";
 import { fakeBackend } from "../src/listing/fake";
 import { mergeCandidates } from "../src/listing/merge";
 import { emailMatchesDomain, verifiableDomain } from "../src/listing/verify";
-import { crawlForMenu, htmlToText, normalizeWebsite } from "../src/listing/website";
+import { htmlToText } from "../src/helpers/html";
+import { crawlForMenu, normalizeWebsite } from "../src/listing/website";
 
 /**
  * The pure parts of the listing import (docs/restaurant-listing.md) —

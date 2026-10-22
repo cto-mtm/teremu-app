@@ -19,6 +19,8 @@ import { projectDirtyDays } from "./pos/project.js";
 import { integrationRef, type IntegrationDoc } from "./pos/store.js";
 import { getPlanInfo } from "./plan.js";
 import { oauthFailureUrl as emailOauthFailureUrl, oauthReturnUrl as emailOauthReturnUrl } from "./email/oauth.js";
+import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
+import { syncDue, syncInbox } from "./email/sync.js";
 
 initializeApp();
 
@@ -118,6 +120,39 @@ export const emailOauthCallback = onRequest({ region: REGION }, async (req, res)
     res.redirect(302, emailOauthFailureUrl());
   }
 });
+
+/**
+ * Email sync (docs/email-ingestion.md §Sync engine). Hourly: every active
+ * inbox whose plan interval has passed (Free 24 h, Pro/Max 6 h) syncs,
+ * and one still in its 31-day backfill syncs every tick, so the first
+ * month lands within hours of connecting. Sequential, and it stops
+ * starting new inboxes near the timeout — the rest are due next hour.
+ * Binds the LLM key (stage-1 classifier); EMAIL_SECRETS join it after
+ * Phase 0 — until then there are no deployed inboxes to sync.
+ */
+export const emailSync = onSchedule(
+  { schedule: "every 60 minutes", timeZone: "UTC", region: REGION, timeoutSeconds: 540, memory: "512MiB", secrets: [NVIDIA_API_KEY] },
+  async () => {
+    const started = Date.now();
+    let synced = 0;
+    let failed = 0;
+    for (const doc of (await getFirestore().collection("emailConnections").where("status", "==", "active").get()).docs) {
+      if (Date.now() - started > 420_000) break;
+      const conn = doc.data() as EmailConnectionDoc;
+      if (!conn.rid) continue;
+      try {
+        const { limits } = await getPlanInfo(conn.rid);
+        if (!syncDue(conn, limits)) continue;
+        await syncInbox(doc.id, limits);
+        synced += 1;
+      } catch (err) {
+        failed += 1;
+        logger.warn("Email sync failed", { connId: doc.id, err });
+      }
+    }
+    logger.info("Email sync", { synced, failed });
+  },
+);
 
 /** Daily POS upkeep, every provider: refresh credentials expiring within
  * 7 days (re-sealing under the current key; a rejected refresh flips the

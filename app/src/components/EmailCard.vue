@@ -4,7 +4,7 @@ import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
-import { emailOAuthResultSchema, emailStatusSchema, posConnectSchema } from '../lib/schemas'
+import { emailOAuthResultSchema, emailStatusSchema, emailSyncResultSchema, posConnectSchema } from '../lib/schemas'
 import { useAuthStore } from '../stores/auth'
 import { useLocationStore } from '../stores/location'
 import BaseButton from './BaseButton.vue'
@@ -47,11 +47,34 @@ const RESULTS = [
   'inbox_taken',
   'inbox_limit',
 ] as const
-const ERRORS = ['email_inbox_limit', 'email_reauth'] as const
+const ERRORS = ['email_inbox_limit', 'email_reauth', 'email_sync_running'] as const
 
 function errorText(error: string): string {
   const known = ERRORS.find((code) => error.includes(code))
   return known ? t(`email.error.${known}`) : t('email.error.generic')
+}
+
+/** When "check now" opens again — the plan's interval after the last
+ * check (the API answers 429 before that; a backfill is never throttled). */
+function nextCheck(inbox: Inbox): Date | null {
+  if (!inbox.backfillDone || !inbox.lastSyncAt || !status.value) return null
+  return new Date(inbox.lastSyncAt + status.value.limits.syncHours * 3_600_000)
+}
+
+async function syncNow(inbox: Inbox): Promise<void> {
+  busy.value = inbox.id
+  const res = await apiFetch(
+    `/email/inboxes/${encodeURIComponent(inbox.id)}/sync`,
+    { method: 'POST' },
+    emailSyncResultSchema,
+  )
+  busy.value = null
+  const next = nextCheck(inbox)
+  if (res.ok) message.value = { ok: true, text: t('email.synced') }
+  else if (res.error.includes('email_sync_throttled') && next) {
+    message.value = { ok: false, text: t('email.throttled', { date: d(next, 'short') }) }
+  } else message.value = { ok: false, text: errorText(res.error) }
+  await load()
 }
 
 async function load(): Promise<void> {
@@ -140,8 +163,18 @@ onMounted(async () => {
               : t('email.connectedSince', { date: d(new Date(inbox.connectedAt), 'short') })
           }}
         </p>
-        <p v-if="!inbox.lastSyncAt" class="text-xs text-smoke">{{ t('email.importSoon') }}</p>
+        <p v-if="inbox.status === 'active' && !inbox.backfillDone" class="text-xs text-smoke">{{ t('email.backfilling') }}</p>
+        <p v-if="inbox.lastSyncAt" class="text-xs">{{ t('email.found', inbox.found) }}</p>
+        <p v-if="inbox.found > 0" class="text-xs text-smoke">{{ t('email.importSoon') }}</p>
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
+          <BaseButton
+            v-if="inbox.status === 'active'"
+            variant="ghost"
+            :disabled="busy === inbox.id"
+            @click="syncNow(inbox)"
+          >
+            {{ busy === inbox.id ? t('email.syncing') : t('email.syncNow') }}
+          </BaseButton>
           <BaseButton
             v-if="inbox.status === 'needs_reauth'"
             :disabled="busy === inbox.provider"

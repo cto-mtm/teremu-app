@@ -1,6 +1,7 @@
 import { defineSecret } from "firebase-functions/params";
 import {
   MailAuthError,
+  MailNotFoundError,
   type MailAccess,
   type MailAdapter,
   type MailAttachment,
@@ -32,8 +33,10 @@ const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly"];
 
-/** Excluded from every listing: never invoices, or never ours to read. */
+/** Excluded from every listing: never invoices, or never ours to read.
+ * EXCLUDED_LABELS is the same set as labels, for messages History returns. */
 const BASE_QUERY = "-in:spam -in:trash -in:chats -from:me -category:social -category:forums";
+const EXCLUDED_LABELS = new Set(["SPAM", "TRASH", "CHAT", "SENT", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"]);
 
 const clientId = (): string => process.env.GMAIL_CLIENT_ID ?? "";
 const clientSecret = (): string => process.env.GMAIL_CLIENT_SECRET ?? "";
@@ -66,7 +69,8 @@ async function token(params: Record<string, string>): Promise<Record<string, unk
 }
 
 /** An authenticated Gmail API GET. A 401 right after a refresh means the
- * grant is gone; 404 is returned to the caller (history expiry). */
+ * grant is gone; a 404 means the message is gone (or, for History, the
+ * cursor has expired). */
 async function call<T>(access: MailAccess, path: string, query: Record<string, string | string[]> = {}): Promise<T> {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) for (const one of [v].flat()) q.append(k, one);
@@ -76,6 +80,7 @@ async function call<T>(access: MailAccess, path: string, query: Record<string, s
     signal: AbortSignal.timeout(20_000),
   });
   if (res.status === 401) throw new MailAuthError();
+  if (res.status === 404) throw new MailNotFoundError();
   if (!res.ok) throw new GmailError(res.status, `Gmail ${path} → ${res.status}`);
   return (await res.json()) as T;
 }
@@ -101,6 +106,7 @@ interface GmailPart {
 
 interface GmailMessage {
   id: string;
+  labelIds?: string[];
   snippet?: string;
   internalDate?: string;
   payload?: GmailPart;
@@ -219,7 +225,7 @@ const adapter: MailAdapter = {
         pageToken = r.nextPageToken;
       } while (pageToken);
     } catch (err) {
-      if (err instanceof GmailError && err.status === 404) return "expired";
+      if (err instanceof MailNotFoundError) return "expired";
       throw err;
     }
     return { added: [...new Set(added)], historyId };
@@ -239,6 +245,7 @@ const adapter: MailAdapter = {
       subject: header(m.payload, "Subject") ?? "",
       snippet: m.snippet ?? "",
       internalDate: Number(m.internalDate ?? 0),
+      excluded: (m.labelIds ?? []).some((l) => EXCLUDED_LABELS.has(l)),
       attachments: attachmentsOf(m.payload),
     };
   },

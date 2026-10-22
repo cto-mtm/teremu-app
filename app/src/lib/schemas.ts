@@ -286,9 +286,17 @@ export const emailStatusSchema = z.object({
       connectedAt: z.number(),
       lastSyncAt: z.number().nullable(),
       backfillDone: z.boolean(),
+      found: z.number().catch(0),
     }),
   ),
   limits: z.object({ inboxes: z.number(), syncHours: z.number() }),
+})
+
+/** POST /email/inboxes/:id/sync — what one check did. 429 carries retryAt. */
+export const emailSyncResultSchema = z.object({
+  listed: z.number(),
+  accepted: z.number(),
+  backfillDone: z.boolean(),
 })
 
 /** POST /email/oauth — outcome of finishing a connect flow. */

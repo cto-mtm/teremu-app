@@ -53,6 +53,10 @@ export interface MailMessageMeta {
   snippet: string;
   /** Epoch ms the provider received it. */
   internalDate: number;
+  /** What the listing query leaves out (spam, trash, chats, the user's
+   * own mail, social/forums). History returns those too, so the adapter
+   * says it here rather than the engine knowing provider labels. */
+  excluded: boolean;
   attachments: MailAttachment[];
 }
 
@@ -94,6 +98,17 @@ export interface MailProviderModule {
   adapter: MailAdapter;
   configured(): boolean;
   secrets: SecretParam[];
+}
+
+/** The message (or attachment) no longer exists — deleted after History
+ * or a listing named it. Not an error to retry: the engine records it as
+ * gone and moves on, or one deleted email would stall the inbox. Also
+ * what History answers for a cursor it no longer keeps. */
+export class MailNotFoundError extends Error {
+  constructor(message = "mail_not_found") {
+    super(message);
+    this.name = "MailNotFoundError";
+  }
 }
 
 /** The provider rejected the grant (revoked from the account side,

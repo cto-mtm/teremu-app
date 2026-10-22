@@ -107,6 +107,8 @@ import {
   emailStatus,
   startConnect as startEmailConnect,
 } from "./email/oauth.js";
+import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
+import { nextSyncAt, syncDue, syncInbox } from "./email/sync.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -1278,6 +1280,19 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "DELETE" && id === "inboxes" && action && seg.length === 3) {
       await disconnectInbox(rid, decodeURIComponent(action));
       return json(res, 200, { ok: true });
+    }
+    // Check the inbox now (the hourly scheduler also does, when due). Not
+    // more often than the plan's interval — an unfinished backfill is always due.
+    if (m === "POST" && id === "inboxes" && action && seg[3] === "sync" && seg.length === 4) {
+      const connId = decodeURIComponent(action);
+      const conn = (await db.collection("emailConnections").doc(connId).get()).data() as EmailConnectionDoc | undefined;
+      if (!conn || conn.rid !== rid) return json(res, 404, { error: "not_connected" });
+      if (conn.status === "needs_reauth") return json(res, 409, { error: "email_reauth" });
+      if (!syncDue(conn, planInfo.limits)) {
+        return json(res, 429, { error: "email_sync_throttled", retryAt: nextSyncAt(conn, planInfo.limits) });
+      }
+      // A smaller budget than the scheduler's: this answers inside the API timeout.
+      return json(res, 200, await syncInbox(connId, planInfo.limits, { budget: 100 }));
     }
   }
 

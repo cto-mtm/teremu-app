@@ -17,6 +17,7 @@ import {
   type ConnectionDoc,
   type ConnectionStatus,
 } from "./store.js";
+import { acceptedCount } from "./sync.js";
 import type { MailGrant } from "./types.js";
 
 /**
@@ -248,6 +249,8 @@ export interface InboxView {
   connectedAt: number;
   lastSyncAt: number | null;
   backfillDone: boolean;
+  /** Messages the funnel accepted as documents (extraction is Phase 3). */
+  found: number;
 }
 
 export interface EmailStatusView {
@@ -259,19 +262,22 @@ export interface EmailStatusView {
 
 export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusView> {
   const snap = await inboxesOf(rid).get();
-  const inboxes = snap.docs
-    .map((d) => ({ id: d.id, conn: d.data() as ConnectionDoc }))
-    .filter(({ conn }) => occupying(conn.status))
-    .sort((a, b) => a.conn.connectedAt - b.conn.connectedAt)
-    .map(({ id, conn }): InboxView => ({
-      id,
-      provider: conn.provider,
-      accountEmail: conn.accountEmail,
-      status: conn.status as InboxView["status"],
-      connectedAt: conn.connectedAt,
-      lastSyncAt: conn.lastSyncAt,
-      backfillDone: conn.sync?.backfillDone ?? false,
-    }));
+  const inboxes = await Promise.all(
+    snap.docs
+      .map((d) => ({ id: d.id, conn: d.data() as ConnectionDoc }))
+      .filter(({ conn }) => occupying(conn.status))
+      .sort((a, b) => a.conn.connectedAt - b.conn.connectedAt)
+      .map(async ({ id, conn }): Promise<InboxView> => ({
+        id,
+        provider: conn.provider,
+        accountEmail: conn.accountEmail,
+        status: conn.status as InboxView["status"],
+        connectedAt: conn.connectedAt,
+        lastSyncAt: conn.lastSyncAt,
+        backfillDone: conn.sync?.backfillDone ?? false,
+        found: await acceptedCount(rid, id),
+      })),
+  );
   return {
     providers: MAIL_PROVIDERS.map((provider) => ({ provider, available: emailAvailable(provider) })),
     inboxes,

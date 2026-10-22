@@ -1,4 +1,5 @@
 import { logger } from "firebase-functions/v2";
+import { decodeEntities, htmlToText } from "../helpers/html.js";
 import { SafeFetchError } from "../helpers/safeFetch.js";
 import type { PageFetcher } from "./types.js";
 
@@ -51,46 +52,6 @@ export function normalizeWebsite(raw: string): string | null {
   } catch {
     return null;
   }
-}
-
-const ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  euro: "€",
-  middot: "·",
-  hellip: "…",
-  ndash: "–",
-  mdash: "—",
-};
-
-function decodeEntities(s: string): string {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code: string) => {
-    if (code[0] === "#") {
-      const n = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
-      return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : whole;
-    }
-    return ENTITIES[code.toLowerCase()] ?? whole;
-  });
-}
-
-/** HTML → readable lines. Exported for tests. */
-export function htmlToText(html: string): string {
-  return decodeEntities(
-    html
-      .replace(/<(script|style|noscript|svg|template|head)\b[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<(br|hr)\b[^>]*>/gi, "\n")
-      .replace(/<\/?(p|div|li|ul|ol|h[1-6]|tr|td|th|table|section|article|header|footer|nav|dt|dd|dl)\b[^>]*>/gi, "\n")
-      .replace(/<[^>]+>/g, " "),
-  )
-    .split("\n")
-    .map((l) => l.replace(/[ \t\f\v ]+/g, " ").trim())
-    .filter(Boolean)
-    .join("\n");
 }
 
 interface Link {

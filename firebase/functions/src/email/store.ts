@@ -58,6 +58,9 @@ export interface ConnectionDoc {
   sync: SyncState | null;
   /** When the last sync tick for this inbox finished (Phase 2). */
   lastSyncAt: number | null;
+  /** A sync in flight holds the inbox until then (epoch ms), so the
+   * scheduler and "sync now" never walk the same cursors at once. */
+  syncLeaseUntil?: number;
   connectedAt: number;
   updatedAt: number;
 }
