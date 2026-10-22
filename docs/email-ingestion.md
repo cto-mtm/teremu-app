@@ -257,7 +257,7 @@ The code is complete and deploys safely as is: nothing email-related is bound to
 6. **Check it live** with a test account: Settings → "Facturas por correo" shows the Beta note → *Conectar Gmail* → Google's consent (with the "unverified app" warning while in Testing) → back in Settings, connected → *Revisar ahora* → the first invoices in Triage with the 📧 badge. `email_ingest_outcome`, `llm_usage` (`email-classify`, `ocr-text`) and the `Email sync` log line are the first things to watch.
 7. **When Google verifies the app:** remove `GMAIL_OAUTH_TESTING` from `.env.teremu-app` and redeploy — grants stop expiring, and the note goes away.
 
-Not done, on purpose: a TTL policy on `emailOauthStates`. Its `expiresAt` is epoch milliseconds, and a Firestore TTL needs a Timestamp field. States are single-use and refused once expired; an abandoned one is a tiny doc. If they ever pile up, switch `expiresAt` to a Timestamp (and `posOauthStates` with it) and add the policy.
+Abandoned OAuth states (`emailOauthStates`, like `posOauthStates`) are swept by a Firestore TTL policy on their `purgeAt` Timestamp — declared in `firestore.indexes.json`, so step 5's deploy creates it. `expiresAt` stays epoch ms for the code's own check; TTL needs a Timestamp, hence the second field.
 
 ## Verify against live Google docs before Phase 1
 

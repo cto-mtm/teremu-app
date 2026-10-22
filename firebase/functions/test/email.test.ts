@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { makeSealer } from "../src/helpers/sealer";
 import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, setPlan, uniqueId, type Owner } from "./helpers";
 import { NO_PERMS } from "./pos-helpers";
@@ -123,6 +123,14 @@ describe("email connect flow", () => {
 });
 
 describe("email OAuth state", () => {
+  it("stores a state the TTL policy can sweep: purgeAt is a Timestamp at its expiry", async () => {
+    const o = await owner();
+    const nonce = (await consentUrl(o)).searchParams.get("state")!;
+    const state = (await db().doc(`emailOauthStates/${nonce}`).get()).data()!;
+    expect(state.purgeAt).toBeInstanceOf(Timestamp);
+    expect(state.purgeAt.toMillis()).toBe(state.expiresAt);
+  });
+
   it("the callback never connects by itself — it hands the code to the app", async () => {
     const o = await owner();
     const landed = await followConsent(await consentUrl(o));

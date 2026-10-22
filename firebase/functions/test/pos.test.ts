@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Timestamp } from "firebase-admin/firestore";
 import { decrypt, encrypt, sealedWithOldKey } from "../src/pos/crypto";
 import type { Perms } from "../src/models";
 import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, setPlan, uniqueId } from "./helpers";
@@ -75,6 +76,14 @@ describe("POS connect flow", () => {
 });
 
 describe("POS OAuth state", () => {
+  it("stores a state the TTL policy can sweep: purgeAt is a Timestamp at its expiry", async () => {
+    const owner = await proOwner();
+    const nonce = (await consentUrl(owner)).searchParams.get("state")!;
+    const state = (await db().doc(`posOauthStates/${nonce}`).get()).data()!;
+    expect(state.purgeAt).toBeInstanceOf(Timestamp);
+    expect(state.purgeAt.toMillis()).toBe(state.expiresAt);
+  });
+
   it("the callback never connects by itself — it hands the code to the app", async () => {
     const owner = await proOwner();
     const landed = await followConsent(await consentUrl(owner));

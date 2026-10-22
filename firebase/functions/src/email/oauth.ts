@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
 import { appReturnBase } from "../helpers/cors.js";
 import { MAIL_PROVIDERS, memberDocSchema, type MailProvider } from "../models.js";
@@ -38,7 +39,11 @@ interface OauthStateDoc {
   rid: string;
   uid: string;
   returnTo: string;
+  /** Epoch ms — what consumeState compares against. */
   expiresAt: number;
+  /** The same instant as a Timestamp, for the Firestore TTL policy that
+   * sweeps abandoned states (firestore.indexes.json); TTL needs a Timestamp. */
+  purgeAt: Timestamp;
 }
 
 const stateRef = (nonce: string) => db().collection("emailOauthStates").doc(nonce);
@@ -67,12 +72,14 @@ export async function startConnect(args: {
   if (active >= PLAN_LIMITS[await planFor(args.rid)].emailInboxes) throw new RequestError("email_inbox_limit", 402);
 
   const nonce = randomBytes(24).toString("base64url");
+  const expiresAt = Date.now() + STATE_TTL_MS;
   const state: OauthStateDoc = {
     provider: args.provider,
     rid: args.rid,
     uid: args.uid,
     returnTo: appReturnBase(args.origin),
-    expiresAt: Date.now() + STATE_TTL_MS,
+    expiresAt,
+    purgeAt: Timestamp.fromMillis(expiresAt),
   };
   await stateRef(nonce).set(state);
   return { url: adapter.authUrl(nonce, oauthRedirectUrl()) };

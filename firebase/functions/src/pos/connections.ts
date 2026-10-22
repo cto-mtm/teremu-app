@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
 import { appReturnBase } from "../helpers/cors.js";
 import { CURRENCIES, DEFAULT_CURRENCY, memberDocSchema, POS_PROVIDERS, type PosProvider } from "../models.js";
@@ -46,7 +47,11 @@ interface OauthStateDoc {
   rid: string;
   uid: string;
   returnTo: string;
+  /** Epoch ms — what consumeState compares against. */
   expiresAt: number;
+  /** The same instant as a Timestamp, for the Firestore TTL policy that
+   * sweeps abandoned states (firestore.indexes.json); TTL needs a Timestamp. */
+  purgeAt: Timestamp;
 }
 
 const returnBase = appReturnBase;
@@ -67,12 +72,14 @@ export async function startConnect(args: {
   switch (flow.kind) {
     case "oauth": {
       const nonce = randomBytes(24).toString("base64url");
+      const expiresAt = Date.now() + STATE_TTL_MS;
       const state: OauthStateDoc = {
         provider: args.provider,
         rid: args.rid,
         uid: args.uid,
         returnTo: returnBase(args.origin),
-        expiresAt: Date.now() + STATE_TTL_MS,
+        expiresAt,
+        purgeAt: Timestamp.fromMillis(expiresAt),
       };
       await db().collection("posOauthStates").doc(nonce).set(state);
       return { url: flow.authUrl(nonce, oauthRedirectUrl()) };
