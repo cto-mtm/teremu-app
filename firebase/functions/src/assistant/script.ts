@@ -31,5 +31,24 @@ export const script: MockScript = {
   "opening hours": [toolCall("getRestaurantListing", {}), text("These are the hours you confirmed, with the address and phone.")],
   valoracion: [toolCall("getRestaurantListing", {}), text("Esta es tu valoración actual en Google y cuántas reseñas tienes.")],
   rating: [toolCall("getRestaurantListing", {}), text("This is your current Google rating and review count.")],
+  // The Menu page's "Cuéntaselo al asistente" prompt (menu.interview.prompt).
+  "platos y preparaciones": [toolCall("listMenuItems", {}), text("Esto es lo que ya tienes en la carta. ¿Qué preparas por adelantado: fondos, salsas, masas?")],
+  ternera: [
+    toolCall("proposeIngredient", { name: "Ternera", unit: "kg", category: "meat" }),
+    text("Te propongo añadir la ternera a la despensa; confírmalo y la uso en la receta."),
+  ],
+  // The ingredient id is the one test/assistant.test.ts seeds on purpose.
+  sofrito: [
+    toolCall("proposeMenuItem", {
+      kind: "prep",
+      name: "Sofrito",
+      price: 0,
+      targetMarginPct: 0,
+      yield: { qty: 2, unit: "L" },
+      recipe: [{ ingredientId: "tomate-interview", name: "Tomate", qty: 3, unit: "kg" }],
+      active: true,
+    }),
+    text("Te propongo el sofrito como preparación; confírmalo y lo guardo."),
+  ],
   hola: [text("¡Hola! Puedo mirar precios de ingredientes, márgenes de platos, facturas, ventas y gastos de este restaurante.")],
 };

@@ -6,6 +6,7 @@ import {
   get,
   makeOwner,
   makeUserToken,
+  post,
   seedIngredient,
   seedInvoice,
   seedMember,
@@ -140,6 +141,60 @@ describe("assistant", () => {
     // way nothing from the invoice reaches the stream.
     expect(t.toolOutputs).toEqual([]);
     expect(t.raw).not.toContain("Proveedor X");
+  });
+
+  it("lists only this restaurant's active dishes and preps for the menu interview", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const other = await makeOwner({ uid: `other-${uniqueId()}`, email: `other-${uniqueId()}@example.com` });
+    const tomato = await seedIngredient(owner.rid, { name: "Tomate", nameKey: "tomate" });
+    await seedMenuItem(owner.rid, { name: "Ensalada", price: 10, recipe: [{ ingredientId: tomato.id, qty: 0.2 }] });
+    await seedMenuItem(owner.rid, { name: "Sofrito", kind: "prep", price: 0, yield: { qty: 2, unit: "L" }, recipe: [{ ingredientId: tomato.id, qty: 3 }] });
+    await seedMenuItem(owner.rid, { name: "Plato viejo", price: 9, active: false, recipe: [] });
+    await seedMenuItem(other.rid, { name: "Plato ajeno", price: 12, recipe: [] });
+
+    const t = await turn(owner.token, owner.rid, "Ayúdame a añadir mis platos y preparaciones");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["listMenuItems"]);
+    const rows = t.toolOutputs[0] as Array<{ name: string; kind: string; recipeLines: number }>;
+    expect(rows.map((r) => r.name).sort()).toEqual(["Ensalada", "Sofrito"]);
+    expect(rows.find((r) => r.name === "Sofrito")).toMatchObject({ kind: "prep", recipeLines: 1 });
+  });
+
+  it("drafts a new ingredient as a proposal the user confirms — nothing is written by the turn", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+
+    const t = await turn(owner.token, owner.rid, "Añade ternera");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls).toEqual([{ toolName: "proposeIngredient", input: { name: "Ternera", unit: "kg", category: "meat" } }]);
+    expect(t.toolOutputs).toEqual([]);
+    const pantry = await getFirestore().collection(`restaurants/${owner.rid}/ingredients`).get();
+    expect(pantry.empty).toBe(true);
+  });
+
+  it("an interview proposal is exactly what POST /menu-items accepts (what the card sends on confirm)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    await getFirestore().doc(`restaurants/${owner.rid}/ingredients/tomate-interview`).set({
+      name: "Tomate", nameKey: "tomate", unit: "kg", category: "produce", subcategory: null,
+      lastUnitPrice: 2, prevUnitPrice: null, lastPriceAt: null, lastVendorName: null,
+      theoreticalQty: 0, lastCountQty: null, lastCountAt: null,
+    });
+
+    const t = await turn(owner.token, owner.rid, "Hago un sofrito para varios platos");
+    expect(t.status).toBe(200);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["proposeMenuItem"]);
+    expect(t.toolOutputs).toEqual([]); // nothing written by the turn itself
+
+    // The card's confirm: the proposal input, verbatim, to the existing endpoint.
+    const confirmed = await post<{ id: string; kind: string; recipe: Array<Record<string, unknown>> }>(
+      "/menu-items", owner.token, t.toolCalls[0].input,
+    );
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body).toMatchObject({ kind: "prep", yield: { qty: 2, unit: "L" } });
+    // The display-only `name` on a recipe line is stripped by the API.
+    expect(confirmed.body.recipe).toEqual([{ ingredientId: "tomate-interview", qty: 3, unit: "kg" }]);
   });
 
   it("free gets 20 questions a month, counted per turn; Pro lifts the cap", async () => {

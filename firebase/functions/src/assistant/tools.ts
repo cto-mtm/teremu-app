@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { card, type ToolRow } from "@mtmcya/assistant";
-import { normalizeName } from "@teremu/shared";
+import { categorySchema, normalizeName, unitSchema } from "@teremu/shared";
 import { dishCosts } from "./code/dishCost.js";
 import { priceChanges } from "./code/priceChange.js";
 import { invoiceLines } from "./code/invoiceLines.js";
@@ -145,6 +145,50 @@ export type ListingRowT = z.infer<typeof ListingRow>;
 /** One owner-written note (getRestaurantNotes) — free text, capped. */
 const NoteRow = z.object({
   text: z.string().max(200).meta(card({ label: "Nota" })),
+});
+
+/** A dish or prep as the menu-setup interview needs it (listMenuItems). */
+const MenuItemRow = z.object({
+  id: z.string().meta(card({ label: "Ver", entity: "dish" })),
+  name: z.string().meta(card({ label: "Nombre" })),
+  kind: z.enum(["dish", "prep"]).meta(card({ label: "Tipo", format: "badge" })),
+  price: z.number().meta(card({ label: "Precio", format: "money" })),
+  recipeLines: z.number().meta(card({ label: "Ingredientes", format: "number" })),
+});
+
+/**
+ * The bodies of POST /ingredients and POST /menu-items, as the model
+ * drafts them in the menu-setup interview (prompt.md). The endpoints
+ * validate and strip; the card shows exactly this.
+ */
+const ProposedIngredient = z.object({
+  name: z.string().min(1).max(80).meta(card({ label: "Ingrediente" })),
+  unit: unitSchema.describe("Unit it is bought and stocked in (kg, L, each…)").meta(card({ label: "Unidad" })),
+  category: categorySchema.meta(card({ label: "Categoría", format: "badge" })),
+});
+
+const ProposedRecipeLine = z
+  .object({
+    ingredientId: z.string().optional().describe("Pantry ingredient id (searchIngredients / proposeIngredient)"),
+    subItemId: z.string().optional().describe("Id of a prep used inside this recipe (listMenuItems)"),
+    name: z.string().max(80).describe("The ingredient or prep name, for the confirmation card"),
+    qty: z.number().positive().describe("Amount per plate (dish) or per batch (prep)"),
+    unit: unitSchema.optional().describe("Unit of qty, e.g. g while the ingredient is stocked in kg"),
+  })
+  .refine((l) => !!l.ingredientId !== !!l.subItemId, { message: "exactly one of ingredientId / subItemId" });
+
+const ProposedMenuItem = z.object({
+  kind: z.enum(["dish", "prep"]).describe("dish = sold on the menu; prep = a batch made in advance and used inside dishes"),
+  name: z.string().min(1).max(80),
+  price: z.number().min(0).describe("Menu price in the base currency; 0 for a prep"),
+  targetMarginPct: z.number().min(0).max(100).describe("Target margin %; 70 if the user has no target; 0 for a prep"),
+  prepMinutes: z.number().min(0).max(600).optional().describe("Hands-on kitchen minutes per plate (dish) or per batch (prep)"),
+  yield: z
+    .object({ qty: z.number().positive(), unit: unitSchema })
+    .optional()
+    .describe("Required for a prep: what one batch makes, e.g. 3 L"),
+  recipe: z.array(ProposedRecipeLine).min(1).max(40),
+  active: z.literal(true).describe("Always true"),
 });
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
@@ -350,6 +394,47 @@ export const tools: ToolRow[] = [
     input: z.object({}),
     output: z.array(ListingRow),
     execute: getRestaurantListing,
+  },
+  {
+    kind: "query",
+    name: "listMenuItems",
+    label: "Carta",
+    description: "Every active dish and prep on the menu with its id and how many recipe lines it has: use it before proposing one, to reuse a prep or avoid a duplicate.",
+    permission: "menu:read",
+    input: z.object({}),
+    query: {
+      collection: "restaurants/{tenant}/menuItems",
+      // No orderBy: equality + order on another field would need a
+      // composite index; the model reads the whole list anyway.
+      where: [["active", "==", true]],
+      limit: 100,
+      map: (d) => ({
+        id: d.id,
+        name: String(d.name ?? ""),
+        kind: d.kind === "prep" ? "prep" : "dish",
+        price: num(d.price) ?? 0,
+        recipeLines: Array.isArray(d.recipe) ? d.recipe.length : 0,
+      }),
+    },
+    output: z.array(MenuItemRow),
+  },
+  {
+    kind: "propose",
+    name: "proposeIngredient",
+    label: "Añadir ingrediente",
+    description: "Add an ingredient the user cooks with that is not in the pantry yet (searchIngredients found nothing), so a recipe can use it.",
+    permission: "pantry:write",
+    input: ProposedIngredient,
+    confirm: { method: "POST", path: "/ingredients" },
+  },
+  {
+    kind: "propose",
+    name: "proposeMenuItem",
+    label: "Añadir a la carta",
+    description: "Add a dish or a prep with its recipe, drafted from what the user told you in the menu-setup interview.",
+    permission: "menu:write",
+    input: ProposedMenuItem,
+    confirm: { method: "POST", path: "/menu-items" },
   },
   {
     kind: "handoff",

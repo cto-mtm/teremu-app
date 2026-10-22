@@ -41,6 +41,11 @@ watch(() => route.path, () => (navOpen.value = false))
 const assistant = useAssistant()
 const assistantOpen = assistant.isOpen
 watch(() => authStore.profile?.restaurantId, () => void assistant.reset())
+// The menu-setup interview adds dishes and ingredients from the chat:
+// pick those up when it closes (within the member's own perms flags).
+watch(assistantOpen, (open) => {
+  if (!open && dataScope.value) void kitchenStore.refresh(undefined, ['ingredients', 'menu'])
+})
 
 // Mobile launcher (full-screen hub). Auto-opens ONCE per app session on
 // phones — the "land on the menu, then dive into pages" flow — then
