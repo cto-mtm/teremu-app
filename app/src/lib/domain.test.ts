@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isFoodInvoice, pantryValue, priceChangePct, recipesUsing, reconcileDeliveryNotes, unusedIngredients } from './domain'
+import {
+  isFoodInvoice,
+  pantryValue,
+  priceChangePct,
+  realtimeSpend,
+  recipesUsing,
+  reconcileDeliveryNotes,
+  unusedIngredients,
+} from './domain'
 import type { Ingredient, Invoice, MenuItem } from './types'
 
 // domain.ts is the client-side math behind Pulse, Menu and Pantry. The
@@ -66,6 +74,31 @@ describe('reconcileDeliveryNotes', () => {
     const rows = reconcileDeliveryNotes([note, handled, inv(), linked])
     expect(rows).toHaveLength(1)
     expect(rows[0].match?.id).toBe(linked.id)
+  })
+
+  it('skips a note diverted to an expense — the expense ledger already has it', () => {
+    const diverted = inv({ docType: 'delivery_note', expenseTag: 'Limpieza' } as Partial<Invoice>)
+    expect(reconcileDeliveryNotes([diverted, inv()])).toEqual([])
+  })
+})
+
+describe('realtimeSpend', () => {
+  const food = (docs: Invoice[]) => docs.filter(isFoodInvoice).reduce((s, i) => s + (i.total ?? 0), 0)
+
+  it('is billed + pending notes, never counting a note filed as an expense', () => {
+    const bill = inv({ total: 100 })
+    const pending = inv({ docType: 'delivery_note', vendorName: 'Late Biller', total: 40, lineItems: [line('Leek', 40)] })
+    const diverted = inv({
+      docType: 'delivery_note',
+      vendorName: 'Cleaning Co',
+      expenseTag: 'Limpieza',
+      total: 25,
+      lineItems: [line('total', 25)],
+    } as Partial<Invoice>)
+    const rt = realtimeSpend([bill, pending, diverted], new Map())
+    expect(rt.pendingCount).toBe(1)
+    expect(rt.pendingTotal).toBe(40)
+    expect(food(rt.docs)).toBeCloseTo(food([bill]) + rt.pendingTotal, 2)
   })
 })
 
