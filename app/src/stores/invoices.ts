@@ -211,6 +211,19 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return res.ok
   }
 
+  /** Correct the rate of an approved foreign document: the server
+   * restates its base amounts (and the pantry price it set). */
+  async function rerate(id: string, rate: number): Promise<boolean> {
+    const res = await apiFetch<Invoice>(
+      `/invoices/${id}/rate`,
+      { method: 'PUT', body: JSON.stringify({ rate }) },
+      invoiceSchema,
+    )
+    if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
+    else error.value = res.error
+    return res.ok
+  }
+
   async function reprocess(id: string): Promise<boolean> {
     const res = await apiFetch<Invoice>(`/invoices/${id}/reprocess`, { method: 'POST' }, invoiceSchema)
     if (res.ok) invoices.value = replaceById(invoices.value, id, res.data)
@@ -251,6 +264,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     approveAsExpense,
     reconcile,
     discard,
+    rerate,
     reprocess,
   }
 })

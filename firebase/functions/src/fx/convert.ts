@@ -45,6 +45,15 @@ export function convertInvoice(
   };
 }
 
+/**
+ * A base PRICE derived at an old rate, restated at a new one (the
+ * reviewer corrected an approved document's rate). Linear in 1/rate, so
+ * no printed figure is needed — used for the pantry's rolling price,
+ * which was derived from this invoice's base line. 4 dp like unit prices.
+ */
+export const rerateBasePrice = (base: number, oldRate: number, newRate: number): number =>
+  +((base * oldRate) / newRate).toFixed(4);
+
 /** Whether a document carries any money at all (a priced line). An
  * unpriced foreign delivery note needs no rate — there is nothing to
  * convert. */

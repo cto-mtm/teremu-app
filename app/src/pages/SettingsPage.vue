@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
-import { currencySymbol } from '../i18n'
+import { currencyOptionLabel, currencySymbol } from '../i18n'
 import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -76,8 +76,6 @@ async function togglePlan(): Promise<void> {
 const currencyBusy = ref(false)
 const currencySaved = ref(false)
 const currencyLocked = computed(() => auth.profile?.currencyLocked ?? false)
-const currencyName = (code: Currency) =>
-  new Intl.DisplayNames([locale.value], { type: 'currency' }).of(code) ?? code
 
 async function saveCurrency(event: Event): Promise<void> {
   const rid = auth.profile?.restaurantId
@@ -391,7 +389,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
           :title="currencyLocked ? t('settings.currency.locked') : undefined"
           @change="saveCurrency"
         >
-          <option v-for="code in CURRENCIES" :key="code" :value="code">{{ currencyName(code) }} ({{ code }})</option>
+          <option v-for="code in CURRENCIES" :key="code" :value="code">{{ currencyOptionLabel(code) }}</option>
         </select>
         <span v-if="currencySaved" class="chip-down">{{ t('common.action.saved') }}</span>
         <span v-else-if="currencyLocked" class="text-xs text-smoke">{{ t('settings.currency.locked') }}</span>

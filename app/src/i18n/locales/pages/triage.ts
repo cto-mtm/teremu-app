@@ -34,6 +34,19 @@ const es = {
     linkPlaceholder: 'Vincular a factura…',
     linkOption: '{vendor} · {date} · {total}',
   },
+  // One-time prompt before the FIRST approval locks the base currency
+  currencyConfirm: {
+    title: 'Confirma tu moneda principal',
+    body: 'Todos los costos, márgenes y totales del restaurante se guardan en {currency}. Tras aprobar la primera factura ya no se puede cambiar.',
+    pick: 'Moneda principal',
+    confirm: 'Sí, {currency} — aprobar',
+    change: 'Guardar {currency}',
+    changedNote: 'Moneda guardada. Revisa la factura: si está en otra moneda, necesitará una tasa.',
+    memberNote: 'Solo el dueño puede cambiarla, en Ajustes. Si no es la correcta, avísale antes de aprobar.',
+    memberContinue: 'Aprobar igualmente',
+    cancel: 'Ahora no',
+    failed: 'No se pudo guardar la moneda. Inténtalo de nuevo.',
+  },
   detail: {
     total: 'Total',
     invoiceFallback: 'Factura',
@@ -78,6 +91,11 @@ const es = {
       rateLine: '{doc} · {rate} por 1 {base} · tasa {source} · {date}',
       showPrinted: 'Ver importes originales',
       showBase: 'Ver en {base}',
+      // The rate stays the reviewer's after approval (a reference they own)
+      change: 'Cambiar tasa',
+      changeSave: 'Guardar tasa',
+      changeHint: 'Los importes en {base} y el último precio de los ingredientes de esta factura se recalculan con la nueva tasa.',
+      changeFailed: 'No se pudo cambiar la tasa. Inténtalo de nuevo.',
       source: {
         printed: 'impresa',
         manual: 'manual',
@@ -137,6 +155,18 @@ const en: typeof es = {
     linkPlaceholder: 'Link to invoice…',
     linkOption: '{vendor} · {date} · {total}',
   },
+  currencyConfirm: {
+    title: 'Confirm your main currency',
+    body: 'Every cost, margin and total for the restaurant is stored in {currency}. Once the first invoice is approved it can no longer be changed.',
+    pick: 'Main currency',
+    confirm: 'Yes, {currency} — approve',
+    change: 'Save {currency}',
+    changedNote: 'Currency saved. Check the invoice: if it is in another currency, it will need a rate.',
+    memberNote: 'Only the owner can change it, in Settings. If it is wrong, tell them before approving.',
+    memberContinue: 'Approve anyway',
+    cancel: 'Not now',
+    failed: 'Could not save the currency. Try again.',
+  },
   detail: {
     total: 'Total',
     invoiceFallback: 'Invoice',
@@ -181,6 +211,10 @@ const en: typeof es = {
       rateLine: '{doc} · {rate} per 1 {base} · {source} rate · {date}',
       showPrinted: 'Show original amounts',
       showBase: 'Show in {base}',
+      change: 'Change rate',
+      changeSave: 'Save rate',
+      changeHint: 'The {base} amounts and the latest price of this invoice’s ingredients are recalculated with the new rate.',
+      changeFailed: 'Could not change the rate. Try again.',
       source: {
         printed: 'printed',
         manual: 'manual',

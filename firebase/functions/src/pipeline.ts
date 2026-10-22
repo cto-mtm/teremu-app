@@ -5,7 +5,7 @@ import { extractInvoice, extractInvoiceFromText, type ExtractionContext, type Oc
 import { refundScan } from "./plan.js";
 import { expandUsage } from "@teremu/shared";
 import { convertQty } from "./units.js";
-import { convertInvoice, hasPricedLines } from "./fx/convert.js";
+import { convertInvoice, hasPricedLines, rerateBasePrice, toBaseTotal } from "./fx/convert.js";
 import { packFor } from "./countries/index.js";
 import {
   currencySchema,
@@ -90,8 +90,7 @@ function repairThousands(lineItems: LineItem[], statedTotal: number): { lineItem
   const sum = (ls: LineItem[]) => ls.reduce((s, l) => s + l.total, 0);
   // A printed total with more than 2 decimals ("1.307,50" read as 1.3075)
   // is itself the misread — the lines are not to blame.
-  const totalSuspect = Math.abs(statedTotal * 100 - Math.round(statedTotal * 100)) > 1e-6;
-  if (!(statedTotal > 0) || totalSuspect || sum(lines) <= statedTotal * 1.25) return { lineItems: lines, repaired };
+  if (!(statedTotal > 0) || subCent(statedTotal) || sum(lines) <= statedTotal * 1.25) return { lineItems: lines, repaired };
   // Biggest lines first, until the sum is no longer above the printed total.
   const trial = [...lines];
   const order = trial.map((_, i) => i).sort((a, b) => trial[b].total - trial[a].total);
@@ -109,6 +108,45 @@ function repairThousands(lineItems: LineItem[], statedTotal: number): { lineItem
   return { lineItems: lines, repaired };
 }
 
+/** Money printed on a document never has more than two decimals. */
+const subCent = (x: number): boolean => Math.abs(x * 100 - Math.round(x * 100)) > 1e-6;
+
+/**
+ * The opposite misread: "9.312,00" (a "." grouping thousands) read as
+ * 9.312 — a value 1000× too SMALL. The tell is a grand total with a third
+ * decimal. When ×1000 puts it in line with the lines (they were read
+ * right), only the total is fixed; otherwise the lines were misread the
+ * same way: those whose total has a third decimal are scaled, then — for
+ * round thousands ("4.500,00" → 4.5) — the biggest remaining ones, until
+ * the lines sit under the corrected total. Applied only when that lands.
+ */
+function repairThousandths(
+  lines: LineItem[],
+  statedTotal: number,
+): { lineItems: LineItem[]; total: number; repaired: boolean } {
+  const sum = (ls: LineItem[]) => ls.reduce((s, l) => s + l.total, 0);
+  const fits = (total: number, ls: LineItem[]) => total >= sum(ls) * 0.98 && total <= sum(ls) * 1.25;
+  const unchanged = { lineItems: lines, total: statedTotal, repaired: false };
+  if (!(statedTotal > 0) || !subCent(statedTotal) || subCent(statedTotal * 1000)) return unchanged;
+  const total = +(statedTotal * 1000).toFixed(2);
+  if (fits(total, lines)) return { lineItems: lines, total, repaired: true };
+
+  const scale = (li: LineItem): LineItem => ({
+    ...li,
+    unitPrice: +(li.unitPrice * 1000).toFixed(4),
+    total: +(li.total * 1000).toFixed(2),
+    flagged: true,
+  });
+  const trial = lines.map((li) => (subCent(li.total) ? scale(li) : li));
+  const order = trial.map((_, i) => i).sort((a, b) => trial[b].total - trial[a].total);
+  for (const i of order) {
+    if (sum(trial) >= total / 1.25) break;
+    if (trial[i].flagged || trial[i].total * 1000 > total) continue;
+    trial[i] = scale(trial[i]);
+  }
+  return fits(total, trial) ? { lineItems: trial, total, repaired: true } : unchanged;
+}
+
 /**
  * Arithmetic validation stage: cross-check the model's numbers against
  * themselves. Cheap, deterministic, and catches most OCR misreads —
@@ -117,11 +155,13 @@ function repairThousands(lineItems: LineItem[], statedTotal: number): { lineItem
  */
 export function validateArithmetic(
   rawLineItems: LineItem[],
-  statedTotal: number
-): { lineItems: LineItem[]; warnings: string[] } {
+  rawTotal: number
+): { lineItems: LineItem[]; total: number; warnings: string[] } {
   const warnings: string[] = [];
-  const { lineItems, repaired } = repairThousands(rawLineItems, statedTotal);
-  if (repaired) warnings.push("thousands_repaired");
+  const small = repairThousandths(rawLineItems, rawTotal);
+  const statedTotal = small.total;
+  const { lineItems, repaired } = repairThousands(small.lineItems, statedTotal);
+  if (repaired || small.repaired) warnings.push("thousands_repaired");
   let anyLineOff = false;
   const checked = lineItems.map((li) => {
     const off = lineOff(li);
@@ -136,7 +176,7 @@ export function validateArithmetic(
   if (statedTotal > 0 && (statedTotal < sum * 0.98 || statedTotal > sum * 1.25)) {
     warnings.push("total_mismatch");
   }
-  return { lineItems: checked, warnings };
+  return { lineItems: checked, total: statedTotal, warnings };
 }
 
 type OcrPatch =
@@ -155,7 +195,7 @@ type OcrPatch =
 export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
   if (result.notDocument) return { status: "failed", error: "not_a_document" };
   if (result.unreadable || result.lineItems.length === 0) return { status: "failed", error: "unreadable" };
-  const { lineItems, warnings } = validateArithmetic(result.lineItems, result.total);
+  const { lineItems, total, warnings } = validateArithmetic(result.lineItems, result.total);
   // The model looked and could not tell → the reviewer must confirm the
   // currency (Triage highlights the header). A reply that simply did not
   // report one (older cassettes) is the base currency, no ceremony.
@@ -168,7 +208,7 @@ export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
     ...(result.currency ? { currency: result.currency } : {}),
     printedFxRate: result.printedFxRate ?? null,
     lineItems,
-    total: result.total,
+    total,
     warnings,
     error: null,
   };
@@ -435,6 +475,8 @@ export async function approveInvoice(
         lastVendorName: vendorName,
         theoreticalQty: FieldValue.increment(qtyAdd),
         ...(subFill ? { subcategory: subFill } : {}),
+        // Bought again → back in use: an archived ingredient reappears.
+        ...(existing.data.archived ? { archived: false } : {}),
       });
     } else {
       if (!applyEffects) {
@@ -614,4 +656,60 @@ export async function deleteRevenue(rid: string, id: string): Promise<boolean> {
   batch.delete(ref);
   await batch.commit();
   return true;
+}
+
+/**
+ * Change the rate of an APPROVED foreign document — the rate is the
+ * reviewer's, and an old invoice's rate is often only known later. One
+ * batch restates everything the rate derived:
+ * - `fx` (source becomes manual, same asOf, who changed it) and the
+ *   base line amounts + `baseTotal`, through fx/convert.ts;
+ * - the pantry's rolling price of each ingredient whose LATEST price
+ *   came from this invoice (a later invoice already superseded the rest);
+ * - the linked expense, for a bill diverted to expenses.
+ * Stock quantities do not depend on the rate and are untouched.
+ */
+export async function rerateInvoice(rid: string, invoiceId: string, rate: number, uid: string): Promise<InvoiceDoc> {
+  const ref = restCol(rid, "invoices").doc(invoiceId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new RequestError("invoice not found", 404);
+  const inv = snap.data() as InvoiceDoc;
+  if (inv.status !== "approved") throw new RequestError("not_approved");
+  if (!inv.fx) throw new RequestError("fx_not_applicable");
+  const oldRate = inv.fx.rate;
+  const fx: FxDecision = { rate, source: "manual", asOf: inv.fx.asOf, pickedBy: uid };
+  const batch = getFirestore().batch();
+
+  if (inv.expenseTag) {
+    const printedTotal = inv.total ?? +inv.lineItems.reduce((s, l) => s + l.total, 0).toFixed(2);
+    const amount = toBaseTotal(printedTotal, rate);
+    batch.update(ref, { fx, baseTotal: amount });
+    const expenses = restCol(rid, "expenses");
+    let linked = await expenses.where("invoiceId", "==", invoiceId).limit(1).get();
+    // Diverted before the link existed: the same day, tag and old amount.
+    if (linked.empty && inv.baseTotal != null) {
+      linked = await expenses
+        .where("tagKey", "==", normalizeName(inv.expenseTag))
+        .where("date", "==", inv.invoiceDate ?? "")
+        .where("amount", "==", inv.baseTotal)
+        .limit(1)
+        .get();
+    }
+    linked.forEach((d) => batch.update(d.ref, { amount, invoiceId }));
+  } else {
+    const printed = inv.lineItems.map(({ baseUnitPrice: _bu, baseTotal: _bt, ...rest }) => rest);
+    const { lineItems, baseTotal } = convertInvoice(printed, rate);
+    batch.update(ref, { fx, lineItems, baseTotal });
+    if (inv.docType !== "delivery_note" && inv.approvedAt) {
+      const ids = [...new Set(lineItems.map((l) => l.ingredientId).filter((id): id is string => !!id))];
+      const snaps = ids.length ? await getFirestore().getAll(...ids.map((id) => restCol(rid, "ingredients").doc(id))) : [];
+      for (const ing of snaps) {
+        const data = ing.data() as IngredientDoc | undefined;
+        if (!data || data.lastPriceAt !== inv.approvedAt || data.lastUnitPrice == null) continue;
+        batch.update(ing.ref, { lastUnitPrice: rerateBasePrice(data.lastUnitPrice, oldRate, rate) });
+      }
+    }
+  }
+  await batch.commit();
+  return (await ref.get()).data() as InvoiceDoc;
 }

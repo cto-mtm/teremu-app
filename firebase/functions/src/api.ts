@@ -15,6 +15,8 @@ import {
   completePosOAuthSchema,
   countSchema,
   recipeUseSchema,
+  archiveSchema,
+  rerateSchema,
   createIngredientSchema,
   DEFAULT_LOCALE,
   DEFAULT_RESTAURANT_NAME,
@@ -69,6 +71,7 @@ import {
 import { z } from "zod";
 import {
   approveInvoice,
+  rerateInvoice,
   deleteRevenue,
   processInvoiceImage,
   processInvoiceText,
@@ -272,6 +275,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
       laborRatePerHour: planInfo.laborRatePerHour,
       currency: planInfo.currency,
       currencyLocked: !anyApproved.empty,
+      // False while the base currency is only inferred from the country:
+      // Triage asks the reviewer to confirm it before the first approval
+      // locks it (docs/multi-currency.md § Settings).
+      currencyChosen: planInfo.currencyChosen,
       country: planInfo.country,
       timezone: planInfo.timezone,
       fxDefaultSource: planInfo.fxDefaultSource,
@@ -527,6 +534,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
         await Promise.all([rememberApprovedSender(rid, updated), recordOutcome(updated, "approved")]);
         return json(res, 200, serializeInvoice(id, updated));
       }
+      if (m === "PUT" && action === "rate") {
+        if (!can(member, "triage", "edit")) return forbidden(res);
+        const { rate } = rerateSchema.parse(req.body);
+        const updated = await rerateInvoice(rid, id, rate, member.uid);
+        return json(res, 200, serializeInvoice(id, updated));
+      }
       if (m === "PUT" && action === "expense") {
         if (!can(member, "triage", "edit")) return forbidden(res);
         // Non-food bill: record a tagged expense, archive the invoice.
@@ -555,6 +568,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           vendorName,
           note: null,
           createdAt: Date.now(),
+          invoiceId: id,
         };
         await col("expenses").add(expense);
         await ref.update({
@@ -704,6 +718,15 @@ async function route(req: Request, res: Response): Promise<unknown> {
       const ref = col("ingredients").doc(id);
       if (!(await ref.get()).exists) return json(res, 404, { error: "ingredient not found" });
       await ref.update({ notInRecipes });
+      const snap = await ref.get();
+      return json(res, 200, { id, ...snap.data() });
+    }
+    if (m === "PUT" && id && action === "archive") {
+      if (!can(member, "pantry", "edit")) return forbidden(res);
+      const { archived } = archiveSchema.parse(req.body);
+      const ref = col("ingredients").doc(id);
+      if (!(await ref.get()).exists) return json(res, 404, { error: "ingredient not found" });
+      await ref.update({ archived });
       const snap = await ref.get();
       return json(res, 200, { id, ...snap.data() });
     }

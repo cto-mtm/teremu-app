@@ -189,6 +189,10 @@ export const ingredientDocSchema = z.object({
   // The owner said this never goes in a recipe (packaging, a bottle sold
   // as-is…): the pantry stops flagging it as unused. Absent = false.
   notInRecipes: z.boolean().optional(),
+  // Hidden from the pantry and recipe pickers (an old product, a line
+  // approved by mistake). Never deleted: past invoices and costs still
+  // point at it. A new invoice for it un-archives it. Absent = false.
+  archived: z.boolean().optional(),
 });
 export type IngredientDoc = z.infer<typeof ingredientDocSchema>;
 
@@ -253,6 +257,17 @@ export const recipeUseSchema = z.object({
   notInRecipes: z.boolean(),
 });
 
+/** PUT /invoices/:id/rate — the reviewer corrects an approved foreign
+ * document's exchange rate (it is theirs to set; docs/multi-currency.md). */
+export const rerateSchema = z.object({
+  rate: z.number().positive(),
+});
+
+/** PUT /ingredients/:id/archive — hide (or restore) an ingredient. */
+export const archiveSchema = z.object({
+  archived: z.boolean(),
+});
+
 /** PUT /ingredients/:id/count — monthly physical-count true-up. */
 export const countSchema = z.object({
   qty: z.number().min(0),
@@ -307,6 +322,10 @@ export const expenseDocSchema = z.object({
   vendorName: z.string().nullable(),
   note: z.string().nullable(),
   createdAt: z.number(),
+  // The scanned bill it came from (PUT /invoices/:id/expense), so a later
+  // rate correction on that bill restates this amount. Absent = manual
+  // entry, or diverted before the link existed.
+  invoiceId: z.string().optional(),
 });
 export type ExpenseDoc = z.infer<typeof expenseDocSchema>;
 

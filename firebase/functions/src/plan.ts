@@ -77,6 +77,9 @@ export interface PlanInfo {
   laborRatePerHour: number | null;
   /** BASE currency (docs/multi-currency.md), default when unset — same read. */
   currency: Currency;
+  /** The owner picked (or confirmed) the base currency themselves, as
+   * opposed to it being inferred from the country — same read. */
+  currencyChosen: boolean;
   /** Country pack selector + rate preferences — same read. */
   country: string | null;
   timezone: string | null;
@@ -105,6 +108,7 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     scanCount,
     laborRatePerHour: typeof rate === "number" ? rate : null,
     currency: currencySchema.catch(DEFAULT_CURRENCY).parse(snap.get("currency")),
+    currencyChosen: snap.get("currencySource") === "owner",
     country: countryCodeSchema.nullable().catch(null).parse(snap.get("country") ?? null),
     timezone: timezoneSchema.nullable().catch(null).parse(snap.get("timezone") ?? null),
     fxDefaultSource: fxSourceSchema.nullable().catch(null).parse(snap.get("fxDefaultSource") ?? null),

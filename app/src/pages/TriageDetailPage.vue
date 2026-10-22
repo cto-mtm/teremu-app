@@ -2,8 +2,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { currencyLabel, formatMoney } from '../i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
+import CurrencyConfirmSheet from '../components/CurrencyConfirmSheet.vue'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
 import { apiFetch, fetchBlobUrl } from '../lib/api'
@@ -77,12 +79,31 @@ const money = computed<ApprovalMoney>(() => ({
 
 /** Amounts formatted in a given currency — the document's while editing,
  * base once approved (the wire is base then). */
-const fmt = (value: number, currency: Currency) => n(value, { key: 'currency', currency })
+const fmt = (value: number, currency: Currency) => formatMoney(value, currency)
 const canonicalCurrency = computed<Currency>(() =>
   readonly.value ? (invoice.value?.fx ? base.value : (invoice.value?.currency ?? base.value)) : docCurrency.value,
 )
 // Read-only toggle: flip a converted document between base and printed.
 const showPrinted = ref(false)
+
+// ── Change the rate of an approved document (always the reviewer's) ──
+const rerating = ref(false)
+const rerateInput = ref('')
+const rerateBusy = ref(false)
+function startRerate(): void {
+  rerateInput.value = invoice.value?.fx ? String(invoice.value.fx.rate) : ''
+  rerating.value = true
+}
+async function saveRerate(): Promise<void> {
+  const value = Number(String(rerateInput.value).replace(',', '.'))
+  if (!(value > 0) || !invoice.value) return
+  rerateBusy.value = true
+  const ok = await store.rerate(invoice.value.id, value)
+  rerateBusy.value = false
+  if (!ok) return alert(t('triage.detail.fx.changeFailed'))
+  rerating.value = false
+  void kitchen.refresh() // the pantry price this invoice set moved too
+}
 function shownLine(i: number, line: LineItem): { unitPrice: number; total: number; currency: Currency } {
   const inv = invoice.value
   if (showPrinted.value && inv?.printed && inv.currency) {
@@ -99,6 +120,7 @@ const expenseTag = ref('')
 const expenseBusy = ref(false)
 
 async function confirmAsExpense(): Promise<void> {
+  if (confirmCurrencyFirst(confirmAsExpense)) return
   if (foreign.value && rate.value <= 0) {
     alert(t('triage.detail.fx.required'))
     return
@@ -116,6 +138,7 @@ async function confirmAsExpense(): Promise<void> {
   )
   expenseBusy.value = false
   if (ok) {
+    afterFirstApproval()
     void kitchen.refresh() // the new expense entry
     void router.push('/triage')
   } else {
@@ -249,7 +272,36 @@ async function dismiss(): Promise<void> {
   else alert(t('triage.dismissFailed'))
 }
 
+// ── First approval: confirm the main currency it is about to lock ──
+const currencyOpen = ref(false)
+const currencyAck = ref(false)
+let afterCurrency: (() => Promise<void>) | null = null
+/** Opens the prompt (and returns true) while the base currency is only
+ * inferred and nothing is approved yet; the action resumes on confirm. */
+function confirmCurrencyFirst(action: () => Promise<void>): boolean {
+  const p = auth.profile
+  if (!p || p.currencyLocked || p.currencyChosen !== false || currencyAck.value) return false
+  afterCurrency = action
+  currencyOpen.value = true
+  return true
+}
+function onCurrencyProceed(): void {
+  currencyAck.value = true
+  void afterCurrency?.()
+}
+function onCurrencyChanged(): void {
+  // New base: the document may now be foreign and need a rate — the
+  // reviewer looks again and presses approve themselves.
+  currencyAck.value = true
+  afterCurrency = null
+}
+/** The first approval just locked the base currency — let /me say so. */
+function afterFirstApproval(): void {
+  if (!auth.profile?.currencyLocked) void auth.reloadProfile()
+}
+
 async function approve(): Promise<void> {
+  if (confirmCurrencyFirst(approve)) return
   if (needsRate.value && rate.value <= 0) {
     alert(t('triage.detail.fx.required'))
     return
@@ -264,8 +316,10 @@ async function approve(): Promise<void> {
     money.value,
   )
   busy.value = false
-  if (ok) void router.push('/triage')
-  else alert(t('triage.detail.approveFailed'))
+  if (ok) {
+    afterFirstApproval()
+    void router.push('/triage')
+  } else alert(t('triage.detail.approveFailed'))
 }
 </script>
 
@@ -317,7 +371,7 @@ async function approve(): Promise<void> {
       <span>
         {{
           t('triage.detail.fx.rateLine', {
-            doc: invoice.currency,
+            doc: currencyLabel(invoice.currency),
             rate: n(invoice.fx.rate),
             base,
             source: t('triage.detail.fx.source.' + invoice.fx.source),
@@ -325,9 +379,45 @@ async function approve(): Promise<void> {
           })
         }}
       </span>
-      <button class="font-semibold text-ink hover:text-ember-700" @click="showPrinted = !showPrinted">
-        {{ showPrinted ? t('triage.detail.fx.showBase', { base }) : t('triage.detail.fx.showPrinted') }}
-      </button>
+      <span class="flex items-center gap-3">
+        <button
+          v-if="canEdit && !rerating"
+          class="font-semibold text-ember-700 hover:underline"
+          @click="startRerate"
+        >
+          {{ t('triage.detail.fx.change') }}
+        </button>
+        <button class="font-semibold text-ink hover:text-ember-700" @click="showPrinted = !showPrinted">
+          {{ showPrinted ? t('triage.detail.fx.showBase', { base }) : t('triage.detail.fx.showPrinted') }}
+        </button>
+      </span>
+      <div v-if="rerating" class="w-full space-y-2">
+        <label class="flex items-center gap-2">
+          <input
+            v-model="rerateInput"
+            type="number"
+            inputmode="decimal"
+            step="0.0001"
+            min="0"
+            class="input w-32"
+            :aria-label="t('triage.detail.fx.rateLabel', { doc: currencyLabel(invoice.currency), base })"
+          />
+          <span>{{ t('triage.detail.fx.rateLabel', { doc: currencyLabel(invoice.currency), base }) }}</span>
+        </label>
+        <p class="text-[11px]">{{ t('triage.detail.fx.changeHint', { base }) }}</p>
+        <div class="flex gap-2">
+          <button
+            class="rounded-full bg-ink px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+            :disabled="rerateBusy || !(Number(String(rerateInput).replace(',', '.')) > 0)"
+            @click="saveRerate"
+          >
+            {{ rerateBusy ? t('common.action.saving') : t('triage.detail.fx.changeSave') }}
+          </button>
+          <button class="text-xs text-smoke hover:text-ink" @click="rerating = false">
+            {{ t('common.action.cancel') }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <div
@@ -496,7 +586,9 @@ async function approve(): Promise<void> {
           <label v-if="canEdit" class="flex items-center gap-2 text-sm">
             <span class="text-xs text-smoke">{{ t('triage.detail.currency') }}</span>
             <select v-model="docCurrency" class="input w-auto px-2 py-1 text-xs" :aria-label="t('triage.detail.currency')">
-              <option v-for="code in CURRENCIES" :key="code" :value="code">{{ code }}</option>
+              <option v-for="code in CURRENCIES" :key="code" :value="code">
+                {{ currencyLabel(code) === code ? code : `${currencyLabel(code)} (${code})` }}
+              </option>
             </select>
           </label>
         </div>
@@ -504,7 +596,7 @@ async function approve(): Promise<void> {
         <!-- Rate picker: only for a priced document in a foreign currency -->
         <div v-if="canEdit && needsRate" class="card space-y-2 border-ember-100 bg-ember-50 p-3 text-sm">
           <div class="text-xs font-semibold text-ember-700">{{ t('triage.detail.fx.title') }}</div>
-          <p class="text-[11px] text-smoke">{{ t('triage.detail.fx.hint', { doc: docCurrency, base }) }}</p>
+          <p class="text-[11px] text-smoke">{{ t('triage.detail.fx.hint', { doc: currencyLabel(docCurrency), base }) }}</p>
           <div class="flex flex-wrap items-center gap-2">
             <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-semibold">
               <button
@@ -531,10 +623,10 @@ async function approve(): Promise<void> {
                 step="0.0001"
                 min="0"
                 class="input w-32"
-                :aria-label="t('triage.detail.fx.rateLabel', { doc: docCurrency, base })"
+                :aria-label="t('triage.detail.fx.rateLabel', { doc: currencyLabel(docCurrency), base })"
                 @input="rateSource = 'manual'"
               />
-              <span class="text-smoke">{{ t('triage.detail.fx.rateLabel', { doc: docCurrency, base }) }}</span>
+              <span class="text-smoke">{{ t('triage.detail.fx.rateLabel', { doc: currencyLabel(docCurrency), base }) }}</span>
             </label>
           </div>
         </div>
@@ -577,7 +669,7 @@ async function approve(): Promise<void> {
               inputmode="decimal"
               step="0.01"
               class="input"
-              :aria-label="t('triage.detail.unitPrice') + ' (' + docCurrency + ')'"
+              :aria-label="t('triage.detail.unitPrice') + ' (' + currencyLabel(docCurrency) + ')'"
               @input="recalc(line)"
             />
             <div class="flex items-center justify-end pr-1 text-sm font-semibold">
@@ -642,5 +734,7 @@ async function approve(): Promise<void> {
         }}
       </BaseButton>
     </div>
+
+    <CurrencyConfirmSheet v-model="currencyOpen" @proceed="onCurrencyProceed" @changed="onCurrencyChanged" />
   </div>
 </template>

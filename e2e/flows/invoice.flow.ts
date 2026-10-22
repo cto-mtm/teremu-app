@@ -91,11 +91,34 @@ export async function approveInvoice(
   await page.getByLabel('Proveedor', { exact: true }).fill(opts.vendor)
   await page.locator('input[type="date"]').fill(opts.date ?? new Date().toISOString().slice(0, 10))
 
-  await page.getByRole('button', { name: /^Aprobar factura/ }).click()
+  await clickApprove(page, page.getByRole('button', { name: /^Aprobar factura/ }))
   // Approval sends the invoice to the read-only view and out of `pending`.
   await expect(page.getByRole('button', { name: /^Aprobar factura/ })).toBeHidden()
 
   return firstItem
+}
+
+/** The one-time "confirm your main currency" prompt (CurrencyConfirmSheet). */
+export function currencyPrompt(page: Page): Locator {
+  return page.getByRole('dialog', { name: 'Confirma tu moneda principal' })
+}
+
+/**
+ * Click an approve button and, if the restaurant's main currency was never
+ * confirmed, answer the prompt that the FIRST approval shows (keeping the
+ * inferred currency). Which spec approves first is not fixed, so every
+ * approval goes through here. `gone` disappears once the approval went
+ * through (default: the button itself). No fixed wait: whichever happens
+ * first decides.
+ */
+export async function clickApprove(page: Page, button: Locator, gone: Locator = button): Promise<void> {
+  await button.click()
+  const prompt = currencyPrompt(page)
+  const outcome = await Promise.race([
+    prompt.waitFor({ state: 'visible' }).then(() => 'prompt' as const, () => 'timeout' as const),
+    gone.waitFor({ state: 'hidden' }).then(() => 'done' as const, () => 'timeout' as const),
+  ])
+  if (outcome === 'prompt') await prompt.getByRole('button', { name: /— aprobar$/ }).click()
 }
 
 // ── Per-scan helpers ────────────────────────────────────────────────
@@ -152,7 +175,7 @@ export async function approveScan(
     await page.getByRole('button', { name: 'Albarán', exact: true }).click()
     await expect(page.getByText('Los albaranes se aprueban solo para conciliación')).toBeVisible()
   }
-  await page.getByRole('button', { name: /^Aprobar factura/ }).click()
+  await clickApprove(page, page.getByRole('button', { name: /^Aprobar factura/ }))
   await expect(page.getByRole('button', { name: /^Aprobar factura/ })).toBeHidden()
 }
 

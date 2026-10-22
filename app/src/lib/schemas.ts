@@ -135,6 +135,8 @@ export const ingredientSchema = z.object({
   lastCountAt: z.number().nullable(),
   // The owner said it never goes in a recipe: not flagged as unused.
   notInRecipes: z.boolean().optional().catch(undefined),
+  // Hidden from the pantry and recipe pickers; kept for history.
+  archived: z.boolean().optional().catch(undefined),
 })
 
 export const recipeLineSchema = z.object({
@@ -394,6 +396,9 @@ export const meSchema = z.object({
   currency: currencySchema.catch(DEFAULT_CURRENCY),
   // True once any invoice is approved — Settings locks the base currency.
   currencyLocked: z.boolean().optional().catch(false),
+  // The owner picked/confirmed it (vs inferred from the country). Absent
+  // (an older API) = true, so nothing new is asked of anyone.
+  currencyChosen: z.boolean().optional().catch(true),
   // Country pack selector + rate preferences (docs/multi-currency.md).
   country: z.string().nullable().optional().catch(null),
   timezone: z.string().nullable().optional().catch(null),

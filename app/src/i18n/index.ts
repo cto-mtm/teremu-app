@@ -139,17 +139,51 @@ export function setCurrency(code: Currency): void {
   for (const locale of SUPPORTED_LOCALES) i18n.global.setNumberFormat(locale, numberFormatFor(code))
 }
 
+/**
+ * How people actually write a currency when Intl's symbol is not it:
+ * outside the es-VE locale Intl prints the bolívar as "VES", but every
+ * receipt and every Venezuelan says "Bs.".
+ */
+const LOCAL_SYMBOL: Partial<Record<Currency, string>> = { VES: 'Bs.' }
+
+const symbolOf = (code: Currency): string =>
+  LOCAL_SYMBOL[code] ??
+  new Intl.NumberFormat(i18n.global.locale.value, { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' })
+    .formatToParts(0)
+    .find((p) => p.type === 'currency')?.value ??
+  code
+
+/** A currency's name in labels and pickers: "Bs." for VES, else the ISO code. */
+export const currencyLabel = (code: Currency): string => LOCAL_SYMBOL[code] ?? code
+
+/** A currency picker option in the UI language: "dólar estadounidense (USD)",
+ * "bolívar soberano (Bs.)". */
+export function currencyOptionLabel(code: Currency): string {
+  try {
+    const name = new Intl.DisplayNames([i18n.global.locale.value], { type: 'currency' }).of(code) ?? code
+    return `${name} (${currencyLabel(code)})`
+  } catch {
+    return currencyLabel(code)
+  }
+}
+
+/**
+ * An amount in a DOCUMENT currency (Triage, pending invoice cards) — the
+ * UI language's separators with the symbol people use ("Bs. 9.312,50").
+ * Base-currency amounts keep using n(x, 'currency').
+ */
+export function formatMoney(value: number, code: Currency): string {
+  const parts = new Intl.NumberFormat(i18n.global.locale.value, {
+    style: 'currency',
+    currency: code,
+    currencyDisplay: 'narrowSymbol',
+  }).formatToParts(value)
+  const symbol = LOCAL_SYMBOL[code]
+  return parts.map((p) => (p.type === 'currency' && symbol ? symbol : p.value)).join('')
+}
+
 /** "$" / "€" / "£" in the current language — for labels like "Precio ({symbol})". */
-export const currencySymbol = computed(
-  () =>
-    new Intl.NumberFormat(i18n.global.locale.value, {
-      style: 'currency',
-      currency: currency.value,
-      currencyDisplay: 'narrowSymbol',
-    })
-      .formatToParts(0)
-      .find((p) => p.type === 'currency')?.value ?? currency.value,
-)
+export const currencySymbol = computed(() => symbolOf(currency.value))
 
 // Key autocompletion for t() calls across the app.
 type MessageSchema = (typeof messages)['es']

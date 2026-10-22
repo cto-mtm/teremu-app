@@ -5,9 +5,11 @@ import {
   col,
   get,
   makeOwner,
+  makeUserToken,
   put,
   seedIngredient,
   seedInvoice,
+  seedMember,
   uniqueId,
 } from "./helpers";
 
@@ -175,6 +177,91 @@ describe("approving a foreign-currency invoice", () => {
   });
 });
 
+describe("changing the rate of an approved invoice", () => {
+  it("restates base amounts and the pantry price this invoice set; stock and printed figures stay", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const ingredient = await seedIngredient(owner.rid, { name: "Roma Tomatoes", unit: "kg", theoreticalQty: 0, lastUnitPrice: 3 });
+    const invoice = await seedInvoice(owner.rid, { currency: "VES" });
+    await put(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Distribuidora X",
+      invoiceDate: "2026-09-12",
+      lineItems: [VES_LINE],
+      currency: "VES",
+      fx: FX,
+    });
+
+    // The real rate that day was 73.04: half the base amounts.
+    const { status, body } = await put<Wire>(`/invoices/${invoice.id}/rate`, owner.token, { rate: 73.04 });
+    expect(status).toBe(200);
+    expect(body.fx).toEqual({ rate: 73.04, source: "manual", asOf: "2026-09-12", pickedBy: expect.any(String) });
+    expect(body.total).toBe(5);
+    expect(body.lineItems[0]).toMatchObject({ unitPrice: 0.5, total: 5 });
+    expect(body.printed).toEqual({ total: 365.2, lineItems: [{ unitPrice: 36.52, total: 365.2 }] });
+
+    const fresh = (await col(owner.rid, "ingredients").doc(ingredient.id).get()).data() as IngredientDoc;
+    expect(fresh.lastUnitPrice).toBe(0.5);
+    expect(fresh.prevUnitPrice).toBe(3);
+    expect(fresh.theoreticalQty).toBeCloseTo(10, 5);
+  });
+
+  it("restates the expense a diverted bill created", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const invoice = await seedInvoice(owner.rid, { currency: "VES", total: 3652, lineItems: [] });
+    await put(`/invoices/${invoice.id}/expense`, owner.token, { tag: "Hosting", currency: "VES", fx: FX });
+
+    const { status, body } = await put<Wire>(`/invoices/${invoice.id}/rate`, owner.token, { rate: 73.04 });
+    expect(status).toBe(200);
+    expect(body.total).toBe(50);
+    const expenses = await col(owner.rid, "expenses").get();
+    expect((expenses.docs[0].data() as ExpenseDoc).amount).toBe(50);
+  });
+
+  it("refuses the unauthenticated, a read-only member, another restaurant, and bad input", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const other = await makeOwner({ uid: `other-${uniqueId()}`, email: `other-${uniqueId()}@example.com` });
+    const invoice = await seedInvoice(owner.rid, { currency: "VES" });
+    await put(`/invoices/${invoice.id}/approve`, owner.token, {
+      vendorName: "Distribuidora X",
+      invoiceDate: "2026-09-12",
+      lineItems: [VES_LINE],
+      currency: "VES",
+      fx: FX,
+    });
+    const path = `/invoices/${invoice.id}/rate`;
+
+    expect((await put(path, undefined, { rate: 40 })).status).toBe(401);
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "read", menu: "none", pantry: "none", finance: "none", vendors: "none", integrations: "none", scan: false });
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await put(path, reader, { rate: 40 }, owner.rid)).status).toBe(403);
+    expect((await put(path, other.token, { rate: 40 })).status).toBe(404);
+    expect((await put(path, owner.token, { rate: 0 })).status).toBe(400);
+    expect((await put("/invoices/nope/rate", owner.token, { rate: 40 })).status).toBe(404);
+
+    // None of that touched the frozen rate.
+    const stored = (await col(owner.rid, "invoices").doc(invoice.id).get()).data() as InvoiceDoc;
+    expect(stored.fx?.rate).toBe(FX.rate);
+  });
+
+  it("refuses an unapproved or same-currency document", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const pending = await seedInvoice(owner.rid, { currency: "VES" });
+    const r = await put(`/invoices/${pending.id}/rate`, owner.token, { rate: 40 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe("not_approved");
+
+    const local = await seedInvoice(owner.rid);
+    await put(`/invoices/${local.id}/approve`, owner.token, {
+      vendorName: "Valley Produce Co.",
+      invoiceDate: "2026-09-12",
+      lineItems: [{ ...VES_LINE, unitPrice: 4, total: 40 }],
+    });
+    const same = await put(`/invoices/${local.id}/rate`, owner.token, { rate: 40 });
+    expect(same.status).toBe(400);
+    expect(same.body.error).toBe("fx_not_applicable");
+  });
+});
+
 describe("restaurant profile — base currency, country, timezone", () => {
   it("GET /me carries the country fields, the lock flag and a data-only countryProfile", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
@@ -188,6 +275,18 @@ describe("restaurant profile — base currency, country, timezone", () => {
       fxOptIns: [],
       countryProfile: { sources: [], defaultSource: "manual", optInSources: [], pulseCards: [] },
     });
+  });
+
+  it("the base currency counts as chosen only once the owner picks or confirms it", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    expect((await get("/me", owner.token)).body.currencyChosen).toBe(false);
+    // Inferred from a country: still not the owner's pick.
+    await put(`/restaurants/${owner.rid}`, owner.token, { country: "ZZ" });
+    expect((await get("/me", owner.token)).body.currencyChosen).toBe(false);
+    // Confirming the SAME currency (Triage's first-approval prompt) counts.
+    const me0 = await get("/me", owner.token);
+    expect((await put(`/restaurants/${owner.rid}`, owner.token, { currency: me0.body.currency })).status).toBe(200);
+    expect((await get("/me", owner.token)).body.currencyChosen).toBe(true);
   });
 
   it("the owner can set country and timezone; both surface on /me", async () => {

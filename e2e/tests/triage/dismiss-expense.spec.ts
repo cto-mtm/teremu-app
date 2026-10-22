@@ -8,7 +8,7 @@
 import { test, expect } from '../../fixtures'
 import { SCAN_SAMPLES } from '../../constants'
 import { unique } from '../../flows/data'
-import { fillScanHeader, scanCard, uploadScan, waitForScan } from '../../flows/invoice.flow'
+import { clickApprove, fillScanHeader, scanCard, uploadScan, waitForScan } from '../../flows/invoice.flow'
 
 test.describe('Triage housekeeping', () => {
   test('a dismissed scan can be restored, then approved as an expense', async ({ page }, testInfo) => {
@@ -43,7 +43,7 @@ test.describe('Triage housekeeping', () => {
     await fillScanHeader(page, { vendor })
     await page.getByRole('button', { name: /Aprobar como gasto/ }).click()
     await page.getByPlaceholder('Etiqueta del gasto').fill('Fotografía')
-    await page.getByRole('button', { name: 'Confirmar gasto' }).click()
+    await clickApprove(page, page.getByRole('button', { name: 'Confirmar gasto' }))
     await expect(page).toHaveURL(/\/triage$/)
     // Out of the inbox, into "Aprobadas recientemente" (same link) — under
     // the vendor the reviewer typed, not the OCR's guess.
