@@ -54,13 +54,6 @@ function errorText(error: string): string {
   return known ? t(`email.error.${known}`) : t('email.error.generic')
 }
 
-/** When "check now" opens again — the plan's interval after the last
- * check (the API answers 429 before that; a backfill is never throttled). */
-function nextCheck(inbox: Inbox): Date | null {
-  if (!inbox.backfillDone || !inbox.lastSyncAt || !status.value) return null
-  return new Date(inbox.lastSyncAt + status.value.limits.syncHours * 3_600_000)
-}
-
 async function syncNow(inbox: Inbox): Promise<void> {
   busy.value = inbox.id
   const res = await apiFetch(
@@ -69,10 +62,10 @@ async function syncNow(inbox: Inbox): Promise<void> {
     emailSyncResultSchema,
   )
   busy.value = null
-  const next = nextCheck(inbox)
+  // When it opens again comes from the server (GET /email nextCheckAt).
   if (res.ok) message.value = { ok: true, text: t('email.synced') }
-  else if (res.error.includes('email_sync_throttled') && next) {
-    message.value = { ok: false, text: t('email.throttled', { date: d(next, 'short') }) }
+  else if (res.error.includes('email_sync_throttled') && inbox.nextCheckAt > 0) {
+    message.value = { ok: false, text: t('email.throttled', { date: d(new Date(inbox.nextCheckAt), 'short') }) }
   } else message.value = { ok: false, text: errorText(res.error) }
   await load()
 }
@@ -193,6 +186,7 @@ onMounted(async () => {
 
       <div v-for="p in status.providers" :key="p.provider">
         <p v-if="!p.available" class="text-xs text-smoke">{{ t('email.unavailable') }}</p>
+        <p v-if="p.available && p.testing" class="text-xs text-smoke">{{ t('email.testing') }}</p>
         <template v-else-if="canEdit">
           <BaseButton v-if="!atLimit" :disabled="busy === p.provider" @click="connect(p.provider)">
             {{

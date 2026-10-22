@@ -34,6 +34,17 @@ export async function consumeDaily(rid: string, kind: DailyKind): Promise<boolea
   return (await reserveDaily(rid, kind, 1, DAILY_CAPS[kind])) === 1;
 }
 
+/** Give back `n` units reserved today but not used (a failed model batch,
+ * a message deleted before it was looked at). Never below zero. */
+export async function returnDaily(rid: string, kind: DailyKind | PlanDailyKind, n: number): Promise<void> {
+  if (n <= 0) return;
+  const ref = usageRef(rid);
+  await getFirestore().runTransaction(async (tx) => {
+    const used = ((await tx.get(ref)).get(kind) as number | undefined) ?? 0;
+    if (used > 0) tx.set(ref, { [kind]: Math.max(0, used - n) }, { merge: true });
+  });
+}
+
 /** Count up to `want` units against today's `cap`; returns how many were
  * granted (0 when the cap is reached) — a batch takes what is left. */
 export async function reserveDaily(rid: string, kind: DailyKind | PlanDailyKind, want: number, cap: number): Promise<number> {

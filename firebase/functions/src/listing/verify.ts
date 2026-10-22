@@ -1,8 +1,8 @@
 import { createHash, randomInt } from "node:crypto";
 import { getFirestore, Timestamp, type Transaction } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
-import { claimCodeEmail, claimTransferredEmail, consumeMailQuota, mailAccepted, mailKeyHash, sendMail } from "../mail.js";
-import { DEFAULT_LOCALE, localeSchema, type Locale } from "../models.js";
+import { claimCodeEmail, claimTransferredEmail, consumeMailQuota, mailAccepted, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
+import type { Locale } from "../models.js";
 import { RequestError } from "../pipeline.js";
 import { claimRef, type PlaceClaim } from "./commit.js";
 import type { ListingBackend } from "./types.js";
@@ -246,17 +246,10 @@ export async function confirmVerification(
 /** Best effort — mail never fails the verification. */
 async function notifyPreviousHolder(rid: string, placeId: string): Promise<void> {
   try {
-    const rest = await db().collection("restaurants").doc(rid).get();
-    const ownerUid = rest.get("ownerUid") as string | undefined;
-    if (!ownerUid) return;
-    const [member, user] = await Promise.all([
-      db().doc(`restaurants/${rid}/members/${ownerUid}`).get(),
-      db().doc(`users/${ownerUid}`).get(),
-    ]);
-    const email = member.get("email") as string | undefined;
-    if (!email) return;
-    const locale = localeSchema.catch(DEFAULT_LOCALE).parse(user.get("locale"));
-    const placeName = (rest.get("name") as string | undefined) ?? "";
+    const owner = await ownerRecipient(rid);
+    if (!owner) return;
+    const { to: email, locale } = owner;
+    const placeName = ((await db().collection("restaurants").doc(rid).get()).get("name") as string | undefined) ?? "";
     await sendMail({
       to: email,
       ...claimTransferredEmail({ locale, placeName }),

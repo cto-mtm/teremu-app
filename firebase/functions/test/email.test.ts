@@ -57,7 +57,7 @@ describe("email connect flow", () => {
     const before = await get("/email", o.token);
     expect(before.status).toBe(200);
     expect(before.body).toEqual({
-      providers: [{ provider: "gmail", available: true }],
+      providers: [{ provider: "gmail", available: true, testing: false }],
       inboxes: [],
       limits: { inboxes: 1, syncHours: 24 },
     });

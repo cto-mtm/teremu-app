@@ -165,6 +165,9 @@ describe("email ingest: the scan meter", () => {
     expect(await scanCount(o.rid)).toBe(6);
     await api(`/invoices/${doc.id}/discard`, { token: o.token, method: "PUT", body: { discarded: true } });
     expect(await scanCount(o.rid)).toBe(5);
+
+    // Junk-rate telemetry: 017's auto-discard + this one; the restore undid one.
+    expect((await inbox().get()).get(`stats.${month()}.discarded`)).toBe(2);
   });
 
   it("pauses at the limit — invoices wait, the owner is told once — and resumes on upgrade", async () => {
@@ -201,6 +204,7 @@ describe("email ingest: review signals", () => {
     const res = await api(`/invoices/${body.id}/expense`, { token: o.token, method: "PUT", body: { tag: "Software" } });
     expect(res.status).toBe(200);
     expect((await db().doc(`restaurants/${o.rid}/emailSenders/billing@cloudtpv.test`).get()).get("kinds")).toEqual(["body"]);
+    expect((await inbox().get()).get(`stats.${month()}.approved`)).toBe(1);
   });
 
   it("flags a possible duplicate — same vendor, date and total — on both copies", async () => {

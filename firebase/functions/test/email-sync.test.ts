@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
 import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, uniqueId, type Owner } from "./helpers";
 import { NO_PERMS } from "./pos-helpers";
+import { syncDueInboxes } from "../src/email/sync";
 
 // Email ingestion Phase 2 (docs/email-ingestion.md §Sync engine, funnel
 // stages 0–1) on the fake inbox, whose 17 messages cover every branch.
@@ -104,7 +105,11 @@ describe("email sync: backfill + funnel", () => {
     expect(conn.ingestPending).toBe(true); // 4 accepted messages left for the next calls
 
     const status = await get("/email", o.token);
-    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, found: 7, waiting: 4, paused: false });
+    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, found: 7, waiting: 4, paused: false, nextCheckAt: 0 });
+
+    // 12 candidates reserved the daily cap; 015, deleted before the model saw it, gave its slot back.
+    const today = new Date().toISOString().slice(0, 10);
+    expect((await db().doc(`restaurants/${o.rid}/dailyUsage/${today}`).get()).get("emailClassify")).toBe(11);
   });
 
   it("keeps only what it needs: nothing of a skipped message, no preview of a rejected one", async () => {
@@ -134,6 +139,20 @@ describe("email sync: incremental", () => {
     const again = await syncNow(o);
     expect(again.status).toBe(429);
     expect(again.body.error).toBe("email_sync_throttled");
+    // The card shows when it opens again, as the server computes it (Free: 24 h).
+    const lastSyncAt = (await inbox().get()).get("lastSyncAt") as number;
+    expect((await get("/email", o.token)).body.inboxes[0].nextCheckAt).toBe(lastSyncAt + 24 * 3_600_000);
+  });
+
+  it("the hourly pass syncs every due inbox and skips the ones that are not", async () => {
+    await connect(o);
+    // In-process, as the scheduler runs it (the emulator has no Pub/Sub).
+    expect(await syncDueInboxes()).toEqual({ synced: 1, failed: 0 });
+    expect((await inbox().get()).get("sync.backfillDone")).toBe(true);
+    await drain(o);
+    expect(await syncDueInboxes()).toEqual({ synced: 0, failed: 0 });
+    await age(25);
+    expect(await syncDueInboxes()).toEqual({ synced: 1, failed: 0 });
   });
 
   it("follows History after the backfill, and drops what the listing would have excluded", async () => {

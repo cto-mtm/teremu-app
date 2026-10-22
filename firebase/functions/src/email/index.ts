@@ -51,6 +51,9 @@ export function adapterFor(provider: MailProvider): MailAdapter | null {
 /** Whether connecting an inbox can work in this deployment. */
 export const emailAvailable = (provider: MailProvider): boolean => adapterFor(provider) !== null && sealer.configured();
 
+/** Whether the provider's OAuth app is still unverified (types.ts `testing`). */
+export const providerInTesting = (provider: MailProvider): boolean => PROVIDERS[provider].testing();
+
 /** Where Google sends the browser back to: EMAIL_OAUTH_REDIRECT_URL, else
  * this project's emailOauthCallback function URL. Must be registered
  * verbatim as an authorized redirect URI on the OAuth client. */

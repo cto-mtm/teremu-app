@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { GoogleAuth } from "google-auth-library";
 import { getFirestore } from "firebase-admin/firestore";
-import type { Locale, Unit } from "@teremu/shared";
+import { DEFAULT_LOCALE, localeSchema, type Locale, type Unit } from "@teremu/shared";
 import { logger } from "firebase-functions/v2";
 import { PLAN_LIMITS, planOf } from "./plan.js";
 
@@ -34,7 +34,7 @@ export interface SendMailInput {
 }
 
 /** Small, stable set — the mailer's per-project stats are keyed on it. */
-export type MailKind = "staff-invite" | "supplier-order" | "claim-verify" | "claim-transferred" | "email-quota";
+export type MailKind = "staff-invite" | "supplier-order" | "claim-verify" | "claim-transferred" | "email-quota" | "email-reauth";
 
 export type SendMailResult =
   | { ok: true; mailId: string; duplicate: boolean }
@@ -148,6 +148,20 @@ export async function consumeMailQuota(rid: string, uid: string, to: string, kin
 }
 
 /** Short stable hash for idempotency keys (the mailer caps them at 128). */
+/**
+ * Where a notice to a restaurant's OWNER goes: their member email and
+ * UI language. Null when the restaurant has no owner on record (or the
+ * owner has no email) — the caller skips the mail.
+ */
+export async function ownerRecipient(rid: string): Promise<{ to: string; locale: Locale } | null> {
+  const db = getFirestore();
+  const ownerUid = (await db.collection("restaurants").doc(rid).get()).get("ownerUid") as string | undefined;
+  if (!ownerUid) return null;
+  const [member, user] = await Promise.all([db.doc(`restaurants/${rid}/members/${ownerUid}`).get(), db.doc(`users/${ownerUid}`).get()]);
+  const to = member.get("email") as string | undefined;
+  return to ? { to, locale: localeSchema.catch(DEFAULT_LOCALE).parse(user.get("locale")) } : null;
+}
+
 export function mailKeyHash(...parts: (string | number)[]): string {
   return createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 32);
 }
@@ -319,6 +333,29 @@ export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: 
   };
 }
 
+/**
+ * Google stopped honouring an inbox's grant (revoked from the account,
+ * or expired): sync has paused and only a reconnect resumes it. Sent to
+ * the owner, once per grant. The address is the owner's own inbox.
+ */
+export function emailReauthEmail(args: { locale: Locale; accountEmail: string }): MailContent {
+  const c = COPY[args.locale].emailReauth;
+  const settingsUrl = `${APP_URL}/settings`;
+  return {
+    subject: c.subject(args.accountEmail).slice(0, 200),
+    text: [c.body(args.accountEmail), "", c.next, "", settingsUrl, "", c.footer].join("\n"),
+    html: layout(
+      args.locale,
+      `<p style="margin:0 0 12px">${c.body(`<strong>${esc(args.accountEmail)}</strong>`)}</p>
+<p style="margin:0 0 20px">${c.next}</p>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
+<a href="${esc(settingsUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.cta}</a>
+</td></tr></table>`,
+      c.footer,
+    ),
+  };
+}
+
 /** To the previous holder of a listing someone else just verified. */
 export function claimTransferredEmail(args: { locale: Locale; placeName: string }): MailContent {
   const c = COPY[args.locale].claimTransferred;
@@ -381,6 +418,13 @@ const es = {
     cta: "Ver planes",
     footer: "Enviado con Teremu.",
   },
+  emailReauth: {
+    subject: (email: string) => `Teremu ya no puede leer ${email}`,
+    body: (email: string) => `Google retiró el acceso de Teremu a ${email}, o el permiso caducó. Mientras tanto, las facturas que lleguen a ese correo no se importan.`,
+    next: "Vuelve a conectarlo en Ajustes y la importación sigue donde se quedó.",
+    cta: "Abrir Ajustes",
+    footer: "Enviado con Teremu.",
+  },
 };
 
 const en: typeof es = {
@@ -421,6 +465,13 @@ const en: typeof es = {
     body: (limit) => `You have used your plan's ${limit} documents this month. Teremu keeps finding invoices in your inbox and holds on to them — none are lost.`,
     next: "They come in on their own next month, or as soon as you upgrade.",
     cta: "See plans",
+    footer: "Sent with Teremu.",
+  },
+  emailReauth: {
+    subject: (email) => `Teremu can no longer read ${email}`,
+    body: (email) => `Google withdrew Teremu's access to ${email}, or the permission expired. Until it is back, invoices arriving there are not imported.`,
+    next: "Reconnect it in Settings and the import picks up where it left off.",
+    cta: "Open Settings",
     footer: "Sent with Teremu.",
   },
 };

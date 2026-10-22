@@ -54,13 +54,37 @@ export class GmailError extends Error {
   }
 }
 
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const ATTEMPTS = 3;
+const MAX_WAIT_MS = 10_000;
+
+/**
+ * fetch with Google's rate limits in mind: a 429 or 5xx (and a network
+ * error) is retried with exponential backoff — 1 s, then 2 s — honouring
+ * Retry-After, capped at 10 s. Gmail's per-user burst limit is the usual
+ * cause; the engine already pages one mailbox sequentially. Each attempt
+ * gets its own 20 s timeout. The last response (or error) is returned.
+ */
+export async function fetchRetrying(url: string, init: Omit<RequestInit, "signal">, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Response> {
+  for (let attempt = 1; ; attempt += 1) {
+    let res: Response | null = null;
+    try {
+      res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+      if (!RETRYABLE.has(res.status) || attempt === ATTEMPTS) return res;
+    } catch (err) {
+      if (attempt === ATTEMPTS) throw err;
+    }
+    const retryAfter = Number(res?.headers.get("retry-after"));
+    await sleep(Math.min(MAX_WAIT_MS, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** (attempt - 1)));
+  }
+}
+
 /** The OAuth token endpoint. `invalid_grant` = revoked / expired grant. */
 async function token(params: Record<string, string>): Promise<Record<string, unknown>> {
-  const res = await fetch(TOKEN_URL, {
+  const res = await fetchRetrying(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: clientId(), client_secret: clientSecret(), ...params }),
-    signal: AbortSignal.timeout(20_000),
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (body.error === "invalid_grant") throw new MailAuthError();
@@ -75,9 +99,8 @@ async function call<T>(access: MailAccess, path: string, query: Record<string, s
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) for (const one of [v].flat()) q.append(k, one);
   const qs = q.toString();
-  const res = await fetch(`${API}${path}${qs ? `?${qs}` : ""}`, {
+  const res = await fetchRetrying(`${API}${path}${qs ? `?${qs}` : ""}`, {
     headers: { Authorization: `Bearer ${access.accessToken}` },
-    signal: AbortSignal.timeout(20_000),
   });
   if (res.status === 401) throw new MailAuthError();
   if (res.status === 404) throw new MailNotFoundError();
@@ -266,5 +289,8 @@ const adapter: MailAdapter = {
 export const gmail: MailProviderModule = {
   adapter,
   configured: isConfigured,
+  // GMAIL_OAUTH_TESTING=true while the OAuth client is in Google's
+  // "Testing" publishing status (docs/email-ingestion.md, Phase 0).
+  testing: () => process.env.GMAIL_OAUTH_TESTING === "true",
   secrets: [GMAIL_CLIENT_SECRET],
 };

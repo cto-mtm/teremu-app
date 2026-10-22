@@ -1,5 +1,6 @@
 import { getFirestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
+import { emailReauthEmail, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
 import type { MailProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
 import { adapterFor, sealer } from "./index.js";
@@ -61,6 +62,8 @@ export interface ConnectionDoc {
   /** A sync in flight holds the inbox until then (epoch ms), so the
    * scheduler and "sync now" never walk the same cursors at once. */
   syncLeaseUntil?: number;
+  /** Reviewer decisions on this inbox's documents, per YYYY-MM (stats.ts). */
+  stats?: Record<string, { approved?: number; discarded?: number }>;
   /** Accepted messages still to turn into invoices (the per-tick cap
    * stopped short) — keeps the inbox due until they are in. */
   ingestPending?: boolean;
@@ -95,11 +98,31 @@ export function requireAdapter(provider: MailProvider): MailAdapter {
 }
 
 /** The grant is gone (removed in the user's account, or expired): the
- * inbox reads as needs_reauth until someone reconnects. Nothing retries
- * in the background. */
+ * inbox reads as needs_reauth until someone reconnects — Settings shows
+ * the banner, and the owner gets one email per grant (only on the flip
+ * from active, never again on later failed calls). Nothing retries in
+ * the background. */
 export async function markNeedsReauth(connId: string): Promise<void> {
-  await connectionRef(connId).update({ status: "needs_reauth", updatedAt: Date.now() });
+  const flipped = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(connectionRef(connId));
+    if (snap.get("status") !== "active") return null;
+    tx.update(connectionRef(connId), { status: "needs_reauth", updatedAt: Date.now() });
+    return snap.data() as ConnectionDoc;
+  });
   logger.warn("Email inbox needs reauthorization", { connId });
+  if (!flipped?.rid) return;
+  try {
+    const owner = await ownerRecipient(flipped.rid);
+    if (!owner) return;
+    await sendMail({
+      to: owner.to,
+      ...emailReauthEmail({ locale: owner.locale, accountEmail: flipped.accountEmail }),
+      kind: "email-reauth",
+      idempotencyKey: `email-reauth-${mailKeyHash(connId, flipped.epoch)}`,
+    });
+  } catch (err) {
+    logger.warn("email reauth notice failed", { connId, err: String(err) });
+  }
 }
 
 /** Run `fn` with a fresh access token. A provider auth rejection flips

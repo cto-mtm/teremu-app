@@ -97,6 +97,10 @@ export interface MailAdapter {
 export interface MailProviderModule {
   adapter: MailAdapter;
   configured(): boolean;
+  /** The provider's OAuth app is not verified yet (Google "Testing"
+   * status: ≤100 test users, grants that expire within days) — Settings
+   * warns that reconnecting will be needed. */
+  testing(): boolean;
   secrets: SecretParam[];
 }
 

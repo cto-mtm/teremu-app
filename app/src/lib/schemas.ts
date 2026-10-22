@@ -276,7 +276,7 @@ export const posConnectSchema = z.object({ url: z.string().url() })
 /** GET /email — connected inboxes and what the plan allows
  * (docs/email-ingestion.md). Connect answers with posConnectSchema. */
 export const emailStatusSchema = z.object({
-  providers: z.array(z.object({ provider: z.string(), available: z.boolean() })),
+  providers: z.array(z.object({ provider: z.string(), available: z.boolean(), testing: z.boolean().catch(false) })),
   inboxes: z.array(
     z.object({
       id: z.string(),
@@ -289,6 +289,7 @@ export const emailStatusSchema = z.object({
       found: z.number().catch(0),
       waiting: z.number().catch(0),
       paused: z.boolean().catch(false),
+      nextCheckAt: z.number().catch(0),
     }),
   ),
   limits: z.object({ inboxes: z.number(), syncHours: z.number() }),

@@ -5,7 +5,7 @@ import { MAIL_PROVIDERS, memberDocSchema, type MailProvider } from "../models.js
 import { RequestError } from "../pipeline.js";
 import { monthKey, PLAN_LIMITS, planOf, type Plan } from "../plan.js";
 import { can } from "../tenancy.js";
-import { adapterFor, emailAvailable, oauthRedirectUrl } from "./index.js";
+import { adapterFor, emailAvailable, oauthRedirectUrl, providerInTesting } from "./index.js";
 import {
   connectionIdFor,
   connectionRef,
@@ -17,7 +17,7 @@ import {
   type ConnectionDoc,
   type ConnectionStatus,
 } from "./store.js";
-import { inboxCounts } from "./sync.js";
+import { inboxCounts, nextSyncAt } from "./sync.js";
 import type { MailGrant } from "./types.js";
 
 /**
@@ -255,11 +255,15 @@ export interface InboxView {
   waiting: number;
   /** The meter refused this month: found invoices wait until it resets. */
   paused: boolean;
+  /** When "check now" opens again (epoch ms; 0 = now) — the client shows
+   * it as is instead of re-deriving the server's throttle. */
+  nextCheckAt: number;
 }
 
 export interface EmailStatusView {
   /** Per provider: false when this deployment can't connect it. */
-  providers: { provider: MailProvider; available: boolean }[];
+  /** testing: the provider's OAuth app is unverified — grants expire. */
+  providers: { provider: MailProvider; available: boolean; testing: boolean }[];
   inboxes: InboxView[];
   limits: { inboxes: number; syncHours: number };
 }
@@ -281,10 +285,11 @@ export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusV
         backfillDone: conn.sync?.backfillDone ?? false,
         ...(await inboxCounts(rid, id)),
         paused: conn.quotaPausedPeriod === monthKey(),
+        nextCheckAt: nextSyncAt(conn, PLAN_LIMITS[plan]),
       })),
   );
   return {
-    providers: MAIL_PROVIDERS.map((provider) => ({ provider, available: emailAvailable(provider) })),
+    providers: MAIL_PROVIDERS.map((provider) => ({ provider, available: emailAvailable(provider), testing: providerInTesting(provider) })),
     inboxes,
     limits: { inboxes: PLAN_LIMITS[plan].emailInboxes, syncHours: PLAN_LIMITS[plan].emailSyncHours },
   };

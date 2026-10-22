@@ -1,8 +1,8 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
-import { reserveDaily } from "../helpers/dailyCap.js";
+import { reserveDaily, returnDaily } from "../helpers/dailyCap.js";
 import { RequestError } from "../pipeline.js";
-import type { PlanLimits } from "../plan.js";
+import { getPlanInfo, type PlanLimits } from "../plan.js";
 import { bodyText } from "./body.js";
 import {
   accepted,
@@ -17,6 +17,7 @@ import {
 } from "./classify.js";
 import type { InvoiceDoc } from "../models.js";
 import { ingestAccepted, INGEST_PER_TICK } from "./ingest.js";
+import { acceptThreshold } from "./stats.js";
 import { connectionRef, db, ingests, withAccess, type ConnectionDoc, type SyncState } from "./store.js";
 import { MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageMeta } from "./types.js";
 
@@ -38,12 +39,16 @@ import { MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageM
  */
 
 const DAY_MS = 86_400_000;
-export const BACKFILL_DAYS = 31;
+const BACKFILL_DAYS = 31;
 /** Messages fetched per inbox per tick — keeps one tick well inside the
  * scheduler's timeout; the backfill resumes next tick. */
-export const TICK_BUDGET = 200;
-/** A sync holds its inbox this long at most (a crashed one frees it). */
-const LEASE_MS = 9 * 60_000;
+const TICK_BUDGET = 200;
+/** A sync holds its inbox this long at most (a crashed one frees it).
+ * Longer than the scheduler's 540 s timeout, so a sync can never outlive
+ * its lease and race the next one. */
+const LEASE_MS = 10 * 60_000;
+/** The hourly scheduler stops starting new inboxes after this long. */
+const SCHEDULER_BUDGET_MS = 420_000;
 /** Overlap when re-listing after History expired; dedup absorbs it. */
 const REQUERY_OVERLAP_MS = DAY_MS;
 /** Stage 1 gives up on a message after this many failed batches. */
@@ -93,7 +98,7 @@ export interface IngestDoc {
   updatedAt: number;
 }
 
-export const ingestRef = (rid: string, connId: string, messageId: string) => ingests(rid).doc(`${connId}_${messageId}`);
+const ingestRef = (rid: string, connId: string, messageId: string) => ingests(rid).doc(`${connId}_${messageId}`);
 
 /**
  * restaurants/{rid}/emailSenders/{address} — senders whose emailed
@@ -129,15 +134,26 @@ export interface SyncResult {
   backfillDone: boolean;
 }
 
-/** Take the inbox for one sync, or refuse (409) if another holds it. */
-async function acquireLease(connId: string, now: number): Promise<void> {
+/** Take the inbox for one sync, or refuse (409) if another holds it.
+ * Returns the lease value — only its holder releases it. */
+async function acquireLease(connId: string, now: number): Promise<number> {
+  const lease = now + LEASE_MS;
   const ok = await db().runTransaction(async (tx) => {
     const snap = await tx.get(connectionRef(connId));
     if ((snap.get("syncLeaseUntil") as number | undefined ?? 0) > now) return false;
-    tx.update(connectionRef(connId), { syncLeaseUntil: now + LEASE_MS });
+    tx.update(connectionRef(connId), { syncLeaseUntil: lease });
     return true;
   });
   if (!ok) throw new RequestError("email_sync_running", 409);
+  return lease;
+}
+
+/** Release a lease — if it is still ours (never a newer sync's). */
+async function releaseLease(connId: string, lease: number): Promise<void> {
+  await db().runTransaction(async (tx) => {
+    const snap = await tx.get(connectionRef(connId));
+    if (snap.get("syncLeaseUntil") === lease) tx.update(connectionRef(connId), { syncLeaseUntil: FieldValue.delete() });
+  });
 }
 
 /** Write sync cursors — only while the inbox is still on the grant this
@@ -158,12 +174,39 @@ export async function syncInbox(
   opts: { budget?: number; ingestDocs?: number; now?: number } = {},
 ): Promise<SyncResult> {
   const now = opts.now ?? Date.now();
-  await acquireLease(connId, now);
+  const lease = await acquireLease(connId, now);
   try {
     return await withAccess(connId, (access, adapter, conn) => runSync(connId, conn, access, adapter, limits, opts.budget ?? TICK_BUDGET, opts.ingestDocs ?? INGEST_PER_TICK, now));
   } finally {
-    await connectionRef(connId).update({ syncLeaseUntil: FieldValue.delete() }).catch(() => undefined);
+    await releaseLease(connId, lease).catch(() => undefined);
   }
+}
+
+/**
+ * The hourly scheduler's pass (index.ts emailSync): every active inbox
+ * that is due for its plan syncs, sequentially, until the time budget
+ * runs out — the rest are due next hour. One inbox failing never stops
+ * the others.
+ */
+export async function syncDueInboxes(): Promise<{ synced: number; failed: number }> {
+  const started = Date.now();
+  let synced = 0;
+  let failed = 0;
+  for (const doc of (await db().collection("emailConnections").where("status", "==", "active").get()).docs) {
+    if (Date.now() - started > SCHEDULER_BUDGET_MS) break;
+    const conn = doc.data() as ConnectionDoc;
+    if (!conn.rid) continue;
+    try {
+      const { limits } = await getPlanInfo(conn.rid);
+      if (!syncDue(conn, limits)) continue;
+      await syncInbox(doc.id, limits);
+      synced += 1;
+    } catch (err) {
+      failed += 1;
+      logger.warn("Email sync failed", { connId: doc.id, err });
+    }
+  }
+  return { synced, failed };
 }
 
 async function runSync(
@@ -244,8 +287,9 @@ async function runSync(
   }
   result.backfillDone = sync.backfillDone;
 
-  // 3. Stage 1 over this inbox's waiting candidates.
-  const stage1 = await classifyCandidates(rid, connId, access, adapter, limits);
+  // 3. Stage 1 over this inbox's waiting candidates — stricter for an
+  // inbox whose documents reviewers mostly throw away (stats.ts).
+  const stage1 = await classifyCandidates(rid, connId, access, adapter, limits, acceptThreshold(conn));
   result.classified = stage1.classified;
   result.accepted = stage1.accepted;
   result.waiting = stage1.waiting;
@@ -331,7 +375,9 @@ const stripUndefined = <T extends object>(o: T): T =>
  * Stage 1 over an inbox's waiting candidates, newest first, as many as
  * today's per-plan cap still allows. Body candidates get a short preview
  * of their text fetched now (attachment candidates are judged on
- * metadata alone). Returns what it did and how many still wait.
+ * metadata alone). A message the model did not judge (a failed batch, a
+ * deleted message) gives its slot of the daily cap back. Returns what it
+ * did and how many still wait.
  */
 async function classifyCandidates(
   rid: string,
@@ -339,6 +385,7 @@ async function classifyCandidates(
   access: MailAccess,
   adapter: MailAdapter,
   limits: PlanLimits,
+  threshold: number,
 ): Promise<{ classified: number; accepted: number; waiting: number }> {
   const waiting = await ingests(rid)
     .where("connectionId", "==", connId)
@@ -396,7 +443,7 @@ async function classifyCandidates(
       }
       const v = verdicts.get(d.id);
       if (v) {
-        const yes = accepted(v);
+        const yes = accepted(v, threshold);
         classified += 1;
         settled += 1;
         if (yes) acceptedCount += 1;
@@ -414,6 +461,7 @@ async function classifyCandidates(
       }
     }
     await write.commit();
+    await returnDaily(rid, "emailClassify", batch.filter((d) => !verdicts.has(d.id)).length);
   }
   return { classified, accepted: acceptedCount, waiting: waiting.size - settled };
 }

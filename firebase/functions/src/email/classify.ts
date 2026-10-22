@@ -138,4 +138,5 @@ export async function classifyMessages(items: ClassifyInput[]): Promise<Map<stri
   return out;
 }
 
-export const accepted = (v: Verdict): boolean => v.isInvoice && v.confidence >= ACCEPT_CONFIDENCE;
+/** Ingest at or above `threshold` — stricter for a noisy inbox (stats.ts). */
+export const accepted = (v: Verdict, threshold = ACCEPT_CONFIDENCE): boolean => v.isInvoice && v.confidence >= threshold;

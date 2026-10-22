@@ -29,6 +29,7 @@ const es = {
   freeCap: 'Plan Free: un correo, revisado una vez al día. Las facturas del correo cuentan para tus 25 documentos al mes.',
   limit: 'Tu plan permite un correo conectado. | Tu plan permite {n} correos conectados.',
   unavailable: 'La importación por correo aún no está disponible en este entorno.',
+  testing: 'Beta: mientras Google revisa Teremu, el permiso caduca cada pocos días y habrá que volver a conectar el correo.',
   error: {
     email_inbox_limit: 'Ya tienes conectados todos los correos que permite tu plan.',
     email_reauth: 'Google pidió volver a conectar.',
@@ -80,6 +81,7 @@ const en: typeof es = {
   freeCap: 'Free plan: one inbox, checked once a day. Emailed invoices count toward your 25 documents a month.',
   limit: 'Your plan allows one connected inbox. | Your plan allows {n} connected inboxes.',
   unavailable: 'Email import is not available in this environment yet.',
+  testing: 'Beta: while Google reviews Teremu, the permission expires every few days and the inbox will need reconnecting.',
   error: {
     email_inbox_limit: 'You already have as many inboxes connected as your plan allows.',
     email_reauth: 'Google asked to reconnect.',

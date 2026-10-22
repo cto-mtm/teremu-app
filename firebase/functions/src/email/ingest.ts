@@ -1,14 +1,15 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
-import { emailQuotaEmail, mailKeyHash, sendMail } from "../mail.js";
-import { DEFAULT_LOCALE, localeSchema, type ExtractionPath, type InvoiceDoc } from "../models.js";
+import { emailQuotaEmail, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
+import type { ExtractionPath, InvoiceDoc } from "../models.js";
 import { processInvoiceImage, processInvoiceText } from "../pipeline.js";
 import { consumeScan, monthKey, releaseScan } from "../plan.js";
 import { bodyText } from "./body.js";
 import { inspectPdf, normalizeImage, rasterizePdf, UnreadableDocumentError } from "./pdf.js";
 import { connectionRef, db, ingests, type ConnectionDoc } from "./store.js";
 import type { IngestDoc } from "./sync.js";
+import { recordOutcome } from "./stats.js";
 import { MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js";
 
 /**
@@ -211,6 +212,9 @@ async function createInvoice(
   await ref.set(doc);
   if (prepared.extraction === "vision") await processInvoiceImage(rid, ref.id, paths);
   else await processInvoiceText(rid, ref.id, textPath!);
+  // Extraction said "not a document" and discarded it: a classifier
+  // misfire, which counts against this inbox's junk rate.
+  if ((await ref.get()).get("status") === "discarded") await recordOutcome(doc, "discarded");
   return ref.id;
 }
 
@@ -232,20 +236,14 @@ async function pauseForQuota(rid: string, connId: string, limit: number): Promis
   });
   if (!first) return;
   try {
-    const rest = await restRef.get();
-    const ownerUid = rest.get("ownerUid") as string | undefined;
-    if (!ownerUid) return;
-    const [member, user, waiting] = await Promise.all([
-      db().doc(`restaurants/${rid}/members/${ownerUid}`).get(),
-      db().doc(`users/${ownerUid}`).get(),
+    const [owner, waiting] = await Promise.all([
+      ownerRecipient(rid),
       ingests(rid).where("verdict", "in", ["accepted", "deferred_quota"]).count().get(),
     ]);
-    const to = member.get("email") as string | undefined;
-    if (!to) return;
-    const locale = localeSchema.catch(DEFAULT_LOCALE).parse(user.get("locale"));
+    if (!owner) return;
     await sendMail({
-      to,
-      ...emailQuotaEmail({ locale, waiting: waiting.data().count, limit }),
+      to: owner.to,
+      ...emailQuotaEmail({ locale: owner.locale, waiting: waiting.data().count, limit }),
       kind: "email-quota",
       // One per restaurant per month (the flag above); the key makes a retry free.
       idempotencyKey: `email-quota-${mailKeyHash(rid, period)}`,

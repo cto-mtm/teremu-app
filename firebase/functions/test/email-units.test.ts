@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { bodyText } from "../src/email/body";
 import { htmlToText } from "../src/helpers/html";
 import { candidateAttachments, mockVerdict, senderAddress, stage0 } from "../src/email/classify";
 import { FAKE_PDFS } from "../src/email/fake";
 import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } from "../src/email/pdf";
 import type { MailMessageMeta } from "../src/email/types";
+import { fetchRetrying } from "../src/email/gmail";
+import { acceptThreshold } from "../src/email/stats";
 
 // Email ingestion building blocks that need no emulator: PDF reading,
 // body text, the stage-0 gates and the offline classifier.
@@ -110,6 +112,57 @@ describe("stage 0", () => {
   it("extracts the sender address", () => {
     expect(senderAddress("Huerta La Vega <Pedidos@LaVega.test>")).toBe("pedidos@lavega.test");
     expect(senderAddress("plain@x.test")).toBe("plain@x.test");
+  });
+});
+
+describe("Gmail backoff (fetchRetrying)", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  const respond = (statuses: number[], headers: Record<string, string> = {}) => {
+    const calls: number[] = [];
+    globalThis.fetch = (async () => {
+      const status = statuses[Math.min(calls.length, statuses.length - 1)];
+      calls.push(status);
+      return new Response("{}", { status, headers });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  it("retries 429 and 5xx with backoff, then returns the success", async () => {
+    const calls = respond([429, 503, 200]);
+    const waits: number[] = [];
+    const res = await fetchRetrying("https://gmail.example/x", {}, async (ms) => void waits.push(ms));
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([429, 503, 200]);
+    expect(waits).toEqual([1000, 2000]);
+  });
+
+  it("honours Retry-After (capped) and gives up after three attempts", async () => {
+    const calls = respond([429], { "retry-after": "30" });
+    const waits: number[] = [];
+    const res = await fetchRetrying("https://gmail.example/x", {}, async (ms) => void waits.push(ms));
+    expect(res.status).toBe(429);
+    expect(calls).toHaveLength(3);
+    expect(waits).toEqual([10_000, 10_000]);
+  });
+
+  it("does not retry what retrying cannot fix", async () => {
+    const calls = respond([404]);
+    expect((await fetchRetrying("https://gmail.example/x", {}, async () => undefined)).status).toBe(404);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("junk-rate threshold", () => {
+  const month = new Date().toISOString().slice(0, 7);
+  it("raises an inbox's bar once reviewers discard most of what it brings", () => {
+    expect(acceptThreshold({})).toBe(0.6);
+    expect(acceptThreshold({ stats: { [month]: { approved: 1, discarded: 8 } } })).toBe(0.6); // too few decisions yet
+    expect(acceptThreshold({ stats: { [month]: { approved: 3, discarded: 8 } } })).toBe(0.8);
+    expect(acceptThreshold({ stats: { [month]: { approved: 8, discarded: 4 } } })).toBe(0.6);
+    expect(acceptThreshold({ stats: { "2020-01": { approved: 0, discarded: 50 } } })).toBe(0.6); // outside the window
   });
 });
 

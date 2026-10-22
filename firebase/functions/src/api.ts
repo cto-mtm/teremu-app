@@ -110,6 +110,7 @@ import {
 } from "./email/oauth.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
 import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox } from "./email/sync.js";
+import { recordOutcome } from "./email/stats.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -520,8 +521,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
           // Base comes from the restaurant doc (planInfo), never the body.
           { base: planInfo.currency, currency: body.currency, fx: body.fx, uid: member.uid },
         );
-        // An approved emailed document vouches for its sender (email stage 0).
-        await rememberApprovedSender(rid, updated);
+        // An approved emailed document vouches for its sender (email stage 0)
+        // and counts toward its inbox's junk rate (email/stats.ts).
+        await Promise.all([rememberApprovedSender(rid, updated), recordOutcome(updated, "approved")]);
         return json(res, 200, serializeInvoice(id, updated));
       }
       if (m === "PUT" && action === "expense") {
@@ -565,7 +567,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           error: null,
           approvedAt: Date.now(),
         });
-        await rememberApprovedSender(rid, inv);
+        await Promise.all([rememberApprovedSender(rid, inv), recordOutcome(inv, "approved")]);
         return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "PUT" && action === "reconcile") {
@@ -596,7 +598,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           await ref.update({ status: "discarded" });
           // Nobody chose to scan an emailed document: dismissing a misfire
           // gives its scan back (same month only — plan.ts refundScan).
-          if (inv.source === "email") await refundScan(rid, id);
+          if (inv.source === "email") await Promise.all([refundScan(rid, id), recordOutcome(inv, "discarded")]);
         } else {
           if (inv.status !== "discarded")
             return json(res, 400, { error: "invoice is not discarded" });
@@ -606,6 +608,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
             if (!quota.ok) return paywall("scan_limit");
             await ref.update({ scanRefunded: false, scanPeriod: monthKey() });
           }
+          await recordOutcome(inv, "restored");
           // Back to where it was: OCR either failed or produced a draft.
           await ref.update({ status: inv.error ? "failed" : "needs_review" });
         }
