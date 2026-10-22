@@ -12,6 +12,7 @@ import LocationSwitcher from './LocationSwitcher.vue'
 import MobileLauncher from './MobileLauncher.vue'
 import NavIcon from './NavIcon.vue'
 import OnboardingWizard from './OnboardingWizard.vue'
+import PwaBanners from './PwaBanners.vue'
 import logoColor from '../assets/logo-color.svg'
 
 const { t } = useI18n()
@@ -308,5 +309,11 @@ watch(
     </template>
 
     <OnboardingWizard v-if="authStore.user" v-model="onboardingOpen" />
+
+    <!-- Offline notice (always) + "install the app" card (signed in, on a
+         normal page, not over another overlay). -->
+    <PwaBanners
+      :installable="!!authStore.profile && !bare && !focused && !onboardingOpen && !launcherOpen && !assistantOpen"
+    />
   </div>
 </template>

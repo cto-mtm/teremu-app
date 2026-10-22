@@ -34,6 +34,7 @@
     "emulators": "npm run build:shared && npm --prefix firebase run emulators",
     "emulators:watch": "npm run build:shared && npm --prefix firebase run emulators:watch",
     "emulators:all": "npm run build:shared && npm --prefix firebase run emulators:all",
+    "brand:assets": "node scripts/brand-assets.mjs",
     "deploy": "node scripts/deploy.mjs",
     "deploy:hosting": "node scripts/deploy.mjs --only hosting",
     "deploy:functions": "node scripts/deploy.mjs --only functions",

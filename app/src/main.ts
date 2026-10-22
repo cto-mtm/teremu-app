@@ -5,6 +5,7 @@ import router from './router'
 import { i18n } from './i18n'
 import { registerNative } from './lib/native'
 import { registerShareTarget } from './lib/shareTarget'
+import { registerPwa } from './lib/pwa'
 import { assistant } from '@mtmcya/assistant/vue'
 import MenuItemProposalCard from './components/MenuItemProposalCard.vue'
 import { API_BASE_URL } from './lib/api'
@@ -44,3 +45,5 @@ app.mount('#app')
 registerNative(router)
 // Photos / PDFs shared into Teremu from other apps → the scanner. No-op in the browser.
 registerShareTarget(router)
+// Install offer + offline notice (src/lib/pwa.ts). Install bits no-op natively.
+registerPwa()
