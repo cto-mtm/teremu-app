@@ -296,8 +296,8 @@ const MAX_TEXT_CHARS = 24_000;
  */
 export async function extractInvoiceFromText(text: string, context: ExtractionContext = {}): Promise<OcrResult> {
   const clipped = text.slice(0, MAX_TEXT_CHARS);
-  if (!llmEnabled()) {
-    logger.warn("LLM API key not set — returning mock text extraction");
+  if (!llmEnabled("vertex")) {
+    logger.warn("Vertex not configured — returning mock text extraction");
     if (!AMOUNT.test(clipped)) {
       return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0.9, printedFxRate: null, notDocument: true };
     }
@@ -309,6 +309,9 @@ export async function extractInvoiceFromText(text: string, context: ExtractionCo
       maxTokens: clipped.length > 6_000 ? 4096 : 2560,
       temperature: 0.1,
       label: "ocr-text",
+      // Text is only ever emailed data (a PDF text layer, a mail body):
+      // Gemini on Vertex. Page images stay on the default provider.
+      backend: "vertex",
       json: { name: "invoice_extraction", schema: ocrResponseSchema },
     },
   );

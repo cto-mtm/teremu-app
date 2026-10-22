@@ -1,6 +1,6 @@
 # LLM provider
 
-Every AI call in the API (invoice OCR, menu scan, recipe drafts) goes through **one client**: `firebase/functions/src/llm.ts` — with one deliberate exception, the **assistant**, which is the shared MTM package (see § Assistant at the end). It speaks the OpenAI `chat/completions` dialect, which every provider we care about exposes, so **the provider is config, not code**.
+Every AI call in the API (invoice OCR, the email classifier, menu scan, recipe drafts) goes through **one client**: `firebase/functions/src/llm.ts` — with one deliberate exception, the **assistant**, which is the shared MTM package (see § Assistant at the end). It speaks the OpenAI `chat/completions` dialect, which every provider we care about exposes, so **the provider is config, not code**.
 
 ## Configuration
 
@@ -19,6 +19,19 @@ LLM_PROVIDER=gemini
 ```
 
 plus putting a Gemini API key where the key lives (`firebase functions:secrets:set NVIDIA_API_KEY` in prod, `.secret.local` locally). Gemini's OpenAI-compatibility layer (`https://generativelanguage.googleapis.com/v1beta/openai/`) accepts the same bearer-token auth, `max_tokens`/`temperature` params, and base64 `data:` URLs in `image_url` parts that our payloads already use.
+
+### Two backends: page images on the provider, email text on Vertex (2026-10-22)
+
+`chatCompletion(…, { backend })` picks where a call goes (`LlmBackend` in `llm.ts`):
+
+| Backend | Used by | How it authenticates |
+| --- | --- | --- |
+| `default` | everything with page images (invoice OCR of scans **and** of emailed PDFs/photos — the `vision` path), menu scan, recipe drafts | the configured provider above (`NVIDIA_API_KEY`) |
+| `vertex` | the **text** calls on email data: the stage-1 classifier (`email-classify`) and text extraction (`ocr-text` — a PDF's text layer or an email body) | Gemini on Vertex AI in `GOOGLE_VERTEX_PROJECT` / `GOOGLE_VERTEX_LOCATION` (the assistant's settings), as the function's own service account — no key. Model `google/gemini-3.5-flash-lite` (`VERTEX_LLM_MODEL` overrides) |
+
+The endpoint is Vertex's OpenAI-compatible one (`https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/chat/completions`, a regional host for other locations — Google's "OpenAI compatibility" docs, checked 2026-10-22), so the same request body, structured output and retries apply. Text calls **never fall back** to the default provider: without Vertex they use their offline mock (emulator, tests), and a deployment without `GOOGLE_VERTEX_PROJECT` keeps email import switched off (`emailAvailable`). Cassettes work the same for both.
+
+**Limited Use caveat (Gmail).** The page images of an *emailed* PDF or photo are Gmail data too, and they go to the default provider. Before Google verifies `gmail.readonly`, that provider must not use the data for training (NVIDIA's free endpoint gives no such guarantee — a paid/enterprise plan, or moving the `vision` path for emailed documents to Vertex, closes it), or the scope justification must say what it does. See docs/email-ingestion.md.
 
 ## Current providers
 

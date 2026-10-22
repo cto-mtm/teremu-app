@@ -7,6 +7,7 @@ import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } fro
 import type { MailMessageMeta } from "../src/email/types";
 import { fetchRetrying } from "../src/email/gmail";
 import { acceptThreshold } from "../src/email/stats";
+import { llmEnabled, vertexConfigured } from "../src/llm";
 
 // Email ingestion building blocks that need no emulator: PDF reading,
 // body text, the stage-0 gates and the offline classifier.
@@ -152,6 +153,30 @@ describe("Gmail backoff (fetchRetrying)", () => {
     const calls = respond([404]);
     expect((await fetchRetrying("https://gmail.example/x", {}, async () => undefined)).status).toBe(404);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("LLM routing: email text on Vertex, page images on the default provider", () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  it("text calls need Vertex; the default provider's key does not count for them", () => {
+    delete process.env.TEREMU_TEST_MOCKS;
+    delete process.env.GOOGLE_VERTEX_PROJECT;
+    process.env.LLM_API_KEY = "nvidia-key";
+    expect(llmEnabled()).toBe(true); // images: the configured provider
+    expect(llmEnabled("vertex")).toBe(false); // text: never falls back to it
+    process.env.GOOGLE_VERTEX_PROJECT = "teremu-app";
+    expect(vertexConfigured()).toBe(true);
+    expect(llmEnabled("vertex")).toBe(true);
+  });
+
+  it("the hermetic test flag turns Vertex off like every other live backend", () => {
+    process.env.TEREMU_TEST_MOCKS = "1";
+    process.env.GOOGLE_VERTEX_PROJECT = "teremu-app";
+    expect(llmEnabled("vertex")).toBe(false);
   });
 });
 

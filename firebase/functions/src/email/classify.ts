@@ -118,7 +118,7 @@ export function mockVerdict(m: ClassifyInput): Verdict {
 export async function classifyMessages(items: ClassifyInput[]): Promise<Map<string, Verdict>> {
   const out = new Map<string, Verdict>();
   if (!items.length) return out;
-  if (!llmEnabled()) {
+  if (!llmEnabled("vertex")) {
     for (const m of items) out.set(m.id, mockVerdict(m));
     return out;
   }
@@ -126,6 +126,7 @@ export async function classifyMessages(items: ClassifyInput[]): Promise<Map<stri
     maxTokens: 1024,
     temperature: 0,
     label: "email-classify",
+    backend: "vertex", // email text stays in Google Cloud (llm.ts LlmBackend)
     json: { name: "email_classification", schema: replySchema },
   });
   const parsed = replySchema.safeParse(parseModelJson(raw));

@@ -1,6 +1,7 @@
 import { defineSecret } from "firebase-functions/params";
 import { functionUrl } from "../helpers/functionUrl.js";
 import { makeSealer } from "../helpers/sealer.js";
+import { vertexConfigured } from "../llm.js";
 import type { MailProvider } from "../models.js";
 import { fakeMailAdapter } from "./fake.js";
 import { gmail } from "./gmail.js";
@@ -46,8 +47,12 @@ export function adapterFor(provider: MailProvider): MailAdapter | null {
   return offline() ? fakeMailAdapter : null;
 }
 
-/** Whether connecting an inbox can work in this deployment. */
-export const emailAvailable = (provider: MailProvider): boolean => adapterFor(provider) !== null && sealer.configured();
+/** Whether connecting an inbox can work in this deployment: the provider,
+ * the token key — and, deployed, Vertex, which reads every email TEXT
+ * (llm.ts LlmBackend). Without it the import stays off rather than run
+ * Gmail data through the offline mock or another provider. */
+export const emailAvailable = (provider: MailProvider): boolean =>
+  adapterFor(provider) !== null && sealer.configured() && (offline() || vertexConfigured());
 
 /** Whether the provider's OAuth app is still unverified (types.ts `testing`). */
 export const providerInTesting = (provider: MailProvider): boolean => PROVIDERS[provider].testing();

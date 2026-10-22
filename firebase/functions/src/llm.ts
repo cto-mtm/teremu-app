@@ -13,10 +13,15 @@
  * The bearer token lives in the NVIDIA_API_KEY secret (historical
  * name — it holds whichever provider's key). LLM_API_KEY also works
  * and wins when both are set.
+ *
+ * One call kind goes elsewhere on purpose: the TEXT calls on email data
+ * use `backend: "vertex"` (Gemini on Vertex, no key — see LlmBackend and
+ * docs/llm.md §Two backends).
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { GoogleAuth } from "google-auth-library";
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
 
@@ -57,10 +62,50 @@ export function llmModel(): string {
   return process.env.LLM_MODEL || process.env.NVIDIA_MODEL || provider().model;
 }
 
-/** Real answers are available — a live key, or recorded replies being
- * replayed. Callers branch on this (not llmApiKey) to pick their mock. */
-export function llmEnabled(): boolean {
-  return cassetteMode() === "replay" || llmApiKey() !== undefined;
+/**
+ * Which backend a call goes to. `default` is the configured provider
+ * above (NVIDIA today — invoice OCR on page images). `vertex` is Gemini on
+ * Vertex AI in this project, authenticated as the function's own service
+ * account (no key; the assistant uses the same project and model): the
+ * TEXT calls on email data (classifier, text-layer / body extraction —
+ * docs/email-ingestion.md), so Gmail text stays inside Google Cloud.
+ */
+export type LlmBackend = "default" | "vertex";
+
+/** Vertex is usable: a project is configured (GOOGLE_VERTEX_PROJECT, the
+ * assistant's setting) and the hermetic test flag is off. */
+export function vertexConfigured(): boolean {
+  return !process.env.TEREMU_TEST_MOCKS && Boolean(process.env.GOOGLE_VERTEX_PROJECT);
+}
+
+/** Real answers are available for that backend — live credentials, or
+ * recorded replies being replayed. Callers branch on this (not
+ * llmApiKey) to pick their mock. */
+export function llmEnabled(backend: LlmBackend = "default"): boolean {
+  if (cassetteMode() === "replay") return true;
+  return backend === "vertex" ? vertexConfigured() : llmApiKey() !== undefined;
+}
+
+/** Vertex's OpenAI-compatible chat endpoint (Google's "OpenAI
+ * compatibility" docs): `aiplatform.googleapis.com` for `global`, the
+ * regional host otherwise; model ids carry a `google/` prefix. */
+function vertexTarget(): { url: string; model: string } {
+  const project = process.env.GOOGLE_VERTEX_PROJECT;
+  const location = process.env.GOOGLE_VERTEX_LOCATION || "global";
+  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  return {
+    url: `https://${host}/v1/projects/${project}/locations/${location}/endpoints/openapi/chat/completions`,
+    model: process.env.VERTEX_LLM_MODEL || "google/gemini-3.5-flash-lite",
+  };
+}
+
+const vertexAuth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+
+/** A short-lived access token for the function's service account. */
+async function vertexToken(): Promise<string> {
+  const token = await vertexAuth.getAccessToken();
+  if (!token) throw new Error("no Vertex access token (Application Default Credentials)");
+  return token;
 }
 
 // ── Cassettes (record / replay) ─────────────────────────────────────
@@ -144,6 +189,8 @@ export interface ChatOptions {
    * model is derived from it, so there is no second source of truth.
    */
   json?: { name: string; schema: z.ZodType };
+  /** Where the call goes (see LlmBackend). Default: the configured provider. */
+  backend?: LlmBackend;
 }
 
 /** Returns the assistant message text; throws on HTTP or missing-key errors. */
@@ -162,13 +209,17 @@ export async function chatCompletion(
   // A replay miss is a hard failure, never a fallback: silently answering
   // with the random mock is exactly the nondeterminism replay removes.
   if (mode === "replay") throw new Error(`llm cassette miss: ${key}`);
-  const apiKey = llmApiKey();
-  if (!apiKey) throw new Error("no LLM API key"); // callers mock before reaching here
+  const vertex = opts.backend === "vertex";
+  if (vertex ? !vertexConfigured() : !llmApiKey()) {
+    throw new Error(vertex ? "Vertex not configured" : "no LLM API key"); // callers mock before reaching here
+  }
+  const target = vertex ? vertexTarget() : { url: process.env.LLM_URL || provider().url, model: llmModel() };
+  const credential = vertex ? await vertexToken() : llmApiKey()!;
   const record = (outcome: { content: string } | { error: string }) => {
     if (mode !== "record" || !file || !key) return;
     const cassette: Cassette = {
       key,
-      model: llmModel(),
+      model: target.model,
       recordedAt: new Date().toISOString(),
       content: "",
       ...outcome,
@@ -178,7 +229,7 @@ export async function chatCompletion(
   };
   let content: string;
   try {
-    content = await callProvider(apiKey, messages, opts);
+    content = await callProvider(credential, target, messages, opts);
   } catch (err) {
     // A request the provider refuses FOR ITS CONTENT (400/422 — e.g. "at
     // most 1 image" on a multi-page scan) is the real outcome for this
@@ -194,9 +245,12 @@ export async function chatCompletion(
   return content;
 }
 
-async function callProvider(apiKey: string, messages: ChatMessage[], opts: ChatOptions): Promise<string> {
-  const model = llmModel();
-  const url = process.env.LLM_URL || provider().url;
+async function callProvider(
+  apiKey: string,
+  { url, model }: { url: string; model: string },
+  messages: ChatMessage[],
+  opts: ChatOptions,
+): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     max_tokens: opts.maxTokens,
