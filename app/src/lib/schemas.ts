@@ -304,9 +304,9 @@ export const emailSyncResultSchema = z.object({
   listed: z.number(),
   accepted: z.number(),
   backfillDone: z.boolean(),
-})
   // Invoices this round created — the card tells the invoices store.
   ingested: z.number().catch(0),
+})
 
 /** POST /email/oauth — outcome of finishing a connect flow. */
 export const emailOAuthResultSchema = z.object({
