@@ -3,7 +3,7 @@ import { logger } from "firebase-functions/v2";
 import { appReturnBase } from "../helpers/cors.js";
 import { MAIL_PROVIDERS, memberDocSchema, type MailProvider } from "../models.js";
 import { RequestError } from "../pipeline.js";
-import { PLAN_LIMITS, planOf, type Plan } from "../plan.js";
+import { monthKey, PLAN_LIMITS, planOf, type Plan } from "../plan.js";
 import { can } from "../tenancy.js";
 import { adapterFor, emailAvailable, oauthRedirectUrl } from "./index.js";
 import {
@@ -17,7 +17,7 @@ import {
   type ConnectionDoc,
   type ConnectionStatus,
 } from "./store.js";
-import { acceptedCount } from "./sync.js";
+import { inboxCounts } from "./sync.js";
 import type { MailGrant } from "./types.js";
 
 /**
@@ -249,8 +249,12 @@ export interface InboxView {
   connectedAt: number;
   lastSyncAt: number | null;
   backfillDone: boolean;
-  /** Messages the funnel accepted as documents (extraction is Phase 3). */
+  /** Messages taken as invoices: in Triage, on the way, or waiting. */
   found: number;
+  /** Of those, not in Triage yet (on the way, or held by the meter). */
+  waiting: number;
+  /** The meter refused this month: found invoices wait until it resets. */
+  paused: boolean;
 }
 
 export interface EmailStatusView {
@@ -275,7 +279,8 @@ export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusV
         connectedAt: conn.connectedAt,
         lastSyncAt: conn.lastSyncAt,
         backfillDone: conn.sync?.backfillDone ?? false,
-        found: await acceptedCount(rid, id),
+        ...(await inboxCounts(rid, id)),
+        paused: conn.quotaPausedPeriod === monthKey(),
       })),
   );
   return {

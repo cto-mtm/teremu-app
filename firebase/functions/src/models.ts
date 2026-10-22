@@ -121,8 +121,9 @@ export const invoiceDocSchema = z.object({
   source: invoiceSourceSchema.optional(),
   extraction: extractionPathSchema.optional(),
   // Provenance of an emailed document. Nobody "uploaded" it: this says
-  // which message (and inbox) it came from. bodyPath = the stored body
-  // text, for an invoice written in the email itself.
+  // which message (and inbox) it came from. textPath = the stored text
+  // the model read (text_layer and body paths) — Triage shows it for a
+  // body invoice, and a reprocess reads it again.
   email: z
     .object({
       messageId: z.string(),
@@ -131,9 +132,13 @@ export const invoiceDocSchema = z.object({
       subject: z.string(),
       receivedAt: z.number(),
       connectionId: z.string(),
-      bodyPath: z.string().optional(),
+      textPath: z.string().optional(),
     })
     .optional(),
+  // The month (YYYY-MM) whose scan quota this document spent, and whether
+  // it was given back. Emailed documents only: discarding one refunds it.
+  scanPeriod: z.string().optional(),
+  scanRefunded: z.boolean().optional(),
   // ── Money (docs/multi-currency.md — "it's timezones") ─────────────
   // `total` and the line amounts are the PRINTED figures, in `currency`,
   // never rewritten. Absent currency = the restaurant's base.

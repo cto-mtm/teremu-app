@@ -78,6 +78,8 @@ const clickable = computed(
         {{ title }}
       </div>
       <div class="text-xs text-smoke">
+        <!-- Source badge: it arrived by email, nobody scanned it -->
+        <span v-if="invoice.source === 'email'" class="mr-1 font-semibold text-ember-700">📧 {{ t('triage.fromEmail') }} ·</span>
         <template v-if="invoice.status === 'processing'">
           <span :class="stale ? 'text-coral-600' : ''">
             {{ stale ? t('triage.stuck') : t('triage.processingHint') }}

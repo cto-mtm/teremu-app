@@ -144,3 +144,46 @@ export async function consumeScan(
     return { ok: true, count: count + 1, limit };
   }, { maxAttempts: CONSUME_SCAN_ATTEMPTS });
 }
+
+/**
+ * Give back the scan an emailed document spent (docs/email-ingestion.md
+ * §Triage integration): a misfire costs the owner one tap, never quota.
+ * Only within the month it was charged — an old month's meter is closed.
+ * Idempotent through the invoice's `scanRefunded`. Returns whether the
+ * meter went down.
+ */
+export async function refundScan(rid: string, invoiceId: string): Promise<boolean> {
+  const db = getFirestore();
+  const restRef = db.collection("restaurants").doc(rid);
+  const invRef = restRef.collection("invoices").doc(invoiceId);
+  return db.runTransaction(async (tx) => {
+    const [inv, rest] = await Promise.all([tx.get(invRef), tx.get(restRef)]);
+    const charged = inv.get("scanPeriod") as string | undefined;
+    if (!inv.exists || !charged || inv.get("scanRefunded")) return false;
+    const back = giveBack(tx, restRef, rest, charged);
+    tx.update(invRef, { scanRefunded: true });
+    return back;
+  }, { maxAttempts: CONSUME_SCAN_ATTEMPTS });
+}
+
+/** Undo a consumeScan whose document never came to exist (its writes
+ * failed) — so the retry that follows doesn't charge it twice. */
+export async function releaseScan(rid: string): Promise<void> {
+  const db = getFirestore();
+  const restRef = db.collection("restaurants").doc(rid);
+  await db.runTransaction(async (tx) => {
+    giveBack(tx, restRef, await tx.get(restRef), monthKey());
+  }, { maxAttempts: CONSUME_SCAN_ATTEMPTS });
+}
+
+/** Decrement the meter for `period` — only while it is still the open one. */
+function giveBack(
+  tx: FirebaseFirestore.Transaction,
+  restRef: FirebaseFirestore.DocumentReference,
+  rest: FirebaseFirestore.DocumentSnapshot,
+  period: string,
+): boolean {
+  const count = rest.get("scanPeriod") === period ? ((rest.get("scanCount") as number) ?? 0) : 0;
+  if (count > 0) tx.set(restRef, { scanCount: count - 1 }, { merge: true });
+  return count > 0;
+}

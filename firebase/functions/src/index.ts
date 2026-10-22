@@ -131,7 +131,7 @@ export const emailOauthCallback = onRequest({ region: REGION }, async (req, res)
  * Phase 0 — until then there are no deployed inboxes to sync.
  */
 export const emailSync = onSchedule(
-  { schedule: "every 60 minutes", timeZone: "UTC", region: REGION, timeoutSeconds: 540, memory: "512MiB", secrets: [NVIDIA_API_KEY] },
+  { schedule: "every 60 minutes", timeZone: "UTC", region: REGION, timeoutSeconds: 540, memory: "1GiB", secrets: [NVIDIA_API_KEY] },
   async () => {
     const started = Date.now();
     let synced = 0;

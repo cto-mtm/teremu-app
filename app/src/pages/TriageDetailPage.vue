@@ -6,9 +6,9 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
-import { fetchBlobUrl } from '../lib/api'
+import { apiFetch, fetchBlobUrl } from '../lib/api'
 import { previewBase } from '../lib/money'
-import { CURRENCIES, DEFAULT_CURRENCY } from '../lib/schemas'
+import { CURRENCIES, DEFAULT_CURRENCY, invoiceTextSchema } from '../lib/schemas'
 import type { ApprovalMoney, Currency, FxDecision, LineItem, Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 
@@ -132,14 +132,29 @@ const imageLoading = ref(true)
 let imageSeq = 0
 const page = ref(1)
 const pageCount = computed(() => invoice.value?.imagePaths?.length ?? 1)
+// An invoice written in an email body has no image: Triage shows the
+// text the model read instead (GET /invoices/:id/text).
+const isBody = computed(() => invoice.value?.extraction === 'body')
+const bodyText = ref<string | null>(null)
+watch(
+  [invoiceId, isBody],
+  async ([idVal, body]) => {
+    bodyText.value = null
+    if (!body) return
+    const res = await apiFetch(`/invoices/${idVal}/text`, undefined, invoiceTextSchema)
+    if (res.ok && idVal === invoiceId.value) bodyText.value = res.data.text
+  },
+  { immediate: true },
+)
 watch(invoiceId, () => (page.value = 1))
 watch(
-  [invoiceId, page],
-  async ([idVal, pageVal]) => {
+  [invoiceId, page, isBody],
+  async ([idVal, pageVal, body]) => {
     const seq = ++imageSeq
     if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
     imageUrl.value = null
-    imageLoading.value = true
+    imageLoading.value = !body
+    if (body) return
     const url = await fetchBlobUrl(`/invoices/${idVal}/image${pageVal > 1 ? `?page=${pageVal}` : ''}`)
     // A slower response for a page/invoice we already left must not win.
     if (seq !== imageSeq) {
@@ -351,6 +366,11 @@ async function approve(): Promise<void> {
       </BaseButton>
     </div>
 
+    <!-- Provenance: an emailed document says where it came from -->
+    <p v-if="invoice.source === 'email' && invoice.email" class="truncate text-xs text-smoke">
+      📧 {{ t('triage.detail.emailLine', { from: invoice.email.from, subject: invoice.email.subject }) }}
+    </p>
+
     <!-- Validation-stage warnings: the math didn't cross-check.
          Amber, not red — the human decides, these just guide the eye. -->
     <div
@@ -370,8 +390,13 @@ async function approve(): Promise<void> {
         class="card max-h-[45vh] self-start overflow-auto p-2 md:sticky md:top-6 md:max-h-[85vh]"
         :style="{ viewTransitionName: 'invoice-' + invoice.id }"
       >
+        <div v-if="isBody" class="space-y-2 p-2">
+          <div class="text-xs font-semibold text-smoke">{{ t('triage.detail.bodyTitle') }}</div>
+          <pre v-if="bodyText !== null" class="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{{ bodyText }}</pre>
+          <div v-else class="text-xs text-smoke" role="status">{{ t('triage.detail.bodyLoading') }}</div>
+        </div>
         <img
-          v-if="imageUrl"
+          v-else-if="imageUrl"
           :src="imageUrl"
           :alt="t('triage.detail.receiptAlt')"
           class="w-full rounded-xl"

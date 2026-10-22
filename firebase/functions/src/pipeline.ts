@@ -1,7 +1,8 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
-import { extractInvoice, type OcrResult } from "./ocr.js";
+import { extractInvoice, extractInvoiceFromText, type ExtractionContext, type OcrResult } from "./ocr.js";
+import { refundScan } from "./plan.js";
 import { expandUsage } from "@teremu/shared";
 import { convertQty } from "./units.js";
 import { convertInvoice, hasPricedLines } from "./fx/convert.js";
@@ -120,49 +121,89 @@ export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
 }
 
 /**
+ * What an extraction is allowed to know about the restaurant: its
+ * ingredient catalog (so "TOMATE 25#" lands on "Roma Tomatoes" instead
+ * of spawning a near-duplicate), its own name (so the buyer printed in
+ * the "cliente / bill to" box is never mistaken for the vendor), its base
+ * currency (a prior) and its country pack — never more.
+ */
+async function extractionContext(rid: string): Promise<ExtractionContext> {
+  const [catalogSnap, restaurantSnap] = await Promise.all([
+    restCol(rid, "ingredients").limit(300).get(),
+    getFirestore().collection("restaurants").doc(rid).get(),
+  ]);
+  return {
+    knownIngredients: catalogSnap.docs.map((d) => (d.data() as IngredientDoc).name).filter(Boolean),
+    restaurantName: (restaurantSnap.get("name") as string | undefined) ?? null,
+    baseCurrency: currencySchema.catch(DEFAULT_CURRENCY).parse(restaurantSnap.get("currency")),
+    pack: packFor((restaurantSnap.get("country") as string | undefined) ?? null),
+  };
+}
+
+/**
  * Background OCR pipeline, in stages:
  *   1. classify — the model tags the image (receipt vs not a document)
  *   2. extract  — structured line items (zod-sanitized in ocr.ts)
  *   3. validate — deterministic arithmetic cross-checks (above)
  *   4. review   — a human approves in Triage; warnings guide their eye
- * Called by the Storage trigger and by POST /invoices/:id/reprocess.
+ * Called by the Storage trigger, POST /invoices/:id/reprocess and email
+ * ingestion (the `vision` path).
  */
 export async function processInvoiceImage(
   rid: string,
   invoiceId: string,
   imagePaths: string[]
 ): Promise<void> {
-  const ref = restCol(rid, "invoices").doc(invoiceId);
-  try {
+  await runExtraction(rid, invoiceId, async (context) => {
     // All pages of the document, in capture order — one extraction call.
     const buffers = await Promise.all(
       imagePaths.map(async (p) => (await getStorage().bucket().file(p).download())[0])
     );
-    // Feed the model the user's ingredient catalog so it maps line items
-    // onto existing products ("TOMATE 25#" → "Roma Tomatoes") instead of
-    // spawning near-duplicates — and the restaurant's own name, so the
-    // buyer printed in the "cliente / bill to" box is never mistaken
-    // for the vendor.
-    const [catalogSnap, restaurantSnap] = await Promise.all([
-      restCol(rid, "ingredients").limit(300).get(),
-      getFirestore().collection("restaurants").doc(rid).get(),
-    ]);
-    const catalog = catalogSnap.docs
-      .map((d) => (d.data() as IngredientDoc).name)
-      .filter(Boolean);
-    const restaurantName = (restaurantSnap.get("name") as string | undefined) ?? null;
-    // The extraction knows the restaurant's base currency (a prior) and
-    // its country pack (hints, aliases, local tax lines) — never more.
-    const baseCurrency = currencySchema.catch(DEFAULT_CURRENCY).parse(restaurantSnap.get("currency"));
-    const pack = packFor((restaurantSnap.get("country") as string | undefined) ?? null);
-    const result = await extractInvoice(buffers.map((b) => b.toString("base64")), {
-      knownIngredients: catalog,
-      restaurantName,
-      baseCurrency,
-      pack,
-    });
+    return extractInvoice(buffers.map((b) => b.toString("base64")), context);
+  });
+}
 
+/**
+ * The same pipeline over TEXT — a PDF's own text layer or an email body
+ * (docs/email-ingestion.md, the `text_layer` and `body` paths): exact
+ * characters instead of a picture of them. From the OcrResult on, it is
+ * the image pipeline.
+ */
+export async function processInvoiceText(rid: string, invoiceId: string, textPath: string): Promise<void> {
+  await runExtraction(rid, invoiceId, async (context) => {
+    const [buffer] = await getStorage().bucket().file(textPath).download();
+    return extractInvoiceFromText(buffer.toString("utf8"), context);
+  });
+}
+
+async function runExtraction(
+  rid: string,
+  invoiceId: string,
+  extract: (context: ExtractionContext) => Promise<OcrResult>,
+): Promise<void> {
+  const ref = restCol(rid, "invoices").doc(invoiceId);
+  try {
+    const result = await extract(await extractionContext(rid));
     const patch = invoicePatchFromOcr(result);
+    const inv = (await ref.get()).data() as InvoiceDoc | undefined;
+    // An emailed "document" the model says is no document means the
+    // classifier was wrong — the owner should not have to clean that up:
+    // it leaves Triage on its own, and its scan comes back.
+    if (inv?.source === "email" && patch.status === "failed" && patch.error === "not_a_document") {
+      await ref.update({ ...patch, status: "discarded" });
+      await refundScan(rid, invoiceId);
+      return;
+    }
+    if (patch.status === "needs_review" && inv) {
+      // Set at ingest, not by the model: an emailed PDF longer than the page cap.
+      if (inv.warnings.includes(PAGES_TRUNCATED)) patch.warnings.push(PAGES_TRUNCATED);
+      const twins = await possibleDuplicates(rid, invoiceId, patch);
+      if (twins.found) {
+        patch.warnings.push(POSSIBLE_DUPLICATE);
+        // Both directions: a twin still waiting for review is flagged too.
+        await Promise.all(twins.pending.map((t) => t.ref.update({ warnings: FieldValue.arrayUnion(POSSIBLE_DUPLICATE) })));
+      }
+    }
     await ref.update(patch);
     if (patch.status === "needs_review") {
       logger.info(
@@ -182,6 +223,40 @@ export async function processInvoiceImage(
       logger.warn(`invoice ${invoiceId} vanished before its failure could be recorded`);
     }
   }
+}
+
+const POSSIBLE_DUPLICATE = "possible_duplicate";
+const PAGES_TRUNCATED = "pages_truncated";
+
+/**
+ * The same invoice arriving twice — emailed AND photographed, or two
+ * inboxes — is invisible before OCR (different bytes). After it: same
+ * vendor, same date, total within 2%, not discarded. A warning for the
+ * reviewer's eye, never a block. `found`: the new document has a twin;
+ * `pending`: twins still waiting for review (they get flagged too — an
+ * approved one is past the point where a warning helps).
+ */
+async function possibleDuplicates(
+  rid: string,
+  invoiceId: string,
+  patch: Extract<ReturnType<typeof invoicePatchFromOcr>, { status: "needs_review" }>,
+): Promise<{ found: boolean; pending: FirebaseFirestore.QueryDocumentSnapshot[] }> {
+  if (!patch.vendorName || !patch.invoiceDate || !patch.total) return { found: false, pending: [] };
+  const vendorKey = normalizeName(patch.vendorName);
+  const total = patch.total;
+  const snap = await restCol(rid, "invoices").where("invoiceDate", "==", patch.invoiceDate).limit(50).get();
+  const twins = snap.docs.filter((d) => {
+    const other = d.data() as InvoiceDoc;
+    return (
+      d.id !== invoiceId &&
+      (other.status === "needs_review" || other.status === "approved") &&
+      !!other.vendorName &&
+      normalizeName(other.vendorName) === vendorKey &&
+      other.total !== null &&
+      Math.abs(other.total - total) <= Math.max(0.05, total * 0.02)
+    );
+  });
+  return { found: twins.length > 0, pending: twins.filter((d) => d.get("status") === "needs_review") };
 }
 
 /** The money side of an approval — see docs/multi-currency.md. */

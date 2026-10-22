@@ -34,7 +34,7 @@ export interface SendMailInput {
 }
 
 /** Small, stable set — the mailer's per-project stats are keyed on it. */
-export type MailKind = "staff-invite" | "supplier-order" | "claim-verify" | "claim-transferred";
+export type MailKind = "staff-invite" | "supplier-order" | "claim-verify" | "claim-transferred" | "email-quota";
 
 export type SendMailResult =
   | { ok: true; mailId: string; duplicate: boolean }
@@ -295,6 +295,30 @@ export function claimCodeEmail(args: { locale: Locale; code: string; placeName: 
   };
 }
 
+/**
+ * Email import hit the plan's document limit (docs/email-ingestion.md
+ * §Triage integration): invoices keep being found, and wait. One per
+ * restaurant per month. Fixed content plus two numbers — nothing from
+ * the mail it read.
+ */
+export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: number }): MailContent {
+  const c = COPY[args.locale].emailQuota;
+  const pricingUrl = `${APP_URL}/pricing`;
+  return {
+    subject: c.subject(args.waiting).slice(0, 200),
+    text: [c.body(args.limit), "", c.next, "", pricingUrl, "", c.footer].join("\n"),
+    html: layout(
+      args.locale,
+      `<p style="margin:0 0 12px">${c.body(args.limit)}</p>
+<p style="margin:0 0 20px">${c.next}</p>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
+<a href="${esc(pricingUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.cta}</a>
+</td></tr></table>`,
+      c.footer,
+    ),
+  };
+}
+
 /** To the previous holder of a listing someone else just verified. */
 export function claimTransferredEmail(args: { locale: Locale; placeName: string }): MailContent {
   const c = COPY[args.locale].claimTransferred;
@@ -350,6 +374,13 @@ const es = {
     data: "Tus datos no cambian: platos, facturas y todo lo demás siguen en tu cuenta. Si crees que es un error, responde a soporte desde la app.",
     footer: "Enviado con Teremu.",
   },
+  emailQuota: {
+    subject: (n: number) => (n === 1 ? "Tienes 1 factura esperando en tu correo" : `Tienes ${n} facturas esperando en tu correo`),
+    body: (limit: number) => `Este mes ya usaste los ${limit} documentos de tu plan. Teremu sigue encontrando facturas en tu correo y las guarda: no se pierde ninguna.`,
+    next: "Se importan solas el mes que viene, o en cuanto mejores tu plan.",
+    cta: "Ver planes",
+    footer: "Enviado con Teremu.",
+  },
 };
 
 const en: typeof es = {
@@ -383,6 +414,13 @@ const en: typeof es = {
     subject: (place) => `${place} was verified on another Teremu account`,
     body: (place) => `Whoever runs ${place} verified it from their own Teremu account, so your location is no longer linked to that Google listing.`,
     data: "Your data is unchanged: dishes, invoices and everything else stay in your account. If you think this is a mistake, contact support from the app.",
+    footer: "Sent with Teremu.",
+  },
+  emailQuota: {
+    subject: (n) => (n === 1 ? "You have 1 invoice waiting in your inbox" : `You have ${n} invoices waiting in your inbox`),
+    body: (limit) => `You have used your plan's ${limit} documents this month. Teremu keeps finding invoices in your inbox and holds on to them — none are lost.`,
+    next: "They come in on their own next month, or as soon as you upgrade.",
+    cta: "See plans",
     footer: "Sent with Teremu.",
   },
 };

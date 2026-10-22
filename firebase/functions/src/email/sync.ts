@@ -15,7 +15,9 @@ import {
   type CandidateKind,
   type ClassifyInput,
 } from "./classify.js";
-import { connectionRef, db, withAccess, type ConnectionDoc, type SyncState } from "./store.js";
+import type { InvoiceDoc } from "../models.js";
+import { ingestAccepted, INGEST_PER_TICK } from "./ingest.js";
+import { connectionRef, db, ingests, withAccess, type ConnectionDoc, type SyncState } from "./store.js";
 import { MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageMeta } from "./types.js";
 
 /**
@@ -31,7 +33,8 @@ import { MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageM
  *      stage-0 verdict; candidates then go through stage 1, within the
  *      plan's daily classifier cap.
  *
- * Accepted messages stop at verdict "accepted": extraction is Phase 3.
+ * Then accepted messages become invoices (ingest.ts), within the plan's
+ * scan meter.
  */
 
 const DAY_MS = 86_400_000;
@@ -59,7 +62,10 @@ export type IngestVerdict =
   | "duplicate" // same RFC-822 Message-ID as a message already taken
   | "candidate" // waiting for stage 1
   | "classified_no"
-  | "accepted" // waiting for extraction (Phase 3)
+  | "accepted" // waiting to become invoices (ingest.ts)
+  | "ingested" // its documents are in Triage (invoiceIds)
+  | "deferred_quota" // accepted, but the scan meter is spent: waits for next month or an upgrade
+  | "expired_quota" // waited past 31 days; let go
   | "gone" // deleted from the mailbox before we could read it
   | "failed";
 
@@ -78,32 +84,37 @@ export interface IngestDoc {
   reason?: "allowlist" | null;
   confidence?: number | null;
   classifyAttempts?: number;
+  /** Ingest progress: the parts (attachment ids, or "body") already turned
+   * into invoices, and those invoices — a message resumes where it stopped. */
+  done?: string[];
+  invoiceIds?: string[];
   epoch: number;
   createdAt: number;
   updatedAt: number;
 }
 
-const ingests = (rid: string) => db().collection(`restaurants/${rid}/emailIngests`);
 export const ingestRef = (rid: string, connId: string, messageId: string) => ingests(rid).doc(`${connId}_${messageId}`);
 
 /**
  * restaurants/{rid}/emailSenders/{address} — senders whose emailed
- * documents were approved, by kind. Read here for the stage-0 fast path;
- * written by approval once extraction exists (Phase 3).
+ * documents were approved, by kind: read for the stage-0 fast path,
+ * written on approval (rememberApprovedSender).
  */
 const senderRef = (rid: string, address: string) => db().doc(`restaurants/${rid}/emailSenders/${address.replace(/\//g, "_")}`);
 
-/** Whether an inbox is due a sync: an unfinished backfill always is;
- * after that, once per the plan's interval. */
+/** Whether an inbox is due a sync: an unfinished backfill, an ingest
+ * backlog or a quota pause always is (a pause lifts on the first tick
+ * after an upgrade or the month turning); otherwise once per the plan's
+ * interval. */
 export function syncDue(conn: ConnectionDoc, limits: PlanLimits, now = Date.now()): boolean {
   if (conn.status !== "active") return false;
-  if (!conn.sync?.backfillDone || conn.lastSyncAt === null) return true;
+  if (!conn.sync?.backfillDone || conn.lastSyncAt === null || conn.ingestPending || conn.quotaPausedPeriod) return true;
   return now - conn.lastSyncAt >= limits.emailSyncHours * 3_600_000;
 }
 
 /** When a "sync now" may run again (epoch ms; ≤ now = now). */
 export function nextSyncAt(conn: ConnectionDoc, limits: PlanLimits): number {
-  if (!conn.sync?.backfillDone || conn.lastSyncAt === null) return 0;
+  if (!conn.sync?.backfillDone || conn.lastSyncAt === null || conn.ingestPending || conn.quotaPausedPeriod) return 0;
   return conn.lastSyncAt + limits.emailSyncHours * 3_600_000;
 }
 
@@ -113,6 +124,8 @@ export interface SyncResult {
   waiting: number;
   classified: number;
   accepted: number;
+  /** Invoices created this run. */
+  ingested: number;
   backfillDone: boolean;
 }
 
@@ -129,7 +142,7 @@ async function acquireLease(connId: string, now: number): Promise<void> {
 
 /** Write sync cursors — only while the inbox is still on the grant this
  * sync started under (a reconnect or disconnect mid-tick wins). */
-async function saveSync(connId: string, epoch: number, patch: Partial<Pick<ConnectionDoc, "sync" | "lastSyncAt">>): Promise<boolean> {
+async function saveSync(connId: string, epoch: number, patch: Partial<Pick<ConnectionDoc, "sync" | "lastSyncAt" | "ingestPending">>): Promise<boolean> {
   return db().runTransaction(async (tx) => {
     const snap = await tx.get(connectionRef(connId));
     if (snap.get("epoch") !== epoch || snap.get("status") !== "active") return false;
@@ -142,12 +155,12 @@ async function saveSync(connId: string, epoch: number, patch: Partial<Pick<Conne
 export async function syncInbox(
   connId: string,
   limits: PlanLimits,
-  opts: { budget?: number; now?: number } = {},
+  opts: { budget?: number; ingestDocs?: number; now?: number } = {},
 ): Promise<SyncResult> {
   const now = opts.now ?? Date.now();
   await acquireLease(connId, now);
   try {
-    return await withAccess(connId, (access, adapter, conn) => runSync(connId, conn, access, adapter, limits, opts.budget ?? TICK_BUDGET, now));
+    return await withAccess(connId, (access, adapter, conn) => runSync(connId, conn, access, adapter, limits, opts.budget ?? TICK_BUDGET, opts.ingestDocs ?? INGEST_PER_TICK, now));
   } finally {
     await connectionRef(connId).update({ syncLeaseUntil: FieldValue.delete() }).catch(() => undefined);
   }
@@ -160,11 +173,12 @@ async function runSync(
   adapter: MailAdapter,
   limits: PlanLimits,
   budget: number,
+  ingestDocs: number,
   now: number,
 ): Promise<SyncResult> {
   const rid = conn.rid!;
   const epoch = conn.epoch;
-  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, backfillDone: false };
+  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, ingested: 0, backfillDone: false };
   let sync: SyncState = conn.sync ?? {
     backfillFrom: now - BACKFILL_DAYS * DAY_MS,
     backfillCursor: null,
@@ -236,7 +250,11 @@ async function runSync(
   result.accepted = stage1.accepted;
   result.waiting = stage1.waiting;
 
-  await saveSync(connId, epoch, { sync, lastSyncAt: now });
+  // 4. Accepted → invoices, within the scan meter.
+  const ingest = await ingestAccepted(rid, connId, conn, access, adapter, ingestDocs);
+  result.ingested = ingest.created;
+
+  await saveSync(connId, epoch, { sync, lastSyncAt: now, ingestPending: ingest.pending });
   return result;
 }
 
@@ -400,8 +418,28 @@ async function classifyCandidates(
   return { classified, accepted: acceptedCount, waiting: waiting.size - settled };
 }
 
-/** Accepted (found) documents per inbox, for the Settings card. */
-export async function acceptedCount(rid: string, connId: string): Promise<number> {
-  const snap = await ingests(rid).where("connectionId", "==", connId).where("verdict", "==", "accepted").count().get();
-  return snap.data().count;
+/** For the Settings card: messages taken as invoices (in Triage, on the
+ * way, or waiting for the meter), and how many are not in Triage yet. */
+export async function inboxCounts(rid: string, connId: string): Promise<{ found: number; waiting: number }> {
+  const byConn = ingests(rid).where("connectionId", "==", connId);
+  const [found, waiting] = await Promise.all([
+    byConn.where("verdict", "in", ["accepted", "ingested", "deferred_quota"]).count().get(),
+    byConn.where("verdict", "in", ["accepted", "deferred_quota"]).count().get(),
+  ]);
+  return { found: found.data().count, waiting: waiting.data().count };
+}
+
+/**
+ * An emailed document was approved: its sender joins the restaurant's
+ * allowlist for that kind of mail, so the next one skips stage 1
+ * (docs/email-ingestion.md, stage 0 fast path). Best effort.
+ */
+export async function rememberApprovedSender(rid: string, inv: Pick<InvoiceDoc, "source" | "extraction" | "email">): Promise<void> {
+  if (inv.source !== "email" || !inv.email?.from) return;
+  const kind: CandidateKind = inv.extraction === "body" ? "body" : "attachment";
+  try {
+    await senderRef(rid, senderAddress(inv.email.from)).set({ kinds: FieldValue.arrayUnion(kind), updatedAt: Date.now() }, { merge: true });
+  } catch (err) {
+    logger.warn("email sender allowlist write failed", { rid, err: String(err) });
+  }
 }

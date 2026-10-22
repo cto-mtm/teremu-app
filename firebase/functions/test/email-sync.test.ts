@@ -4,8 +4,9 @@ import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, uniqueI
 import { NO_PERMS } from "./pos-helpers";
 
 // Email ingestion Phase 2 (docs/email-ingestion.md §Sync engine, funnel
-// stages 0–1) on the fake inbox, whose 16 messages cover every branch.
+// stages 0–1) on the fake inbox, whose 17 messages cover every branch.
 // In the 31-day window, newest first:
+//   017 "your invoice is ready"   → body candidate → accepted (no amounts: auto-discarded at ingest)
 //   016 deleted before we read it → never listed; History names it (gone)
 //   015 deleted after stage 0     → body candidate → gone at stage 1
 //   014 butcher, forwarded copy  → candidate → accepted
@@ -22,6 +23,8 @@ import { NO_PERMS } from "./pos-helpers";
 //   003 butcher, original        → duplicate (same Message-ID as 014)
 //   002 digital invoice          → accepted
 // Outside it: 001 (40 days). The classifier runs on its offline heuristic (TEREMU_TEST_MOCKS).
+// Each sync also turns up to 3 accepted messages into invoices (ingest:
+// email-ingest.test.ts), so here "taken" = accepted + ingested + deferred.
 
 const db = () => getFirestore();
 const CONN = "gmail_fake-inbox";
@@ -44,11 +47,27 @@ async function connect(o: Owner, account?: string): Promise<void> {
 
 const syncNow = (o: Owner, conn = CONN) => api(`/email/inboxes/${conn}/sync`, { token: o.token, method: "POST" });
 
+const TAKEN = new Set(["accepted", "ingested", "deferred_quota"]);
+
+/** Verdict counts, with the ingest progress of taken messages folded. */
 async function verdicts(rid: string): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
-  for (const d of (await ingests(rid).get()).docs) out[d.get("verdict")] = (out[d.get("verdict")] ?? 0) + 1;
+  for (const d of (await ingests(rid).get()).docs) {
+    const v = TAKEN.has(d.get("verdict")) ? "taken" : (d.get("verdict") as string);
+    out[v] = (out[v] ?? 0) + 1;
+  }
   return out;
 }
+
+/** "Check now" until the ingest backlog is gone (3 documents a call). */
+async function drain(owner: Owner): Promise<void> {
+  for (let i = 0; i < 6 && (await inbox().get()).get("ingestPending") !== false; i += 1) {
+    expect((await syncNow(owner)).status).toBe(200);
+  }
+  expect((await inbox().get()).get("ingestPending")).toBe(false);
+}
+
+const ALL = { taken: 7, classified_no: 4, skipped_prefilter: 1, duplicate: 1, gone: 1 };
 
 /** Make the inbox due again without waiting a day. */
 const age = (hours: number) => inbox().update({ lastSyncAt: Date.now() - hours * 3_600_000 });
@@ -64,9 +83,9 @@ describe("email sync: backfill + funnel", () => {
     await connect(o);
     const res = await syncNow(o);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ listed: 13, waiting: 0, classified: 10, accepted: 6, backfillDone: true });
+    expect(res.body).toEqual({ listed: 14, waiting: 0, classified: 11, accepted: 7, ingested: 3, backfillDone: true });
 
-    expect(await verdicts(o.rid)).toEqual({ accepted: 6, classified_no: 4, skipped_prefilter: 1, duplicate: 1, gone: 1 });
+    expect(await verdicts(o.rid)).toEqual(ALL);
     expect((await ingest(o.rid, "001").get()).exists).toBe(false); // 40 days old
     expect((await ingest(o.rid, "006").get()).data()).toMatchObject({ kind: "body", verdict: "accepted" });
     expect((await ingest(o.rid, "005").get()).get("attachments")).toEqual([
@@ -79,12 +98,13 @@ describe("email sync: backfill + funnel", () => {
     expect(gone.snippet).toBeUndefined();
 
     const conn = (await inbox().get()).data()!;
-    expect(conn.sync).toMatchObject({ backfillDone: true, backfillCursor: null, historyId: "16" });
+    expect(conn.sync).toMatchObject({ backfillDone: true, backfillCursor: null, historyId: "17" });
     expect(conn.lastSyncAt).toEqual(expect.any(Number));
     expect(conn.syncLeaseUntil).toBeUndefined();
+    expect(conn.ingestPending).toBe(true); // 4 accepted messages left for the next calls
 
     const status = await get("/email", o.token);
-    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, found: 6 });
+    expect(status.body.inboxes[0]).toMatchObject({ backfillDone: true, found: 7, waiting: 4, paused: false });
   });
 
   it("keeps only what it needs: nothing of a skipped message, no preview of a rejected one", async () => {
@@ -108,9 +128,9 @@ describe("email sync: backfill + funnel", () => {
 });
 
 describe("email sync: incremental", () => {
-  it("throttles 'check now' to the plan's interval once the backfill is done", async () => {
+  it("throttles 'check now' to the plan's interval once the backfill and the ingest backlog are done", async () => {
     await connect(o);
-    await syncNow(o);
+    await drain(o);
     const again = await syncNow(o);
     expect(again.status).toBe(429);
     expect(again.body.error).toBe("email_sync_throttled");
@@ -124,13 +144,13 @@ describe("email sync: incremental", () => {
     await age(25);
     const res = await syncNow(o);
     expect(res.status).toBe(200);
-    expect(res.body.listed).toBe(8); // spam + 010–016; only the spam and 016 are new
+    expect(res.body.listed).toBe(9); // spam + 010–017; only the spam and 016 are new
     expect((await ingest(o.rid, "009").get()).get("verdict")).toBe("skipped_prefilter");
     const spam = (await ingests(o.rid).where("verdict", "==", "skipped_prefilter").get()).size;
     expect(spam).toBe(2); // the personal mail + the spam
     // 016 was deleted before we read it: recorded as gone, never asked for again
     expect((await ingest(o.rid, "016").get()).data()).toMatchObject({ verdict: "gone", kind: null });
-    expect((await inbox().get()).get("sync.historyId")).toBe("16");
+    expect((await inbox().get()).get("sync.historyId")).toBe("17");
   });
 
   it("re-lists from the newest message seen when History has expired — not 31 days back", async () => {
@@ -140,10 +160,10 @@ describe("email sync: incremental", () => {
     await age(25);
     const res = await syncNow(o);
     expect(res.status).toBe(200);
-    // newest message is 1 day old; the re-list overlaps one more day
-    expect(res.body.listed).toBeLessThanOrEqual(2);
-    expect((await inbox().get()).get("sync.historyId")).toBe("16");
-    expect(await verdicts(o.rid)).toEqual({ accepted: 6, classified_no: 4, skipped_prefilter: 1, duplicate: 1, gone: 1 });
+    // the newest message is ~2 hours old; the re-list overlaps one more day
+    expect(res.body.listed).toBeLessThanOrEqual(3);
+    expect((await inbox().get()).get("sync.historyId")).toBe("17");
+    expect(await verdicts(o.rid)).toEqual(ALL);
   });
 
   it("is idempotent: a second backfill over the same mail changes nothing", async () => {
@@ -153,7 +173,7 @@ describe("email sync: incremental", () => {
     const res = await syncNow(o);
     expect(res.status).toBe(200);
     expect(res.body.classified).toBe(0);
-    expect(await verdicts(o.rid)).toEqual({ accepted: 6, classified_no: 4, skipped_prefilter: 1, duplicate: 1, gone: 1 });
+    expect(await verdicts(o.rid)).toEqual(ALL);
   });
 });
 
@@ -163,11 +183,12 @@ describe("email sync: limits and failures", () => {
     await db().doc(`restaurants/${o.rid}/dailyUsage/${today}`).set({ emailClassify: 48 }); // Free cap is 50
     await connect(o);
     const res = await syncNow(o);
-    expect(res.body).toMatchObject({ classified: 1, accepted: 1, waiting: 9 });
-    // newest first: the two most recent candidates took the two slots (015 turned out deleted)
+    expect(res.body).toMatchObject({ classified: 1, accepted: 1, waiting: 10 });
+    // newest first: the two most recent candidates took the two slots
+    // (017 accepted — and ingested in the same call; 015 turned out deleted)
+    expect((await ingest(o.rid, "017").get()).get("verdict")).toBe("ingested");
     expect((await ingest(o.rid, "015").get()).get("verdict")).toBe("gone");
-    expect((await ingest(o.rid, "014").get()).get("verdict")).toBe("accepted");
-    expect((await ingest(o.rid, "013").get()).get("verdict")).toBe("candidate");
+    expect((await ingest(o.rid, "014").get()).get("verdict")).toBe("candidate");
     expect((await ingest(o.rid, "002").get()).get("verdict")).toBe("candidate");
   });
 

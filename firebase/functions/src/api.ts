@@ -58,7 +58,7 @@ import { toNodeHandler } from "@mtmcya/assistant/node";
 import { assistant, type AssistantPrincipal } from "./assistant/manifest.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
-import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, PLAN_LIMITS, planOf } from "./plan.js";
+import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, monthKey, PLAN_LIMITS, planOf, refundScan } from "./plan.js";
 import {
   billingConfigured,
   cancelSubscription,
@@ -71,6 +71,7 @@ import {
   approveInvoice,
   deleteRevenue,
   processInvoiceImage,
+  processInvoiceText,
   recordRevenue,
   RequestError,
   resolveFx,
@@ -108,7 +109,7 @@ import {
   startConnect as startEmailConnect,
 } from "./email/oauth.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
-import { nextSyncAt, syncDue, syncInbox } from "./email/sync.js";
+import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox } from "./email/sync.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
 // but holds whichever provider's key). In the emulator, put it in
@@ -519,6 +520,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
           // Base comes from the restaurant doc (planInfo), never the body.
           { base: planInfo.currency, currency: body.currency, fx: body.fx, uid: member.uid },
         );
+        // An approved emailed document vouches for its sender (email stage 0).
+        await rememberApprovedSender(rid, updated);
         return json(res, 200, serializeInvoice(id, updated));
       }
       if (m === "PUT" && action === "expense") {
@@ -562,6 +565,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           error: null,
           approvedAt: Date.now(),
         });
+        await rememberApprovedSender(rid, inv);
         return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "PUT" && action === "reconcile") {
@@ -590,9 +594,18 @@ async function route(req: Request, res: Response): Promise<unknown> {
           if (inv.status !== "needs_review" && inv.status !== "failed")
             return json(res, 400, { error: `cannot discard a ${inv.status} invoice` });
           await ref.update({ status: "discarded" });
+          // Nobody chose to scan an emailed document: dismissing a misfire
+          // gives its scan back (same month only — plan.ts refundScan).
+          if (inv.source === "email") await refundScan(rid, id);
         } else {
           if (inv.status !== "discarded")
             return json(res, 400, { error: "invoice is not discarded" });
+          // Taking a refunded document back spends its scan again.
+          if (inv.source === "email" && inv.scanRefunded) {
+            const quota = await consumeScan(rid);
+            if (!quota.ok) return paywall("scan_limit");
+            await ref.update({ scanRefunded: false, scanPeriod: monthKey() });
+          }
           // Back to where it was: OCR either failed or produced a draft.
           await ref.update({ status: inv.error ? "failed" : "needs_review" });
         }
@@ -616,8 +629,22 @@ async function route(req: Request, res: Response): Promise<unknown> {
           baseTotal: FieldValue.delete(),
           ...(inv.pagesPending ? { pagesPending: false } : {}),
         });
-        await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
+        // An emailed document is re-read the way it was read: its text
+        // (text_layer / body) or its page images.
+        if (inv.email?.textPath && inv.extraction !== "vision") await processInvoiceText(rid, id, inv.email.textPath);
+        else await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
         return json(res, 200, invoiceView(await ref.get()));
+      }
+      if (m === "GET" && action === "text") {
+        if (!can(member, "triage")) return forbidden(res);
+        // The text the model read — Triage shows it for an invoice that was
+        // written in an email body (there is no image of it).
+        const snap = await ref.get();
+        if (!snap.exists) return json(res, 404, { error: "invoice not found" });
+        const textPath = (snap.data() as InvoiceDoc).email?.textPath;
+        if (!textPath) return json(res, 404, { error: "no text for this invoice" });
+        const [buffer] = await getStorage().bucket().file(textPath).download();
+        return json(res, 200, { text: buffer.toString("utf8") });
       }
     }
   }
@@ -1291,8 +1318,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
       if (!syncDue(conn, planInfo.limits)) {
         return json(res, 429, { error: "email_sync_throttled", retryAt: nextSyncAt(conn, planInfo.limits) });
       }
-      // A smaller budget than the scheduler's: this answers inside the API timeout.
-      return json(res, 200, await syncInbox(connId, planInfo.limits, { budget: 100 }));
+      // Smaller budgets than the scheduler's: this answers inside the API
+      // timeout. A backlog keeps the inbox due, so the next "check now" (or
+      // the next hour) carries on.
+      return json(res, 200, await syncInbox(connId, planInfo.limits, { budget: 100, ingestDocs: 3 }));
     }
   }
 

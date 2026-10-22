@@ -190,33 +190,16 @@ export async function extractInvoice(
   imagesBase64: string[],
   context: ExtractionContext = {},
 ): Promise<OcrResult> {
-  const knownIngredients = context.knownIngredients ?? [];
-  const restaurantName = context.restaurantName ?? null;
-  const baseCurrency = context.baseCurrency ?? DEFAULT_CURRENCY;
-
   if (!llmEnabled()) {
     logger.warn("LLM API key not set — returning mock OCR extraction");
-    return mockExtraction(baseCurrency);
+    return mockExtraction(context.baseCurrency ?? DEFAULT_CURRENCY);
   }
 
   let prompt = EXTRACTION_PROMPT;
   if (imagesBase64.length > 1) {
     prompt += `\n\nThe ${imagesBase64.length} images are consecutive pages of ONE document, in order. Merge them into a single extraction: one combined lineItems list (no duplicates across page boundaries), one vendor/date, and the grand total — usually printed on the last page.`;
   }
-  if (knownIngredients.length > 0) {
-    prompt += `\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`;
-  }
-  if (restaurantName) {
-    prompt += `\n\nBUYER (the restaurant receiving these goods — never the vendor): ${JSON.stringify(restaurantName)}`;
-  }
-  // The restaurant's own currency is a prior, not an answer: most of its
-  // documents are in it, but the page wins when it says otherwise.
-  prompt += `\n\nBASE CURRENCY (the restaurant's own; most of its documents are in it — but report what is PRINTED): ${baseCurrency}`;
-  const pack = context.pack;
-  if (pack?.ocrHints) prompt += `\n\n${pack.ocrHints}`;
-  if (pack?.nonProductLineNames?.length) {
-    prompt += `\n\nAlso treat these as non-product lines: skip them but include their sum in "total": ${pack.nonProductLineNames.join(", ")}.`;
-  }
+  prompt += contextPrompt(context);
 
   const raw = await chatCompletion(
     [
@@ -242,16 +225,99 @@ export async function extractInvoice(
       json: { name: "invoice_extraction", schema: ocrResponseSchema },
     },
   );
-  const parsed = ocrResponseSchema.parse(applyCurrencyAliases(parseModelJson(raw), pack?.currencyAliases));
+  return toResult(raw, context);
+}
+
+/** The prompt lines every extraction adds from what it knows about the
+ * restaurant (catalog, buyer name, base currency, country pack). */
+function contextPrompt(context: ExtractionContext): string {
+  let prompt = "";
+  const knownIngredients = context.knownIngredients ?? [];
+  if (knownIngredients.length > 0) {
+    prompt += `\n\nKNOWN INGREDIENTS:\n${JSON.stringify(knownIngredients)}`;
+  }
+  if (context.restaurantName) {
+    prompt += `\n\nBUYER (the restaurant receiving these goods — never the vendor): ${JSON.stringify(context.restaurantName)}`;
+  }
+  // The restaurant's own currency is a prior, not an answer: most of its
+  // documents are in it, but the page wins when it says otherwise.
+  prompt += `\n\nBASE CURRENCY (the restaurant's own; most of its documents are in it — but report what is PRINTED): ${context.baseCurrency ?? DEFAULT_CURRENCY}`;
+  const pack = context.pack;
+  if (pack?.ocrHints) prompt += `\n\n${pack.ocrHints}`;
+  if (pack?.nonProductLineNames?.length) {
+    prompt += `\n\nAlso treat these as non-product lines: skip them but include their sum in "total": ${pack.nonProductLineNames.join(", ")}.`;
+  }
+  return prompt;
+}
+
+/** Model reply → OcrResult, the same for images and text. */
+function toResult(raw: string, context: ExtractionContext): OcrResult {
+  const parsed = ocrResponseSchema.parse(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases));
   if (parsed.error)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, printedFxRate: null, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).
   if (parsed.kind === "other" || parsed.confidence < 0.3)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, printedFxRate: null, notDocument: true };
-  return sanitize(parsed, knownIngredients, restaurantName);
+  return sanitize(parsed, context.knownIngredients ?? [], context.restaurantName ?? null);
 }
 
-function mockExtraction(baseCurrency: Currency): OcrResult {
+/**
+ * The text twin of the image prompt (docs/email-ingestion.md
+ * §Documents and extraction paths): the same rules and JSON shape, read
+ * from a PDF's own text layer or an email body instead of a picture —
+ * every character exactly as printed. Derived from EXTRACTION_PROMPT so
+ * the rules can never drift apart; the image prompt is untouched.
+ */
+function textPrompt(): string {
+  const swaps: [string, string][] = [
+    ["FIRST classify the image, THEN extract.", "The document below is TEXT (a PDF's text layer, or an email body), not an image. FIRST classify it, THEN extract."],
+    ["If the image is a purchase document but too blurry/dark to read", "If the text is a purchase document but too garbled to read"],
+  ];
+  let prompt = EXTRACTION_PROMPT;
+  for (const [from, to] of swaps) {
+    if (!prompt.includes(from)) throw new Error(`extraction prompt changed: "${from}" not found`);
+    prompt = prompt.replace(from, to);
+  }
+  return prompt;
+}
+
+/** A printed amount ("49,00", "1.234.56") — what the offline mock needs
+ * to see before it calls a text a purchase document. */
+const AMOUNT = /\d[\d.,]*[.,]\d{2}\b/;
+
+/** Cap per call: an invoice's text is a few thousand characters. */
+const MAX_TEXT_CHARS = 24_000;
+
+/**
+ * Extract an invoice from text (`text_layer` and `body` paths, label
+ * `ocr-text`). Without a model it returns the offline mock — a document
+ * with no printed amount is `notDocument`, so the auto-discard path runs
+ * offline too.
+ */
+export async function extractInvoiceFromText(text: string, context: ExtractionContext = {}): Promise<OcrResult> {
+  const clipped = text.slice(0, MAX_TEXT_CHARS);
+  if (!llmEnabled()) {
+    logger.warn("LLM API key not set — returning mock text extraction");
+    if (!AMOUNT.test(clipped)) {
+      return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0.9, printedFxRate: null, notDocument: true };
+    }
+    return mockExtraction(context.baseCurrency ?? DEFAULT_CURRENCY, seededRandom(clipped));
+  }
+  const raw = await chatCompletion(
+    [{ role: "user", content: `${textPrompt()}${contextPrompt(context)}\n\nDOCUMENT TEXT:\n${clipped}` }],
+    {
+      maxTokens: clipped.length > 6_000 ? 4096 : 2560,
+      temperature: 0.1,
+      label: "ocr-text",
+      json: { name: "invoice_extraction", schema: ocrResponseSchema },
+    },
+  );
+  return toResult(raw, context);
+}
+
+/** `random` defaults to Math.random (a fresh fake per scan); the text
+ * path seeds it from the text, so the same document reads the same. */
+function mockExtraction(baseCurrency: Currency, random: () => number = Math.random): OcrResult {
   const pool: [string, LineItem["unit"], number, LineItem["category"], LineItem["subcategory"]][] = [
     ["Roma Tomatoes", "lb", 2.15, "produce", "vegetables"],
     ["Chicken Breast", "lb", 3.4, "poultry", "chicken"],
@@ -262,18 +328,18 @@ function mockExtraction(baseCurrency: Currency): OcrResult {
     ["Arborio Rice", "lb", 2.7, "dry", "rice_grains"],
     ["Parmesan", "lb", 12.4, "dairy", "cheese"],
   ];
-  const n = 3 + Math.floor(Math.random() * 4);
+  const n = 3 + Math.floor(random() * 4);
   const lineItems = [...pool]
-    .sort(() => Math.random() - 0.5)
+    .sort(() => random() - 0.5)
     .slice(0, n)
     .map(([name, unit, base, category, subcategory]) => {
-      const qty = Math.max(1, Math.round(Math.random() * 12));
-      const unitPrice = +(base * (0.92 + Math.random() * 0.2)).toFixed(2);
+      const qty = Math.max(1, Math.round(random() * 12));
+      const unitPrice = +(base * (0.92 + random() * 0.2)).toFixed(2);
       return { name, unit, qty, unitPrice, total: +(qty * unitPrice).toFixed(2), category, subcategory };
     });
   const vendors = ["Valley Produce Co.", "Harbor Seafood", "Metro Foods", "Bella Dairy"];
   return {
-    vendor: vendors[Math.floor(Math.random() * vendors.length)],
+    vendor: vendors[Math.floor(random() * vendors.length)],
     date: new Date().toISOString().slice(0, 10),
     docType: "invoice",
     lineItems,
@@ -283,5 +349,17 @@ function mockExtraction(baseCurrency: Currency): OcrResult {
     // path is exercised by tests and, later, by country packs' fixtures.
     currency: baseCurrency,
     printedFxRate: null,
+  };
+}
+
+/** A deterministic PRNG seeded from a string (FNV-1a → mulberry32). */
+function seededRandom(seed: string): () => number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i += 1) h = Math.imul(h ^ seed.charCodeAt(i), 0x01000193);
+  return () => {
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }

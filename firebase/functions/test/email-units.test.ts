@@ -3,7 +3,7 @@ import { bodyText } from "../src/email/body";
 import { htmlToText } from "../src/helpers/html";
 import { candidateAttachments, mockVerdict, senderAddress, stage0 } from "../src/email/classify";
 import { FAKE_PDFS } from "../src/email/fake";
-import { inspectPdf, PdfUnreadableError, rasterizePdf } from "../src/email/pdf";
+import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } from "../src/email/pdf";
 import type { MailMessageMeta } from "../src/email/types";
 
 // Email ingestion building blocks that need no emulator: PDF reading,
@@ -22,7 +22,17 @@ describe("pdf.ts", () => {
   });
 
   it("reports an unreadable PDF instead of throwing anything else", async () => {
-    await expect(inspectPdf(FAKE_PDFS.protected())).rejects.toBeInstanceOf(PdfUnreadableError);
+    await expect(inspectPdf(FAKE_PDFS.protected())).rejects.toBeInstanceOf(UnreadableDocumentError);
+  });
+
+  it("turns a photographed attachment into a ≤1600px JPEG page, and refuses bytes that won't decode", async () => {
+    const { createCanvas } = await import("@napi-rs/canvas");
+    const png = await createCanvas(3200, 1000).encode("png");
+    const page = await normalizeImage(png);
+    expect([page[0], page[1]]).toEqual([0xff, 0xd8]);
+    const { loadImage } = await import("@napi-rs/canvas");
+    expect((await loadImage(page)).width).toBe(1600);
+    await expect(normalizeImage(Buffer.alloc(4_000))).rejects.toBeInstanceOf(UnreadableDocumentError);
   });
 
   it("rasterizes one JPEG per page", async () => {

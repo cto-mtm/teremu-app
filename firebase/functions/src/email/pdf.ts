@@ -31,11 +31,12 @@ const MAX_TEXT_CHARS = 24_000;
 const MAX_EDGE = 1600;
 const JPEG_QUALITY = 80;
 
-/** Password-protected or corrupt: surfaces in Triage as `unreadable`. */
-export class PdfUnreadableError extends Error {
+/** A password-protected or corrupt PDF, or an image that won't decode:
+ * surfaces in Triage as `unreadable`, and costs no scan. */
+export class UnreadableDocumentError extends Error {
   constructor(readonly reason: "password" | "corrupt") {
-    super(`pdf_${reason}`);
-    this.name = "PdfUnreadableError";
+    super(`document_${reason}`);
+    this.name = "UnreadableDocumentError";
   }
 }
 
@@ -70,7 +71,7 @@ async function open(data: Buffer) {
     return { task, pdf: await task.promise };
   } catch (err) {
     await task.destroy().catch(() => undefined);
-    throw new PdfUnreadableError((err as { name?: string }).name === "PasswordException" ? "password" : "corrupt");
+    throw new UnreadableDocumentError((err as { name?: string }).name === "PasswordException" ? "password" : "corrupt");
   }
 }
 
@@ -112,7 +113,7 @@ function pageText(items: TextItem[]): string {
     .join("\n");
 }
 
-/** Text layer + extraction path for a PDF. Throws PdfUnreadableError. */
+/** Text layer + extraction path for a PDF. Throws UnreadableDocumentError. */
 export async function inspectPdf(data: Buffer): Promise<PdfInspection> {
   const { task, pdf } = await open(data);
   try {
@@ -133,9 +134,29 @@ export async function inspectPdf(data: Buffer): Promise<PdfInspection> {
   }
 }
 
+/** A photographed invoice attached to a mail (JPEG or PNG, any size) as
+ * the page the vision path reads: JPEG, long edge ≤ 1600px — the same
+ * ceiling as a rendered PDF page. Throws UnreadableDocumentError. */
+export async function normalizeImage(data: Buffer): Promise<Buffer> {
+  const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+  let image: Awaited<ReturnType<typeof loadImage>>;
+  try {
+    image = await loadImage(data);
+  } catch {
+    throw new UnreadableDocumentError("corrupt");
+  }
+  const scale = Math.min(1, MAX_EDGE / Math.max(image.width, image.height));
+  const canvas = createCanvas(Math.max(1, Math.round(image.width * scale)), Math.max(1, Math.round(image.height * scale)));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff"; // a PNG's transparency would turn black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.encode("jpeg", JPEG_QUALITY);
+}
+
 /** One JPEG per page (first MAX_PDF_PAGES), long edge ≤ 1600px — the
  * same ceiling as the app's downscaleReceipt, which is what keeps a page
- * at ~1.5K image tokens on the vision path. Throws PdfUnreadableError. */
+ * at ~1.5K image tokens on the vision path. Throws UnreadableDocumentError. */
 export async function rasterizePdf(data: Buffer): Promise<Buffer[]> {
   const { createCanvas } = await import("@napi-rs/canvas");
   const { task, pdf } = await open(data);

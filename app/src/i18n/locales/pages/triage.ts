@@ -22,6 +22,7 @@ const es = {
   restore: 'Restaurar',
   restoreFailed: 'No se pudo restaurar — inténtalo de nuevo.',
   review: 'Revisar',
+  fromEmail: 'Correo',
   recentTitle: 'Aprobadas recientemente',
   recon: {
     title: 'Conciliación de albaranes',
@@ -46,6 +47,9 @@ const es = {
     removeLine: 'Eliminar línea',
     addLine: 'Añadir artículo',
     noImage: 'Imagen no disponible',
+    emailLine: 'Llegó por correo · {from} · «{subject}»',
+    bodyTitle: 'Factura escrita en el correo',
+    bodyLoading: 'Cargando el correo…',
     imageLoading: 'Cargando imagen…',
     page: 'Página {n} de {total}',
     pagePrev: 'Página anterior',
@@ -58,6 +62,8 @@ const es = {
       total_mismatch: 'El total impreso no cuadra con la suma de las líneas — compara con la imagen.',
       line_math: 'En las líneas resaltadas, cantidad × precio no cuadra con el total de la línea.',
       currency_assumed: 'No se pudo leer la moneda del documento; se asume {base}. Confírmala abajo.',
+      possible_duplicate: 'Puede estar repetida: hay otra factura del mismo proveedor, fecha y total. Compárala antes de aprobar.',
+      pages_truncated: 'El PDF tiene más páginas de las que se leen (8). Revisa que no falten líneas.',
     },
     currency: 'Moneda del documento',
     fx: {
@@ -118,6 +124,7 @@ const en: typeof es = {
   restore: 'Restore',
   restoreFailed: "Couldn't restore — try again.",
   review: 'Review',
+  fromEmail: 'Email',
   recentTitle: 'Recently approved',
   recon: {
     title: 'Delivery-note reconciliation',
@@ -142,6 +149,9 @@ const en: typeof es = {
     removeLine: 'Remove line',
     addLine: 'Add line item',
     noImage: 'No image available',
+    emailLine: 'Arrived by email · {from} · “{subject}”',
+    bodyTitle: 'Invoice written in the email',
+    bodyLoading: 'Loading the email…',
     imageLoading: 'Loading image…',
     page: 'Page {n} of {total}',
     pagePrev: 'Previous page',
@@ -154,6 +164,8 @@ const en: typeof es = {
       total_mismatch: "The printed total doesn't match the sum of the lines — compare against the image.",
       line_math: "On the highlighted lines, qty × price doesn't match the line total.",
       currency_assumed: "Couldn't read the document's currency; {base} is assumed. Confirm it below.",
+      possible_duplicate: "This may be a repeat: another invoice has the same vendor, date and total. Compare before approving.",
+      pages_truncated: "The PDF has more pages than are read (8). Check that no lines are missing.",
     },
     currency: 'Document currency',
     fx: {

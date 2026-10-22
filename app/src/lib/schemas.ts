@@ -81,7 +81,7 @@ export const invoiceSchema = z.object({
       from: z.string(),
       subject: z.string(),
       receivedAt: z.number(),
-      bodyPath: z.string().optional(),
+      textPath: z.string().optional(),
     })
     .optional()
     .catch(undefined),
@@ -287,10 +287,15 @@ export const emailStatusSchema = z.object({
       lastSyncAt: z.number().nullable(),
       backfillDone: z.boolean(),
       found: z.number().catch(0),
+      waiting: z.number().catch(0),
+      paused: z.boolean().catch(false),
     }),
   ),
   limits: z.object({ inboxes: z.number(), syncHours: z.number() }),
 })
+
+/** GET /invoices/:id/text — the text an emailed invoice was read from. */
+export const invoiceTextSchema = z.object({ text: z.string() })
 
 /** POST /email/inboxes/:id/sync — what one check did. 429 carries retryAt. */
 export const emailSyncResultSchema = z.object({

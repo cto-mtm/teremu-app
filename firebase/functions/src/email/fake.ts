@@ -25,7 +25,7 @@ interface FakeMessage {
   daysAgo: number;
   gone?: "message" | "body";
   body: MailBody;
-  attachments: Record<string, Buffer>;
+  attachments: Record<string, FixtureData>;
 }
 
 /** A one-page PDF from a content stream (Helvetica, WinAnsi): the
@@ -87,7 +87,23 @@ const FRESCOS_LINES: [string, string, string, string][] = [
 
 /** Unreadable on purpose: stands in for a password-protected PDF. */
 const protectedPdf = (): Buffer => Buffer.from("%PDF-1.4\n% encrypted stand-in\n%%EOF\n");
-const jpeg = (bytes: number): Buffer => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(bytes)]);
+/** Bytes, or made on first read (a real JPEG needs the canvas, which
+ * the rest of the fake inbox should not load). */
+type FixtureData = Buffer | (() => Promise<Buffer>);
+
+/** A small but real JPEG: a white sheet with ruled lines, as a phone
+ * photo of a receipt would decode. Its declared size is what stage 0 sees. */
+async function photoJpeg(): Promise<Buffer> {
+  const { createCanvas } = await import("@napi-rs/canvas");
+  const canvas = createCanvas(600, 800);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, 600, 800);
+  ctx.fillStyle = "#333333";
+  for (let y = 80; y < 760; y += 40) ctx.fillRect(60, y, 480, 4);
+  return canvas.encode("jpeg", 80);
+}
+const logoPng = (): Buffer => Buffer.alloc(4_000);
 
 let counter = 0;
 function message(
@@ -98,7 +114,7 @@ function message(
   opts: {
     text?: string;
     html?: string;
-    files?: { name: string; mime: string; data: Buffer; inline?: boolean }[];
+    files?: { name: string; mime: string; data: FixtureData; sizeBytes?: number; inline?: boolean }[];
     excluded?: boolean;
     rfc822MessageId?: string;
     /** Deleted from the mailbox: "message" = before we read it (History
@@ -124,7 +140,7 @@ function message(
         attachmentId: `${id}-att-${i}`,
         filename: f.name,
         mimeType: f.mime,
-        sizeBytes: f.data.length,
+        sizeBytes: f.sizeBytes ?? (Buffer.isBuffer(f.data) ? f.data.length : 0),
         inline: Boolean(f.inline),
       })),
     },
@@ -153,8 +169,8 @@ const INBOX: FakeMessage[] = [
   }),
   message(12, "Pescados Ría <pescadosria@correo.test>", "Fwd: factura", "Ahí va la foto de la factura del jueves", {
     files: [
-      { name: "IMG_2041.jpg", mime: "image/jpeg", data: jpeg(180_000) },
-      { name: "logo.png", mime: "image/png", data: jpeg(4_000), inline: true },
+      { name: "IMG_2041.jpg", mime: "image/jpeg", data: photoJpeg, sizeBytes: 180_000 },
+      { name: "logo.png", mime: "image/png", data: logoPng(), inline: true },
     ],
   }),
   message(10, "CloudTPV <billing@cloudtpv.test>", "Tu factura de octubre — 49,00 €", "Factura nº CT-55102 · Total 49,00 € (IVA incluido)…", {
@@ -185,6 +201,11 @@ const INBOX: FakeMessage[] = [
   message(0.5, "Iberdrola <facturas@electrica.test>", "Tu factura de luz", "Ya tienes disponible tu factura de octubre", { gone: "body" }),
   // Deleted before we ever read it: History still names it, nothing else does.
   message(0.2, "Bodegas Martín <admin@bodegasmartin.test>", "Factura 2026-1102", "Adjuntamos factura", { gone: "message" }),
+  // The classifier says invoice; the text has no amount at all, so
+  // extraction says no document → auto-discarded, scan refunded.
+  message(0.1, "Mi Tienda Online <no-reply@tienda.test>", "Tu factura está disponible", "Ya puedes descargar tu factura desde el área de clientes.", {
+    text: "Hola,\n\nYa puedes descargar tu factura desde el área de clientes de nuestra web.\n\nGracias por tu compra.",
+  }),
 ];
 
 /** Fixture PDFs, for the pdf.ts tests. */
@@ -261,6 +282,6 @@ export const fakeMailAdapter: MailAdapter = {
   async getAttachment(_access, messageId, attachmentId) {
     const data = find(messageId).attachments[attachmentId];
     if (!data) throw new Error(`fake message ${messageId} has no attachment ${attachmentId}`);
-    return data;
+    return Buffer.isBuffer(data) ? data : data();
   },
 };

@@ -165,7 +165,10 @@ onMounted(async () => {
         </p>
         <p v-if="inbox.status === 'active' && !inbox.backfillDone" class="text-xs text-smoke">{{ t('email.backfilling') }}</p>
         <p v-if="inbox.lastSyncAt" class="text-xs">{{ t('email.found', inbox.found) }}</p>
-        <p v-if="inbox.found > 0" class="text-xs text-smoke">{{ t('email.importSoon') }}</p>
+        <p v-if="inbox.paused" class="text-xs text-coral-600">
+          {{ t('email.paused', { n: inbox.waiting }) }}
+          <RouterLink to="/pricing" class="font-medium text-ember-700 hover:underline">{{ t('pricing.seePlans') }}</RouterLink>
+        </p>
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
           <BaseButton
             v-if="inbox.status === 'active'"

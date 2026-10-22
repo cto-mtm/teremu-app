@@ -61,6 +61,13 @@ export interface ConnectionDoc {
   /** A sync in flight holds the inbox until then (epoch ms), so the
    * scheduler and "sync now" never walk the same cursors at once. */
   syncLeaseUntil?: number;
+  /** Accepted messages still to turn into invoices (the per-tick cap
+   * stopped short) — keeps the inbox due until they are in. */
+  ingestPending?: boolean;
+  /** YYYY-MM when the scan meter refused a document: the inbox keeps
+   * finding invoices but holds them (`deferred_quota`) until the meter
+   * resets or the plan grows. */
+  quotaPausedPeriod?: string | null;
   connectedAt: number;
   updatedAt: number;
 }
@@ -68,6 +75,9 @@ export interface ConnectionDoc {
 export const db = () => getFirestore();
 export const connectionIdFor = (provider: MailProvider, accountId: string): string => `${provider}_${accountId}`;
 export const connectionRef = (id: string) => db().collection("emailConnections").doc(id);
+
+/** restaurants/{rid}/emailIngests — one record per message seen (sync.ts). */
+export const ingests = (rid: string) => db().collection(`restaurants/${rid}/emailIngests`);
 
 /** The inboxes that feed a restaurant (revoked ones have rid null). */
 export const inboxesOf = (rid: string) => db().collection("emailConnections").where("rid", "==", rid);
