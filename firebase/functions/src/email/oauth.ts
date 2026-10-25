@@ -281,7 +281,7 @@ export interface EmailStatusView {
   limits: { inboxes: number; syncHours: number };
 }
 
-export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusView> {
+export async function emailStatus(rid: string, plan: Plan, timeZone?: string | null): Promise<EmailStatusView> {
   const snap = await inboxesOf(rid).get();
   const inboxes = await Promise.all(
     snap.docs
@@ -298,7 +298,7 @@ export async function emailStatus(rid: string, plan: Plan): Promise<EmailStatusV
         backfillDone: conn.sync?.backfillDone ?? false,
         working: conn.status === "active" && (!conn.sync?.backfillDone || Boolean(conn.ingestPending)),
         ...(await inboxCounts(rid, id)),
-        paused: conn.quotaPausedPeriod === monthKey(),
+        paused: conn.quotaPausedPeriod === monthKey(timeZone),
         nextCheckAt: nextSyncAt(conn, PLAN_LIMITS[plan]),
       })),
   );

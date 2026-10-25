@@ -277,6 +277,41 @@ describe("restaurant profile — base currency, country, timezone", () => {
     });
   });
 
+  it("resolves the menu-price tax setting on /me from the country pack, and the owner can override or reset it", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    // No country: the world pack — no netting, metric.
+    let me = await get("/me", owner.token);
+    expect(me.body.tax).toEqual({ pricesIncludeTax: false, rate: 0 });
+    expect(me.body.countryProfile).toMatchObject({ pricesIncludeTax: false, salesTaxRate: null, unitSystem: "metric" });
+
+    // Spain: IVA-inclusive menu prices at 10 %; the US: pre-tax, imperial.
+    await put(`/restaurants/${owner.rid}`, owner.token, { country: "ES" });
+    me = await get("/me", owner.token);
+    expect(me.body.tax).toEqual({ pricesIncludeTax: true, rate: 0.1 });
+    expect(me.body.countryProfile).toMatchObject({ code: "ES", pricesIncludeTax: true, salesTaxRate: 0.1, unitSystem: "metric" });
+    await put(`/restaurants/${owner.rid}`, owner.token, { country: "US" });
+    me = await get("/me", owner.token);
+    expect(me.body.tax).toEqual({ pricesIncludeTax: false, rate: 0 });
+    expect(me.body.countryProfile).toMatchObject({ code: "US", unitSystem: "imperial" });
+
+    // The owner's override wins (a US bar that prints tax-inclusive prices at 8.25 %)…
+    expect((await put(`/restaurants/${owner.rid}`, owner.token, { pricesIncludeTax: true, salesTaxRate: 0.0825 })).status).toBe(200);
+    me = await get("/me", owner.token);
+    expect(me.body).toMatchObject({ pricesIncludeTax: true, salesTaxRate: 0.0825, tax: { pricesIncludeTax: true, rate: 0.0825 } });
+    // …and null hands the field back to the pack.
+    expect((await put(`/restaurants/${owner.rid}`, owner.token, { pricesIncludeTax: null, salesTaxRate: null })).status).toBe(200);
+    me = await get("/me", owner.token);
+    expect(me.body).toMatchObject({ pricesIncludeTax: null, salesTaxRate: null, tax: { pricesIncludeTax: false, rate: 0 } });
+
+    // Out of range or wrong type is a 400; a member is a 403; no token a 401.
+    expect((await put(`/restaurants/${owner.rid}`, owner.token, { salesTaxRate: 0.9 })).status).toBe(400);
+    const uid = `member-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "read", menu: "edit", pantry: "edit", finance: "edit", vendors: "edit", integrations: "none", scan: true });
+    const member = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await put(`/restaurants/${owner.rid}`, member, { pricesIncludeTax: true }, owner.rid)).status).toBe(403);
+    expect((await put(`/restaurants/${owner.rid}`, undefined, { pricesIncludeTax: true })).status).toBe(401);
+  });
+
   it("the base currency counts as chosen only once the owner picks or confirms it", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     expect((await get("/me", owner.token)).body.currencyChosen).toBe(false);

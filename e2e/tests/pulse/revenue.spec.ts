@@ -31,7 +31,8 @@ test.describe('Revenue entry', () => {
     // this page also appears in the menu-engineering matrix behind it.
     const sheet = heading.locator('xpath=..')
 
-    await sheet.getByLabel(/Ventas totales/).fill(String(takings))
+    // Net sales, excl. tax (docs/us-market-readiness.md A6).
+    await sheet.getByLabel(/Ventas netas/).fill(String(takings))
     // Dish quantities are optional — the sheet lists every active dish and
     // only the ones given a qty count against the pantry.
     const soldRow = sheet.getByText(dish, { exact: true }).locator('xpath=..')

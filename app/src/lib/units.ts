@@ -25,7 +25,7 @@ export function compatibleUnits(unit: Unit): Unit[] {
 
 export type UnitSystem = 'metric' | 'imperial'
 
-const NEUTRAL: Unit[] = ['each', 'dozen', 'case', 'box', 'bunch']
+const NEUTRAL: Unit[] = ['each', 'dozen', 'case', 'box', 'bunch', 'pack', 'can']
 export const METRIC_UNITS: Unit[] = ['kg', 'g', 'L', 'ml', ...NEUTRAL]
 export const IMPERIAL_UNITS: Unit[] = ['lb', 'oz', 'gal', 'qt', 'pt', 'floz', ...NEUTRAL]
 

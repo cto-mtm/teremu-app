@@ -4,9 +4,10 @@ This directory (`docs/samples/dummy/`) contains 12 synthetic, camera-captured sa
 
 ## Document Types in Teremu (`docType`)
 
-Teremu differentiates between two document types:
-- **`invoice`**: Standard billing invoice/receipt containing itemized prices and totals. Approving updates pantry stock, rolling ingredient prices, and expenses.
-- **`delivery_note` (Albarán / Remisión)**: Goods received confirmation listing items/quantities delivered without billing prices. Approving is for **reconciliation only** and intentionally bypasses pantry stock, price rolls, and expense totals.
+Teremu differentiates between three document types:
+- **`invoice`**: Standard billing invoice/receipt containing itemized prices and totals — a priced document, even one signed on delivery. Approving updates pantry stock, rolling ingredient prices, and expenses.
+- **`delivery_note` (Albarán / Remisión / packing slip)**: Goods received confirmation listing items/quantities delivered without billing prices. Approving is for **reconciliation only** and intentionally bypasses pantry stock, price rolls, and expense totals.
+- **`credit_memo` (Abono / factura rectificativa / credit note)**: The vendor crediting money back for returned or short goods. Stored with positive magnitudes; approving **subtracts** the quantities from the pantry and the amounts from spend, never rolls a price, and never creates an ingredient. A negative line on an ordinary invoice (a discount) is dropped by the sanitizer instead (docs/us-market-readiness.md A8).
 - **Non-document rejection (`notDocument`)**: Non-document photos (e.g. food photos) rejected by Vision AI.
 
 ---

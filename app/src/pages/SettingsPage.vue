@@ -2,7 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
-import { currencyOptionLabel, currencySymbol } from '../i18n'
+import { currencyOptionLabel, currencySymbol, type SupportedLocale } from '../i18n'
+import { legalUrl } from '../lib/legal'
 import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -115,6 +116,7 @@ const countryOptions = computed(() => {
 onMounted(() => {
   countryInput.value = auth.profile?.country ?? ''
   timezoneInput.value = auth.profile?.timezone ?? ''
+  loadTax()
 })
 
 async function saveRegion(): Promise<void> {
@@ -144,6 +146,48 @@ async function saveRegion(): Promise<void> {
 const laborRateInput = ref('')
 const laborBusy = ref(false)
 const laborSaved = ref(false)
+
+// ── Menu-price tax (owner only; docs/us-market-readiness.md A6) ──
+// The country pack's default is what the margins use until the owner
+// overrides it here; "reset" clears the override (null on the API).
+const taxInclusive = ref(false)
+const taxRateInput = ref('')
+const taxBusy = ref(false)
+const taxSaved = ref(false)
+const packTax = computed(() => auth.profile?.countryProfile)
+const taxOverridden = computed(() => auth.profile?.pricesIncludeTax != null || auth.profile?.salesTaxRate != null)
+const packTaxLabel = computed(() => {
+  const p = packTax.value
+  if (!p?.pricesIncludeTax) return t('settings.tax.exclusive')
+  return `${t('settings.tax.inclusive')}${p.salesTaxRate ? ` · ${Math.round(p.salesTaxRate * 100)} %` : ''}`
+})
+function loadTax(): void {
+  taxInclusive.value = auth.tax.pricesIncludeTax
+  // Two decimals of a percent (8.25 %), as US rates are written.
+  taxRateInput.value = auth.tax.rate > 0 ? String(Math.round(auth.tax.rate * 10000) / 100) : ''
+}
+async function saveTax(reset = false): Promise<void> {
+  const rid = auth.profile?.restaurantId
+  if (!rid) return
+  const rate = Number(taxRateInput.value.replace(',', '.'))
+  const body = reset
+    ? { pricesIncludeTax: null, salesTaxRate: null }
+    : {
+        pricesIncludeTax: taxInclusive.value,
+        salesTaxRate: taxInclusive.value && Number.isFinite(rate) && rate > 0 ? Math.round(rate * 100) / 10000 : null,
+      }
+  taxBusy.value = true
+  taxSaved.value = false
+  const res = await apiFetch(`/restaurants/${rid}`, { method: 'PUT', body: JSON.stringify(body) })
+  if (res.ok) {
+    await auth.reloadProfile()
+    loadTax()
+    taxSaved.value = true
+  } else {
+    alert(t('common.action.saveFailed'))
+  }
+  taxBusy.value = false
+}
 
 onMounted(() => {
   const rate = auth.profile?.laborRatePerHour
@@ -396,6 +440,36 @@ async function cancelInvite(emailKey: string): Promise<void> {
       </div>
     </div>
 
+    <!-- Menu-price tax → margins on the net price (owner only; A6) -->
+    <div v-if="isOwner" class="card space-y-3">
+      <div class="text-sm font-semibold">{{ t('settings.tax.title') }}</div>
+      <p class="text-xs text-smoke">{{ t('settings.tax.desc') }}</p>
+      <div class="space-y-2 text-sm">
+        <label class="flex items-center gap-2">
+          <input v-model="taxInclusive" type="radio" :value="true" @change="taxSaved = false" />
+          <span>{{ t('settings.tax.inclusive') }}</span>
+        </label>
+        <label v-if="taxInclusive" class="ml-6 flex items-center gap-2">
+          <span class="text-xs text-smoke">{{ t('settings.tax.rate') }}</span>
+          <input v-model="taxRateInput" type="number" inputmode="decimal" min="0" max="50" step="0.5" class="input w-24" @input="taxSaved = false" />
+        </label>
+        <label class="flex items-center gap-2">
+          <input v-model="taxInclusive" type="radio" :value="false" @change="taxSaved = false" />
+          <span>{{ t('settings.tax.exclusive') }}</span>
+        </label>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <BaseButton variant="ghost" :disabled="taxBusy" @click="saveTax()">
+          {{ taxBusy ? t('common.action.saving') : t('common.action.save') }}
+        </BaseButton>
+        <button v-if="taxOverridden" class="text-xs text-smoke underline" :disabled="taxBusy" @click="saveTax(true)">
+          {{ t('settings.tax.reset') }}
+        </button>
+        <span v-if="taxSaved" class="chip-down">{{ t('settings.tax.saved') }}</span>
+        <span v-else class="text-xs text-smoke">{{ t('settings.tax.packDefault', { value: packTaxLabel }) }}</span>
+      </div>
+    </div>
+
     <!-- Kitchen labor rate → prep-time plate costing (owner only) -->
     <div v-if="isOwner" class="card space-y-3">
       <div class="text-sm font-semibold">{{ t('settings.labor.title') }}</div>
@@ -522,6 +596,15 @@ async function cancelInvite(emailKey: string): Promise<void> {
         <BaseButton :disabled="teamBusy || !inviteEmail.includes('@')" @click="sendInvite">
           {{ teamBusy ? t('common.action.saving') : t('settings.members.invite') }}
         </BaseButton>
+      </div>
+    </div>
+
+    <div class="card space-y-2">
+      <div class="text-sm font-semibold">{{ t('legal.settingsTitle') }}</div>
+      <p class="text-xs text-smoke">{{ t('legal.settingsDesc') }}</p>
+      <div class="flex flex-wrap gap-4 text-sm">
+        <a :href="legalUrl('privacy', locale as SupportedLocale)" target="_blank" rel="noopener" class="underline">{{ t('legal.linkPrivacy') }}</a>
+        <a :href="legalUrl('terms', locale as SupportedLocale)" target="_blank" rel="noopener" class="underline">{{ t('legal.linkTerms') }}</a>
       </div>
     </div>
 

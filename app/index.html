@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover so env(safe-area-inset-*) works inside the
@@ -9,10 +9,18 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1"
     />
     <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="Invoices, margins and inventory for your restaurant." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Teremu" />
+    <meta property="og:title" content="Teremu" />
+    <meta property="og:description" content="Invoices, margins and inventory for your restaurant." />
+    <!-- Absolute on purpose: link scrapers (WhatsApp, Slack, LinkedIn) ignore a relative og:image. -->
+    <meta property="og:image" content="https://app.teremu.com/icons/icon-512.png" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <!-- Installable web app (src/lib/pwa.ts). Icons are rendered from the
-         vector logo by scripts/brand-assets.mjs. -->
-    <link rel="manifest" href="./manifest.webmanifest" />
+         vector logo by scripts/brand-assets.mjs. One manifest per UI
+         language; the script below points at the right one. -->
+    <link id="manifest" rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -23,6 +31,40 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Teremu</title>
+    <!-- First-paint language, before any module loads: the same rule as
+         src/lib/locale.ts (this device's last language → the browser's →
+         Spanish, the authored default). Keeps <html lang>, the description
+         and the manifest in the language the app is about to render, so
+         search snippets and install prompts match. Spanish is the
+         authored source of truth (docs/i18n.md); English is the static
+         fallback here only because the US is the larger search market. -->
+    <script>
+      (function () {
+        var supported = ['es', 'en']
+        var copy = {
+          es: 'Facturas, márgenes e inventario para tu restaurante.',
+          en: 'Invoices, margins and inventory for your restaurant.',
+        }
+        var lang = null
+        try {
+          var stored = localStorage.getItem('teremu-locale')
+          if (supported.indexOf(stored) !== -1) lang = stored
+        } catch (e) {}
+        if (!lang) {
+          var tags = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]) || []
+          for (var i = 0; i < tags.length && !lang; i++) {
+            var l = String(tags[i] || '').toLowerCase().split(/[-_]/)[0]
+            if (supported.indexOf(l) !== -1) lang = l
+          }
+        }
+        if (!lang) lang = 'es'
+        document.documentElement.lang = lang
+        var metas = document.querySelectorAll('meta[name="description"], meta[property="og:description"]')
+        for (var j = 0; j < metas.length; j++) metas[j].setAttribute('content', copy[lang])
+        var manifest = document.getElementById('manifest')
+        if (manifest && lang !== 'en') manifest.setAttribute('href', './manifest.' + lang + '.webmanifest')
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

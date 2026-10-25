@@ -1,7 +1,7 @@
 import type { Manifest } from "@mtmcya/assistant";
 import { defineAssistant } from "@mtmcya/assistant/server";
 import { mockModel } from "@mtmcya/assistant/testing";
-import type { Currency, Locale } from "@teremu/shared";
+import { DEFAULT_TIMEZONE, type Currency, type Locale } from "@teremu/shared";
 import { PLAN_LIMITS } from "../plan.js";
 import prompt from "./prompt.md?raw";
 import { script } from "./script.js";
@@ -47,7 +47,7 @@ export const manifest = {
   permissions: { from: "principal.permissions" },
   plan: { from: "principal.plan" },
   locale: { from: "principal.locale", default: "es" },
-  timezone: { from: "principal.timezone", default: "Europe/Madrid" },
+  timezone: { from: "principal.timezone", default: DEFAULT_TIMEZONE },
   // Base currency for `format: 'money'` cards — resolved on the server and
   // sent to the modal (replaces the old client `currency` plugin option).
   currency: { from: "principal.currency", default: "EUR" },

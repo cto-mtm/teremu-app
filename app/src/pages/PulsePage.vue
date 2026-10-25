@@ -7,6 +7,7 @@ import { amountField, decimalMarkFor, detectDelimiter, parseAmount, parseDate, s
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
+import { todayFor } from '../lib/dates'
 import {
   actualMarginPct,
   foodCostSeries,
@@ -149,7 +150,7 @@ const vendorRects = computed(() => {
 // ── Menu engineering matrix (MenuMatrix: zoom, tap → detail) ────
 const QUADRANTS = ['star', 'plowhorse', 'puzzle', 'dog'] as const
 const engineering = computed(() =>
-  menuEngineering(kitchen.menuItems, kitchen.revenue, kitchen.ingredientMap, laborRate.value),
+  menuEngineering(kitchen.menuItems, kitchen.revenue, kitchen.ingredientMap, laborRate.value, auth.tax),
 )
 
 // ── Price watch: most volatile ingredients, with sparklines ─────
@@ -183,7 +184,7 @@ const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
 const marginAlerts = computed(() => {
   const list: { m: MenuItem; margin: number; cost: number }[] = []
   for (const m of kitchen.dishes) {
-    const { margin, cost } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
+    const { margin, cost } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value, auth.tax)
     if (margin != null && margin < m.targetMarginPct) list.push({ m, margin, cost })
   }
   return list.slice(0, 3)
@@ -250,7 +251,7 @@ async function removeEntry(en: Entry): Promise<void> {
 // ── Expense entry sheet (tagged, non-food) ──────────────────────
 const showExpense = ref(false)
 const editingExpenseId = ref<string | null>(null)
-const expDate = ref(new Date().toISOString().slice(0, 10))
+const expDate = ref(todayFor(auth.profile?.timezone))
 const expAmount = ref('')
 const expTag = ref('')
 const expVendor = ref('')
@@ -289,7 +290,7 @@ async function saveExpense(): Promise<void> {
 // ── Revenue entry sheet ─────────────────────────────────────────
 const showSheet = ref(false)
 const editingRevenueId = ref<string | null>(null)
-const date = ref(new Date().toISOString().slice(0, 10))
+const date = ref(todayFor(auth.profile?.timezone))
 const amount = ref('')
 const sold = ref<Record<string, string>>({})
 const busy = ref(false)
@@ -373,14 +374,14 @@ async function importCsv(event: Event): Promise<void> {
 // Fresh forms for "+" buttons; closing a sheet drops any edit context.
 function openNewRevenue(): void {
   editingRevenueId.value = null
-  date.value = new Date().toISOString().slice(0, 10)
+  date.value = todayFor(auth.profile?.timezone)
   amount.value = ''
   sold.value = {}
   showSheet.value = true
 }
 function openNewExpense(): void {
   editingExpenseId.value = null
-  expDate.value = new Date().toISOString().slice(0, 10)
+  expDate.value = todayFor(auth.profile?.timezone)
   expAmount.value = ''
   expTag.value = ''
   expVendor.value = ''
@@ -864,6 +865,7 @@ watch(showExpense, (open) => {
             <label class="space-y-1 text-sm">
               <span class="text-xs text-smoke">{{ t('pulse.sheet.amount', { symbol: currencySymbol }) }}</span>
               <input v-model="amount" type="number" inputmode="decimal" class="input" placeholder="0.00" />
+              <span class="block text-[11px] text-smoke">{{ t('pulse.sheet.amountHint') }}</span>
             </label>
           </div>
           <div v-if="kitchen.dishes.length" class="space-y-2">

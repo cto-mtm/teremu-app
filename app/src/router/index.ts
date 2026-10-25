@@ -46,6 +46,11 @@ const router = createRouter({
     // Find-your-restaurant first run (docs/restaurant-listing.md). Owners
     // only (guard below).
     { path: '/setup/restaurant', name: 'restaurant-setup', component: page(() => import('../pages/RestaurantSetupPage.vue')) },
+    // Public legal pages (docs/us-market-readiness.md A2): Google's OAuth
+    // review, the app stores and the consent screens all link here, so the
+    // guard below lets signed-out visitors in.
+    { path: '/privacy', name: 'privacy', component: page(() => import('../pages/LegalPage.vue')), props: { doc: 'privacy' } },
+    { path: '/terms', name: 'terms', component: page(() => import('../pages/LegalPage.vue')), props: { doc: 'terms' } },
     // Catch-all 404. Required because Firebase Hosting rewrites every URL
     // to index.html — without this, typos render an empty RouterView.
     { path: '/:pathMatch(.*)*', name: 'not-found', component: page(() => import('../pages/NotFoundPage.vue')) },
@@ -79,8 +84,13 @@ export const REQUIRED: Record<string, [PermArea, PermLevel] | null> = {
   pricing: null,
   'restaurant-setup': null, // owner-only — checked in the guard
   login: null,
+  privacy: null,
+  terms: null,
   'not-found': null,
 }
+
+/** Routes anyone can open, signed in or not. */
+export const PUBLIC = new Set(['login', 'privacy', 'terms'])
 
 export const FALLBACK_ORDER: { name: string; area: PermArea }[] = [
   { name: 'pulse', area: 'finance' },
@@ -94,12 +104,12 @@ export const FALLBACK_ORDER: { name: string; area: PermArea }[] = [
 /** Routes a pending first-run setup doesn't redirect away from. */
 // pos-links is reached FROM Settings (POS catalog review) — trapping it
 // would send a new location's owner back to setup mid-task.
-export const SETUP_EXEMPT = new Set(['restaurant-setup', 'settings', 'pricing', 'pos-links', 'login', 'not-found'])
+export const SETUP_EXEMPT = new Set(['restaurant-setup', 'settings', 'pricing', 'pos-links', 'login', 'privacy', 'terms', 'not-found'])
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.whenReady()
-  if (!auth.user && to.name !== 'login') {
+  if (!auth.user && !PUBLIC.has(String(to.name))) {
     if (import.meta.env.DEV) {
       console.warn('[router guard] → login (user is null), target was:', to.name)
     }

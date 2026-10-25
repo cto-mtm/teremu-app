@@ -11,6 +11,10 @@ export const VE_PACK: CountryPack = {
   defaultCurrency: "USD",
   rateProviders: [],
   defaultSource: "manual",
+  // Menu prices include IVA (16 %); margins net it (A6).
+  pricesIncludeTax: true,
+  salesTaxRate: 0.16,
+  unitSystem: "metric",
   ocrHints: [
     "VENEZUELAN DOCUMENTS:",
     '- Bolívar amounts are written "Bs.", "Bs", "Bs.S", "Bs.D" or "BsF" — report the currency as "VES". Numbers use "." for thousands and "," for decimals ("Bs. 9.312,50" = 9312.50).',

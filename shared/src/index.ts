@@ -2,6 +2,7 @@
 // definitions live in focused modules (vocab.ts, utils.ts, …).
 export * from "./vocab.js";
 export * from "./utils.js";
+export * from "./dates.js";
 export * from "./cost.js";
 export * from "./similarity.js";
 export * from "./identity.js";

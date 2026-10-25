@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { GoogleAuth } from "google-auth-library";
 import { getFirestore } from "firebase-admin/firestore";
-import { DEFAULT_LOCALE, localeSchema, type Locale, type Unit } from "@teremu/shared";
+import { DEFAULT_LOCALE, localeSchema, todayIn, type Locale, type Unit } from "@teremu/shared";
 import { logger } from "firebase-functions/v2";
 import { PLAN_LIMITS, planOf } from "./plan.js";
 
@@ -132,17 +132,21 @@ export async function consumeMailQuota(rid: string, uid: string, to: string, kin
     { limit: "user", ref: db.collection("users").doc(uid) },
     { limit: "recipient", ref: db.collection("mailRecipients").doc(recipient.id) },
   ] as const;
-  const day = new Date().toISOString().slice(0, 10);
   return db.runTransaction(async (tx): Promise<MailQuotaResult> => {
     const snaps = await Promise.all(counters.map((c) => tx.get(c.ref)));
+    // The restaurant's allowance resets at ITS midnight (A4). The user and
+    // recipient counters are shared across restaurants in different zones,
+    // so they keep one day for everyone (UTC) — keyed by a restaurant's day
+    // they would reset whenever the next call came from another zone.
+    const days = [todayIn(snaps[0].get("timezone") as string | undefined), todayIn(null), todayIn(null)];
     const caps = [PLAN_LIMITS[planOf(snaps[0].get("plan"))].mailsPerDay, MAIL_DAILY_CAP_PER_USER, recipient.cap];
-    const counts = snaps.map((snap) =>
-      snap.get("mailDay") === day ? ((snap.get("mailCount") as number | undefined) ?? 0) : 0,
+    const counts = snaps.map((snap, i) =>
+      snap.get("mailDay") === days[i] ? ((snap.get("mailCount") as number | undefined) ?? 0) : 0,
     );
     for (let i = 0; i < counters.length; i++) {
       if (counts[i] >= caps[i]) return { ok: false, limit: counters[i].limit };
     }
-    counters.forEach((c, i) => tx.set(c.ref, { mailDay: day, mailCount: counts[i] + 1 }, { merge: true }));
+    counters.forEach((c, i) => tx.set(c.ref, { mailDay: days[i], mailCount: counts[i] + 1 }, { merge: true }));
     return { ok: true };
   });
 }
@@ -382,7 +386,7 @@ const es = {
   unit: {
     kg: "kg", g: "g", L: "L", ml: "ml",
     lb: "lb", oz: "oz", gal: "gal", qt: "qt", pt: "pinta", floz: "oz líq",
-    each: "unidad", dozen: "docena", case: "caja", box: "paquete", bunch: "manojo",
+    each: "unidad", dozen: "docena", case: "caja", box: "caja grande", bunch: "manojo", pack: "paquete", can: "lata",
   } satisfies Record<Unit, string>,
   order: {
     subject: (restaurant: string) => `Pedido de ${restaurant}`,
@@ -431,7 +435,7 @@ const en: typeof es = {
   unit: {
     kg: "kg", g: "g", L: "L", ml: "ml",
     lb: "lb", oz: "oz", gal: "gal", qt: "qt", pt: "pt", floz: "fl oz",
-    each: "each", dozen: "dozen", case: "case", box: "box", bunch: "bunch",
+    each: "each", dozen: "dozen", case: "case", box: "box", bunch: "bunch", pack: "pack", can: "can",
   },
   order: {
     subject: (restaurant) => `Order from ${restaurant}`,

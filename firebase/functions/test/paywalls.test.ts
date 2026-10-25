@@ -1,3 +1,4 @@
+import { getFirestore } from "firebase-admin/firestore";
 ﻿import { beforeEach, describe, expect, it } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
 import { monthKey, PLAN_LIMITS } from "../src/plan";
@@ -10,8 +11,7 @@ import {
   seedInvoice,
   setPlan,
   uniqueId,
-  upload,
-} from "./helpers";
+  upload,, uniqueJpeg, upload } from "./helpers";
 
 beforeEach(async () => {
   await clearFirestore();
@@ -46,6 +46,20 @@ describe("freemium paywalls", () => {
   // queued OCR triggers may still be draining while this one runs. Six
   // contenders race exactly like ten — the property under test is "the
   // counter never overruns", not a load benchmark.
+  it("keys the scan month on the restaurant's timezone, not the server's (A4)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    // A zone 14 hours ahead of UTC: its month key leads UTC's for 14 hours a
+    // month. The cap must read the period in THAT zone — a counter stored
+    // under the restaurant's month is still this month's counter there.
+    const tz = "Pacific/Kiritimati";
+    await getFirestore().collection("restaurants").doc(owner.rid).set({ timezone: tz, scanPeriod: monthKey(tz), scanCount: 25 }, { merge: true });
+    const me = await get("/me", owner.token);
+    expect(me.body.usage.scans).toBe(25);
+    const { status, body } = await upload("/invoices", owner.token, uniqueJpeg());
+    expect(status).toBe(402);
+    expect(body.error).toBe("scan_limit");
+  });
+
   it("never overruns the scan cap under concurrent uploads (transactional counter)", { timeout: 60_000 }, async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     // Fast-forward to 22/25 used this month without 22 real uploads.

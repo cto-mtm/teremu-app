@@ -16,6 +16,13 @@ A fourth, **opt-in** tier runs on real client documents (`npm run test:real`, re
 # Unit: fast, no emulator (also what plain `npm test` runs)
 npm run test:unit
 
+# Hermetic functions tests (no emulator, not part of test:unit): the country
+# packs (src/countries/*/*.test.ts), the OCR reply parsing (test/ocr-us.test.ts,
+# test/arithmetic.test.ts), the Checkout params (test/billing-units.test.ts) and
+# the boundary scan (test/boundaries.test.ts). They also run inside the
+# integration tier; to run them alone, point vitest at them with a config
+# that has no globalSetup (the package's config boots the emulators).
+
 # Integration. Two options:
 
 # A) one-shot: type-checks + builds functions, boots the emulators (functions

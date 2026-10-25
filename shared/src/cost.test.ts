@@ -1,15 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  expandUsage,
-  isDish,
-  marginPct,
-  plateCost,
-  prepLaborCost,
-  qtyInStockUnit,
-  subMultiplier,
-  type CostIngredient,
-  type CostMenuItem,
-} from "./cost.js";
+import { expandUsage, isDish, marginPct, plateCost, prepLaborCost, qtyInStockUnit, subMultiplier, type CostIngredient, type CostMenuItem, netPrice, NO_TAX } from "./cost.js";
 
 // plateCost is the ONE costing implementation behind the menu page, Pulse
 // and the assistant's dish-cost tool — a margin quoted in chat must equal
@@ -33,8 +23,8 @@ describe("qtyInStockUnit", () => {
     expect(qtyInStockUnit({ qty: 3 }, { unit: "kg", lastUnitPrice: 1 })).toBe(3);
   });
 
-  it("falls back to the raw qty when dimensions don't convert", () => {
-    expect(qtyInStockUnit({ qty: 2, unit: "L" }, { unit: "kg", lastUnitPrice: 1 })).toBe(2);
+  it("is null when dimensions don't convert — the caller marks the cost incomplete (A9)", () => {
+    expect(qtyInStockUnit({ qty: 2, unit: "L" }, { unit: "kg", lastUnitPrice: 1 })).toBeNull();
   });
 });
 
@@ -152,5 +142,40 @@ describe("preps and yields", () => {
     expect(isDish({})).toBe(true);
     expect(isDish({ kind: "dish" })).toBe(true);
     expect(isDish({ kind: "prep" })).toBe(false);
+  });
+});
+
+describe("tax-aware margin (docs/us-market-readiness.md A6)", () => {
+  it("uses the printed price when prices are pre-tax (US)", () => {
+    expect(netPrice(12, NO_TAX)).toBe(12);
+    expect(marginPct(12, 3)).toBeCloseTo(75, 5);
+  });
+
+  it("nets an inclusive price before computing the margin (Spain, 10 %)", () => {
+    const es = { pricesIncludeTax: true, rate: 0.1 };
+    expect(netPrice(11, es)).toBeCloseTo(10, 9);
+    expect(marginPct(11, 3, es)).toBeCloseTo(70, 5);
+    // The same dish read as pre-tax looks better than it is.
+    expect(marginPct(11, 3)).toBeGreaterThan(marginPct(11, 3, es)!);
+  });
+
+  it("does not adjust an inclusive price whose rate is unknown", () => {
+    expect(netPrice(11, { pricesIncludeTax: true, rate: 0 })).toBe(11);
+  });
+
+  it("is null without a price", () => {
+    expect(marginPct(0, 3)).toBeNull();
+    expect(marginPct(0, 3, { pricesIncludeTax: true, rate: 0.1 })).toBeNull();
+  });
+});
+
+describe("unconvertible recipe lines (docs/us-market-readiness.md A9)", () => {
+  it("mark the cost incomplete instead of pricing 150 cases", () => {
+    const byCase = new Map([["x", { unit: "case" as const, lastUnitPrice: 30 }]]);
+    const plate = { id: "p", price: 10, recipe: [{ ingredientId: "x", qty: 150, unit: "g" as const }] };
+    const c = plateCost(plate, byCase);
+    expect(c.missing).toBe(true);
+    expect(c.foodCost).toBe(0);
+    expect(qtyInStockUnit({ ingredientId: "x", qty: 150, unit: "g" }, { unit: "case", lastUnitPrice: 30 })).toBeNull();
   });
 });

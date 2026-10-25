@@ -63,7 +63,9 @@ computed in the tenant's timezone (`manifest.timezone`). `limit` ≤ the engine 
 function is allowed for pure projections (`margin: d.price - d.cost`, `start: d.startsAt.toDate().toISOString()`
 with `format: 'time'` or `'datetime'` on the output field; the card renders it in the tenant timezone), nothing else: no I/O, no `$principal` refs (those resolve in `where`/`limit`
 only; a per-tenant fact the model must know goes in `manifest.facts`). If the query needs a composite
-index (the engine counts the tenant field), add it to `manifest.indexes` and `firestore.indexes.json`.
+index (the engine counts the tenant field), add it to `manifest.indexes` and `firestore.indexes.json`,
+with the orderBy field's direction (`order: 'DESCENDING'` for `desc`; the check is strict, one entry per
+direction exactly as Firestore needs them).
 
 Flat layout example (dirumed): soft delete, own-schedule scoping for doctors, local-day bounds:
 
@@ -86,8 +88,8 @@ Flat layout example (dirumed): soft delete, own-schedule scoping for doctors, lo
 { kind: 'propose', name: 'proposeBatchPlan', permission: 'deliverables:write',
   description: 'Draft a batch of deliverables for the user to confirm.',
   input:   BatchPlanSchema,                                   // what the card shows; .meta() labels
-  confirm: { method: 'POST', path: '/deliverables/batch' },  // existing, validated endpoint
-  outcome: z.object({ status: z.enum(['confirmed', 'rejected']), id: z.string().optional() }) }
+  confirm: { method: 'POST', path: '/deliverables/batch' } } // existing, validated endpoint
+// The outcome is the package's: { status: 'confirmed' | 'rejected', id? } (id = what the endpoint returned).
 ```
 
 The endpoint must already exist and enforce its own auth and validation. Do not create endpoints for the
@@ -105,6 +107,12 @@ assistant.
 Write the `description` as the *intent* it serves; it is what the model matches on. The handoff table is
 the app's feature catalogue.
 
+Every row also gets a `label`: user-facing, rendered verbatim — one string, or one per locale
+(`{ es: 'Cambios de precio', en: 'Price changes' }`) in a bilingual app; the server picks the request's
+locale. The UI never shows `name`. For `query` / `code` rows it follows "Consultando…" in the running chip, so write a noun phrase
+(`'Cambios de precio'`, `'Pacientes'`), not a verb. For `handoff` / `propose` rows it is the action card's
+title next to the Abrir / Confirmar button, so a verb phrase is right (`'Revisar facturas'`).
+
 ### `code` (last resort)
 
 ```ts
@@ -118,7 +126,7 @@ export const searchPatients: CodeTool = { kind: 'code', name: 'searchPatientHist
 ## 3. Metadata conventions (`.meta(card({...}))`)
 
 UI metadata always goes under the `card` key, via the `card()` helper from `@mtmcya/assistant`: `label`
-i18n key · `format` one of `text | time | date | datetime | money | percent | number | badge` · `entity`
+a literal or `{ es, en }` (bilingual apps use the record — the card picks the user's language) · `format` one of `text | time | date | datetime | money | percent | number | badge` · `entity`
 a `manifest.destinations` name whose path has exactly one placeholder, `{id}` (checked at load time) · `hidden`. `describe()` is for the model; `card` is for the UI,
 and the engine strips the `card` key from the JSON schema it sends to the model. Never put UI keys at the
 top level of `.meta()`: Zod 4 copies them into the JSON schema, where `format` is a reserved keyword.

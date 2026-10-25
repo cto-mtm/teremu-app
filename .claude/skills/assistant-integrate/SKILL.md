@@ -40,7 +40,10 @@ root scripts:
 ```
 
 Run `npm run assistant:update`. It installs, syncs the package's **peerDependencies** into
-`firebase/functions` and `app` `dependencies`, and copies the skills into `.claude/skills/`. Peers must be
+`firebase/functions` and `app` `dependencies`, and copies the skills into `.claude/skills/`. Before the
+first tag (local mode) run `npm run assistant:update -- --skills`: it copies the skills from the sibling
+checkout and touches nothing else. Version `.claude/skills/` in the app (`.claude/*` + `!.claude/skills/`
+in `.gitignore`): sessions in worktrees start from HEAD and would otherwise run without them. Peers must be
 real `dependencies` of the app: `firebase-admin` and the Vertex provider's Google auth libraries break when
 esbuild bundles them, and the app's `esbuild.mjs` marks `dependencies` as external.
 

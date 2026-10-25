@@ -26,7 +26,7 @@ const menuMap = computed(() => new Map(kitchen.menuItems.map((m) => [m.id, m])))
 const laborRate = computed(() => auth.profile?.laborRatePerHour ?? 0)
 const margin = computed(() =>
   dish.value
-    ? actualMarginPct(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value)
+    ? actualMarginPct(dish.value, kitchen.ingredientMap, menuMap.value, laborRate.value, auth.tax)
     : { margin: null, cost: 0, foodCost: 0, laborCost: 0, missing: false },
 )
 const isPrep = computed(() => dish.value?.kind === 'prep')
@@ -150,6 +150,9 @@ const weekStarts = computed(() => {
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.price') }}</div>
         <div class="mt-1 text-2xl font-bold">{{ n(dish.price, 'currency') }}</div>
+        <div class="mt-1 text-[11px] text-smoke">
+          {{ auth.tax.pricesIncludeTax && auth.tax.rate > 0 ? t('menu.editor.priceInclTax', { rate: Math.round(auth.tax.rate * 100) }) : t('menu.editor.pricePreTax') }}
+        </div>
       </div>
       <div class="card">
         <div class="text-xs text-smoke">{{ t('menu.detail.plateCost') }}</div>

@@ -88,7 +88,7 @@ A person isn't limited to one restaurant: an owner can run several locations fro
 
 ### 10 · Settings
 
-Language (Spanish is the authored source of truth, English fallback), **unit system** (metric by default, imperial optional — controls what the dropdowns offer, never converts stored data), team management (owner), and an API health check.
+Language (Spanish is the authored source of truth, English fallback), **unit system** (defaults to the country pack's — imperial for a US location, metric elsewhere — and a device may override; controls what the dropdowns offer, never converts stored data), **menu-price tax** (owner: whether menu prices include VAT / sales tax and at what rate; margins are computed on the net price — the default follows the country, Spain 10 % inclusive, US pre-tax), team management (owner), and an API health check.
 
 ---
 

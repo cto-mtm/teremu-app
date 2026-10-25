@@ -18,6 +18,16 @@ const es = {
     timezone: 'Zona horaria',
     saved: 'Guardado',
   },
+  tax: {
+    title: 'Impuestos en carta',
+    desc: 'Si tus precios de carta incluyen el IVA, el margen se calcula sobre el precio neto. Por defecto sigue la norma de tu país; cámbialo aquí si tu local es distinto.',
+    inclusive: 'Los precios de carta incluyen impuestos',
+    exclusive: 'Los precios de carta no incluyen impuestos (se añaden en caja)',
+    rate: 'Tipo (%)',
+    packDefault: 'Por defecto en tu país: {value}',
+    reset: 'Volver al valor del país',
+    saved: 'Guardado',
+  },
   labor: {
     title: 'Mano de obra',
     desc: 'Tarifa por hora de cocina. Cada plato con tiempo de preparación suma ese tiempo × la tarifa a su costo. Vacío = costear solo ingredientes.',
@@ -152,6 +162,16 @@ const en: typeof es = {
     desc: 'Suggested from your device; change them if they are wrong. The country decides which exchange-rate sources Triage offers.',
     country: 'Country',
     timezone: 'Timezone',
+    saved: 'Saved',
+  },
+  tax: {
+    title: 'Menu price tax',
+    desc: 'If your menu prices include VAT or sales tax, margins are computed on the net price. The default follows your country; change it here if your place is different.',
+    inclusive: 'Menu prices include tax',
+    exclusive: 'Menu prices exclude tax (added at the till)',
+    rate: 'Rate (%)',
+    packDefault: 'Default for your country: {value}',
+    reset: 'Back to the country default',
     saved: 'Saved',
   },
   labor: {

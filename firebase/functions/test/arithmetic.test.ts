@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { looseNumber } from "../src/ocr";
-import { validateArithmetic } from "../src/pipeline";
+import { isTwin, validateArithmetic } from "../src/pipeline";
 import type { LineItem } from "../src/models";
 
 /**
@@ -97,5 +97,34 @@ describe("looseNumber", () => {
     expect(looseNumber("Bs. 1.234.567")).toBe("1234567");
     expect(looseNumber("12,5")).toBe("12.5");
     expect(looseNumber(9.31)).toBe(9.31);
+  });
+
+  it("reads a lone comma before three digits by the restaurant's convention (A10)", () => {
+    // A US restaurant: "," groups thousands.
+    expect(looseNumber("1,250", { commaGroups: true })).toBe("1250");
+    expect(looseNumber("12,500", { commaGroups: true })).toBe("12500");
+    expect(looseNumber("12,5", { commaGroups: true })).toBe("12.5"); // not three digits: still a decimal
+    // A Spanish one: "," is the decimal, as before.
+    expect(looseNumber("1,250")).toBe("1.250");
+    expect(looseNumber("1,250", { commaGroups: false })).toBe("1.250");
+  });
+});
+
+describe("isTwin (possible_duplicate, A8)", () => {
+  const inv = { vendorName: "Sysco Chicago, Inc.", total: 84, docType: "invoice" as const };
+  const other = (over: Record<string, unknown>) => ({ status: "approved" as const, vendorName: "SYSCO CHICAGO INC", total: 84, docType: "invoice" as const, ...over });
+
+  it("matches the same vendor and total within tolerance", () => {
+    expect(isTwin(inv, other({}))).toBe(true);
+    expect(isTwin(inv, other({ total: 85 }))).toBe(true); // 2 %
+    expect(isTwin(inv, other({ total: 90 }))).toBe(false);
+    expect(isTwin(inv, other({ vendorName: "US Foods" }))).toBe(false);
+    expect(isTwin(inv, other({ status: "discarded" }))).toBe(false);
+  });
+
+  it("never takes a credit memo for a repeat of its invoice", () => {
+    expect(isTwin(inv, other({ docType: "credit_memo" }))).toBe(false);
+    expect(isTwin({ ...inv, docType: "credit_memo" }, other({}))).toBe(false);
+    expect(isTwin({ ...inv, docType: "credit_memo" }, other({ docType: "credit_memo" }))).toBe(true);
   });
 });

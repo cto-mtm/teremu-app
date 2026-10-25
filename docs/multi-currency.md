@@ -46,7 +46,11 @@ firebase/functions/src/
   countries/
     types.ts               CountryPack interface
     index.ts               packFor(country) → pack; unknown/absent → default
-    default.ts             ECB + manual only; no hints, no extra tax lines, no cards
+    default.ts             ECB + manual only; no hints, no extra tax lines, no cards; metric; no tax netting
+    es/                    SPAIN — EUR, IVA-inclusive menu prices (10 %), metric, Spanish document vocabulary
+      pack.ts · es.test.ts
+    us/                    UNITED STATES — USD, pre-tax menu prices, imperial, US invoice vocabulary
+      pack.ts · us.test.ts                                   (docs/us-market-readiness.md)
     ve/                    VENEZUELA — deletable as a unit
       pack.ts · bcv.ts · parallel.ts · ve.test.ts
 app/src/
@@ -59,6 +63,9 @@ interface CountryPack {
   rateProviders: RateProvider[]; defaultSource: FxSource; optInSources?: FxSource[]
   ocrHints?: string; nonProductLineNames?: string[]; currencyAliases?: Record<string, Currency>
   pulseCards?: PulseCardSpec[]; publishSchedule?: { cron: string; tz: string }
+  // docs/us-market-readiness.md A5/A6 (2026-10-25):
+  pricesIncludeTax: boolean; salesTaxRate?: number   // menu prices as printed include tax → margins net them
+  unitSystem: "metric" | "imperial"                  // what the unit dropdowns offer first
 }
 interface RateProvider {
   id: FxSource; pairs: FxPair[]
@@ -67,7 +74,7 @@ interface RateProvider {
 }
 ```
 
-The core consults a pack in exactly seven places — Settings prefill (`defaultCurrency`), Settings toggles (`optInSources`, provider count), `GET /me` (a **serialized, data-only `countryProfile`**, so the client has no per-country code), OCR prompt assembly (`ocrHints`, `nonProductLineNames`, `currencyAliases`), Triage candidates (`GET /fx`), the daily job (union of providers for countries with ≥1 active restaurant, `publishSchedule`), Pulse (`pulseCards`). Nothing else may branch on country.
+The core consults a pack in exactly nine places — Settings prefill (`defaultCurrency`), Settings toggles (`optInSources`, provider count), `GET /me` (a **serialized, data-only `countryProfile`**, so the client has no per-country code, plus the resolved `tax` setting from `taxSettingFor()` in `countries/index.ts`: the owner's override, else the pack's `pricesIncludeTax` / `salesTaxRate`), OCR prompt assembly (`ocrHints`, `nonProductLineNames`, `currencyAliases`), Triage candidates (`GET /fx`), the daily job (union of providers for countries with ≥1 active restaurant, `publishSchedule`), Pulse (`pulseCards`), margin math (the `tax` setting, through `shared/src/cost.ts marginPct`, in the app and in the assistant's dish-cost tool — one resolver, never re-derived client-side), and the unit dropdowns (`unitSystem`, until the device picks). Nothing else may branch on country.
 
 **Boundary tests**: (a) a grep test fails on any ISO country literal outside `countries/`; (b) the core suite runs against `default.ts` plus a synthetic `zz/` fixture pack; (c) `ve/ve.test.ts` owns every Venezuelan assertion; (d) a grep test fails on any `n(…, 'currency')` outside `lib/money.ts` and on any `/ fx.rate` or `* fx.rate` outside `fx/convert.ts` and `lib/money.ts`. Deleting `countries/ve/` leaves (a), (b) and (d) green — that is the definition of "does not seep".
 

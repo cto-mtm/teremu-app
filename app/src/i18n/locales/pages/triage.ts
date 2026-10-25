@@ -76,6 +76,7 @@ const es = {
       line_math: 'En las líneas resaltadas, cantidad × precio no cuadra con el total de la línea.',
       currency_assumed: 'No se pudo leer la moneda del documento; se asume {base}. Confírmala abajo.',
       possible_duplicate: 'Puede estar repetida: hay otra factura del mismo proveedor, fecha y total. Compárala antes de aprobar.',
+      unit_mismatch: 'Alguna línea está en una unidad que no se convierte a la del ingrediente (p. ej. cajas sin contenido conocido): no se aplicó ni al stock ni al precio. Indica el contenido de la caja o cambia la unidad.',
       pages_truncated: 'El PDF tiene más páginas de las que se leen (8). Revisa que no falten líneas.',
       thousands_repaired: 'En las líneas resaltadas un número salió 1000 veces mayor (p. ej. 3 kg leídos como 3000) y lo hemos corregido. Compruébalo con la imagen.',
     },
@@ -113,7 +114,9 @@ const es = {
     docType: {
       invoice: 'Factura',
       delivery_note: 'Albarán',
+      credit_memo: 'Abono',
     },
+    creditMemoHint: 'Un abono (factura rectificativa) resta de la despensa y del gasto lo devuelto o descontado; no cambia precios.',
     docTypeHint: 'Los albaranes se aprueban solo para conciliación: no tocan despensa, precios ni gastos.',
     link: {
       newBadge: 'Nuevo',
@@ -209,6 +212,7 @@ const en: typeof es = {
       line_math: "On the highlighted lines, qty × price doesn't match the line total.",
       currency_assumed: "Couldn't read the document's currency; {base} is assumed. Confirm it below.",
       possible_duplicate: "This may be a repeat: another invoice has the same vendor, date and total. Compare before approving.",
+      unit_mismatch: "Some lines are in a unit that doesn't convert to the ingredient's (e.g. cases with no known contents): nothing was applied to stock or price. Enter the case contents or change the unit.",
       pages_truncated: "The PDF has more pages than are read (8). Check that no lines are missing.",
       thousands_repaired: "On the highlighted lines a number came out 1000× too big (e.g. 3 kg read as 3000) and was corrected. Check it against the image.",
     },
@@ -245,7 +249,9 @@ const en: typeof es = {
     docType: {
       invoice: 'Invoice',
       delivery_note: 'Delivery note',
+      credit_memo: 'Credit memo',
     },
+    creditMemoHint: 'A credit memo takes the returned or credited goods back out of the pantry and the spend; it never changes a price.',
     docTypeHint: "Delivery notes approve for reconciliation only: they don't touch pantry, prices, or spend.",
     link: {
       newBadge: 'New',

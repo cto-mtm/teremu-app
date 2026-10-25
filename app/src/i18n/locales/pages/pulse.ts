@@ -125,7 +125,8 @@ const es = {
   sheet: {
     title: 'Registrar ingresos',
     date: 'Fecha',
-    amount: 'Ventas totales ({symbol})',
+    amount: 'Ventas netas, sin impuestos ({symbol})',
+    amountHint: 'Lo que entra en caja menos el IVA o impuesto sobre ventas: el mismo neto que registra el TPV.',
     dishesHint: 'Platos vendidos (opcional — mantiene la despensa teórica al día)',
     saveFailed: 'No se pudieron guardar los ingresos.',
     posCoversDate: 'Tu TPV ya registra las ventas de ese día; sumar un ingreso manual las contaría dos veces.',
@@ -258,7 +259,8 @@ const en: typeof es = {
   sheet: {
     title: 'Log revenue',
     date: 'Date',
-    amount: 'Total sales ({symbol})',
+    amount: 'Net sales, excl. tax ({symbol})',
+    amountHint: 'Register total minus sales tax or VAT — the same net figure the POS records.',
     dishesHint: 'Dishes sold (optional — keeps the Theoretical Pantry accurate)',
     saveFailed: 'Could not save revenue.',
     posCoversDate: 'Your POS already reports sales for that day; adding a manual entry would count them twice.',

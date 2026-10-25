@@ -3,7 +3,7 @@ import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { extractInvoice, extractInvoiceFromText, type ExtractionContext, type OcrResult } from "./ocr.js";
 import { refundScan } from "./plan.js";
-import { expandUsage } from "@teremu/shared";
+import { expandUsage, todayIn } from "@teremu/shared";
 import { convertQty } from "./units.js";
 import { convertInvoice, hasPricedLines, rerateBasePrice, toBaseTotal } from "./fx/convert.js";
 import { packFor } from "./countries/index.js";
@@ -22,6 +22,7 @@ import {
   type InvoiceDoc,
   type MenuItemDoc,
   type LineItem,
+  type DocType,
 } from "./models.js";
 
 /** A request the pipeline refuses on business grounds (not a schema
@@ -39,7 +40,12 @@ export class RequestError extends Error {
 export const restCol = (rid: string, name: string) =>
   getFirestore().collection("restaurants").doc(rid).collection(name);
 
-const CONTAINERS = new Set(["case", "box", "bunch"]);
+const CONTAINERS = new Set(["case", "box", "bunch", "pack", "can"]);
+
+/** Approval-time warning: a line's unit does not convert to its
+ * ingredient's stock unit, so no stock or price was applied for it
+ * (docs/us-market-readiness.md A9). The line itself carries `unitMismatch`. */
+const UNIT_MISMATCH = "unit_mismatch";
 
 /**
  * A line billed by the container with known pack contents becomes its
@@ -194,7 +200,7 @@ type OcrPatch =
  * sets. Shared by the pipeline and the real-corpus prod seed, so seeded
  * documents are exactly what a scan would have stored.
  */
-export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
+export function invoicePatchFromOcr(result: OcrResult, today: string = todayIn(null)): OcrPatch {
   if (result.notDocument) return { status: "failed", error: "not_a_document" };
   if (result.unreadable || result.lineItems.length === 0) return { status: "failed", error: "unreadable" };
   const { lineItems, total, warnings } = validateArithmetic(result.lineItems, result.total);
@@ -206,7 +212,9 @@ export function invoicePatchFromOcr(result: OcrResult): OcrPatch {
     status: "needs_review",
     docType: result.docType,
     vendorName: result.vendor,
-    invoiceDate: result.date ?? new Date().toISOString().slice(0, 10),
+    // A document with no readable date lands on the restaurant's today
+    // (A4), not the server's — after 4 pm Pacific those differ.
+    invoiceDate: result.date ?? today,
     ...(result.currency ? { currency: result.currency } : {}),
     printedFxRate: result.printedFxRate ?? null,
     lineItems,
@@ -252,6 +260,7 @@ async function extractionContext(rid: string): Promise<ExtractionContext> {
     restaurantName: (restaurantSnap.get("name") as string | undefined) ?? null,
     baseCurrency: currencySchema.catch(DEFAULT_CURRENCY).parse(restaurantSnap.get("currency")),
     pack: packFor((restaurantSnap.get("country") as string | undefined) ?? null),
+    timezone: (restaurantSnap.get("timezone") as string | undefined) ?? null,
   };
 }
 
@@ -298,8 +307,9 @@ async function runExtraction(
 ): Promise<void> {
   const ref = restCol(rid, "invoices").doc(invoiceId);
   try {
-    const result = await extract(await extractionContext(rid));
-    const patch = invoicePatchFromOcr(result);
+    const context = await extractionContext(rid);
+    const result = await extract(context);
+    const patch = invoicePatchFromOcr(result, todayIn(context.timezone));
     const inv = (await ref.get()).data() as InvoiceDoc | undefined;
     // An emailed "document" the model says is no document means the
     // classifier was wrong — the owner should not have to clean that up:
@@ -357,21 +367,25 @@ async function possibleDuplicates(
   patch: Extract<ReturnType<typeof invoicePatchFromOcr>, { status: "needs_review" }>,
 ): Promise<{ found: boolean; pending: FirebaseFirestore.QueryDocumentSnapshot[] }> {
   if (!patch.vendorName || !patch.invoiceDate || !patch.total) return { found: false, pending: [] };
-  const vendorKey = normalizeName(patch.vendorName);
-  const total = patch.total;
   const snap = await restCol(rid, "invoices").where("invoiceDate", "==", patch.invoiceDate).limit(50).get();
-  const twins = snap.docs.filter((d) => {
-    const other = d.data() as InvoiceDoc;
-    return (
-      d.id !== invoiceId &&
-      (other.status === "needs_review" || other.status === "approved") &&
-      !!other.vendorName &&
-      normalizeName(other.vendorName) === vendorKey &&
-      other.total !== null &&
-      Math.abs(other.total - total) <= Math.max(0.05, total * 0.02)
-    );
-  });
+  const twins = snap.docs.filter((d) => d.id !== invoiceId && isTwin(patch, d.data() as InvoiceDoc));
   return { found: twins.length > 0, pending: twins.filter((d) => d.get("status") === "needs_review") };
+}
+
+/**
+ * Two documents that look like the same paper scanned twice: same vendor,
+ * same total (2 % / 5 ¢), and the SAME KIND — a credit memo dated the day
+ * of its invoice for the full amount is the refund, not a repeat (A8).
+ * Pure; the date match is the Firestore query's job.
+ */
+export function isTwin(
+  doc: { vendorName: string | null; total: number | null; docType?: DocType },
+  other: Pick<InvoiceDoc, "status" | "vendorName" | "total" | "docType">,
+): boolean {
+  if (!doc.vendorName || !doc.total || !other.vendorName || other.total == null) return false;
+  if (!(other.status === "needs_review" || other.status === "approved")) return false;
+  if ((doc.docType ?? "invoice") !== (other.docType ?? "invoice")) return false;
+  return normalizeName(other.vendorName) === normalizeName(doc.vendorName) && Math.abs(other.total - doc.total) <= Math.max(0.05, doc.total * 0.02);
 }
 
 /** The money side of an approval — see docs/multi-currency.md. */
@@ -419,7 +433,7 @@ export async function approveInvoice(
   vendorName: string | null,
   invoiceDate: string | null,
   lineItems: LineItem[],
-  docType: "invoice" | "delivery_note" = "invoice",
+  docType: DocType = "invoice",
   money: ApprovalMoney,
 ): Promise<InvoiceDoc> {
   const db = getFirestore();
@@ -429,6 +443,10 @@ export async function approveInvoice(
   // the matching factura carries the money and the stock — applying
   // both would double-count everything.
   const applyEffects = docType !== "delivery_note";
+  // A credit memo takes stock back out and never rolls a price: the
+  // vendor crediting a short case is not a new price for the case (A8).
+  const credit = docType === "credit_memo";
+  let unitMismatches = 0;
   const fx = resolveFx(money, lineItems);
   const currency = money.currency ?? money.base;
 
@@ -451,7 +469,7 @@ export async function approveInvoice(
 
   // Base amounts are computed ONCE, here, by fx/convert.ts — any base
   // figures the client sent are discarded first (never trusted).
-  const cleaned = lineItems.map(({ flagged: _flagged, baseUnitPrice: _bu, baseTotal: _bt, ...rest }) => rest);
+  const cleaned = lineItems.map(({ flagged: _flagged, unitMismatch: _um, baseUnitPrice: _bu, baseTotal: _bt, ...rest }) => rest);
   const priced = fx ? convertInvoice(cleaned, fx.rate).lineItems : cleaned;
 
   for (const raw of priced) {
@@ -500,20 +518,41 @@ export async function approveInvoice(
     // converted unit price, for a same-currency one the printed price.
     const terms = contentTerms(fx ? { ...li, unitPrice: li.baseUnitPrice ?? li.unitPrice } : li);
     if (existing) {
-      resolved.push({ ...li, ingredientId: existing.id });
+      const linked: LineItem = { ...li, ingredientId: existing.id };
+      // The link is a fact even when nothing else is applied.
+      const linkOnly = () => {
+        if (learnAlias) batch.update(ingredients.doc(existing!.id), { aliases: FieldValue.arrayUnion(learnAlias) });
+      };
       if (!applyEffects) {
         // A delivery note writes no stock, but the link is still a fact.
-        if (learnAlias) batch.update(ingredients.doc(existing.id), { aliases: FieldValue.arrayUnion(learnAlias) });
+        resolved.push(linked);
+        linkOnly();
         continue;
       }
       // "25 lb" onto kg stock must add 11.34 kg, and the rolling price
       // must be re-based to $/stock-unit — otherwise both the pantry and
-      // every margin quietly go wrong.
+      // every margin quietly go wrong. A unit that does NOT convert ("3
+      // case" onto lb stock with no pack size) applies nothing: the line
+      // stays linked, is marked, and the invoice carries the warning —
+      // never "3 lb" (A9).
       const ratio =
         terms.unit === existing.data.unit ? 1 : convertQty(1, terms.unit, existing.data.unit);
-      const qtyAdd = ratio != null ? terms.qty * ratio : terms.qty;
-      const pricePerStockUnit =
-        ratio != null && ratio !== 0 ? +(terms.unitPrice / ratio).toFixed(4) : terms.unitPrice;
+      if (ratio == null || ratio === 0) {
+        unitMismatches += 1;
+        resolved.push({ ...linked, unitMismatch: true });
+        linkOnly();
+        continue;
+      }
+      resolved.push(linked);
+      const qtyAdd = terms.qty * ratio;
+      const pricePerStockUnit = +(terms.unitPrice / ratio).toFixed(4);
+      if (credit) {
+        batch.update(ingredients.doc(existing.id), {
+          theoreticalQty: FieldValue.increment(-qtyAdd),
+          ...(learnAlias ? { aliases: FieldValue.arrayUnion(learnAlias) } : {}),
+        });
+        continue;
+      }
       // Opportunistic backfill: an ingredient that predates subcategories
       // (or was never classified) adopts the line's — piggybacking on the
       // update this batch already writes, so it costs zero extra writes.
@@ -535,7 +574,9 @@ export async function approveInvoice(
         ...(learnAlias ? { aliases: FieldValue.arrayUnion(learnAlias) } : {}),
       });
     } else {
-      if (!applyEffects) {
+      // A delivery note links nothing new; a credit for something never
+      // bought has no stock to take back — neither creates an ingredient.
+      if (!applyEffects || credit) {
         resolved.push({ ...li, ingredientId: null });
         continue;
       }
@@ -575,7 +616,7 @@ export async function approveInvoice(
     ...(fx
       ? { fx, baseTotal: convertInvoice(resolved, fx.rate).baseTotal }
       : { fx: FieldValue.delete(), baseTotal: FieldValue.delete() }),
-    warnings: [],
+    warnings: unitMismatches > 0 ? [UNIT_MISMATCH] : [],
     approvedAt: now,
     error: null,
   });
@@ -625,9 +666,19 @@ export async function usageFor(
     if (!ing) continue;
     let used = 0;
     for (const e of entries) {
-      used += e.unit
-        ? (convertQty(e.qty, e.unit, ing.unit) ?? e.qty)
-        : e.qty;
+      if (!e.unit) {
+        used += e.qty; // legacy: qty already in stock units
+        continue;
+      }
+      const converted = convertQty(e.qty, e.unit, ing.unit);
+      // Unconvertible (150 g of a by-the-case ingredient): deplete
+      // nothing rather than 150 cases; the dish's cost is already marked
+      // incomplete for the same reason (shared/src/cost.ts, A9).
+      if (converted == null) {
+        logger.warn("usageFor: recipe unit does not convert to stock unit — skipped", { rid, ingredientId, from: e.unit, to: ing.unit });
+        continue;
+      }
+      used += converted;
     }
     usage.set(ingredientId, used);
   }

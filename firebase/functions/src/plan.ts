@@ -1,4 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { monthKeyIn } from "@teremu/shared";
 import {
   countryCodeSchema,
   currencySchema,
@@ -66,7 +67,13 @@ export const MAX_FREE_LOCATIONS_PER_OWNER = 3;
 export const planOf = (value: unknown): Plan =>
   value === "pro" || value === "max" ? value : "free";
 
-export const monthKey = (): string => new Date().toISOString().slice(0, 7);
+/**
+ * The month the meters are on, in the restaurant's zone (docs/us-market-
+ * readiness.md A4): a US location's count must not roll over the evening
+ * before the 1st. Every reader and writer of `scanPeriod` for one
+ * restaurant passes that restaurant's `timezone` (the doc is at hand in
+ * all of them) so they agree; no zone means UTC, as before. */
+export const monthKey = (timeZone?: string | null): string => monthKeyIn(timeZone);
 
 export interface PlanInfo {
   plan: Plan;
@@ -94,13 +101,16 @@ export interface PlanInfo {
   website: string | null;
   /** A Google place is linked (`listing.placeId`); its content is never stored. */
   placeLinked: boolean;
+  /** Owner overrides of the pack's menu-price tax setting (A6); null = pack. */
+  pricesIncludeTax: boolean | null;
+  salesTaxRate: number | null;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
 export async function getPlanInfo(rid: string): Promise<PlanInfo> {
   const snap = await getFirestore().collection("restaurants").doc(rid).get();
   const plan = planOf(snap.get("plan"));
-  const scanCount = snap.get("scanPeriod") === monthKey() ? ((snap.get("scanCount") as number) ?? 0) : 0;
+  const scanCount = snap.get("scanPeriod") === monthKey(snap.get("timezone")) ? ((snap.get("scanCount") as number) ?? 0) : 0;
   const rate = snap.get("laborRatePerHour");
   return {
     plan,
@@ -119,6 +129,8 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     priceLevel: (snap.get("listing.priceLevel") as number | null | undefined) ?? null,
     website: (snap.get("listing.website") as string | null | undefined) ?? null,
     placeLinked: Boolean(snap.get("listing.placeId")),
+    pricesIncludeTax: typeof snap.get("pricesIncludeTax") === "boolean" ? (snap.get("pricesIncludeTax") as boolean) : null,
+    salesTaxRate: typeof snap.get("salesTaxRate") === "number" ? (snap.get("salesTaxRate") as number) : null,
   };
 }
 
@@ -141,7 +153,7 @@ export async function consumeScan(
     const snap = await tx.get(ref);
     const plan = planOf(snap.get("plan"));
     const limit = PLAN_LIMITS[plan].scans;
-    const period = monthKey();
+    const period = monthKey(snap.get("timezone"));
     const count = snap.get("scanPeriod") === period ? ((snap.get("scanCount") as number) ?? 0) : 0;
     if (count >= limit) return { ok: false, count, limit };
     tx.set(ref, { scanPeriod: period, scanCount: count + 1 }, { merge: true });
@@ -176,7 +188,8 @@ export async function releaseScan(rid: string): Promise<void> {
   const db = getFirestore();
   const restRef = db.collection("restaurants").doc(rid);
   await db.runTransaction(async (tx) => {
-    giveBack(tx, restRef, await tx.get(restRef), monthKey());
+    const rest = await tx.get(restRef);
+    giveBack(tx, restRef, rest, monthKey(rest.get("timezone")));
   }, { maxAttempts: CONSUME_SCAN_ATTEMPTS });
 }
 

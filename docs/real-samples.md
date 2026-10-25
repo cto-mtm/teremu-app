@@ -95,7 +95,7 @@ with its category. Shape:
 
 ```json
 { "docs": { "<32-hex id>": { "vendor": "…", "vendorAliases": ["…"], "number": "…",
-  "date": "YYYY-MM-DD", "total": 123.45, "docType": "invoice|delivery_note",
+  "date": "YYYY-MM-DD", "total": 123.45, "docType": "invoice|delivery_note|credit_memo",
   "kind": "food|expense", "verified": true } } }
 ```
 

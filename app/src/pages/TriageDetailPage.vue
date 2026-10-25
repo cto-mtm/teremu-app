@@ -7,11 +7,12 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import CurrencyConfirmSheet from '../components/CurrencyConfirmSheet.vue'
 import { useAuthStore } from '../stores/auth'
+import { todayFor } from '../lib/dates'
 import { useSettingsStore } from '../stores/settings'
 import { apiFetch, fetchBlobUrl } from '../lib/api'
 import { previewBase } from '../lib/money'
 import { CURRENCIES, DEFAULT_CURRENCY, invoiceTextSchema } from '../lib/schemas'
-import type { ApprovalMoney, Currency, FxDecision, LineItem, Unit } from '../lib/types'
+import type { ApprovalMoney, Currency, FxDecision, LineItem, Unit, DocType } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import LinkToIngredientSheet from '../components/LinkToIngredientSheet.vue'
 import { ingredientResolver, suggestIngredients } from '../lib/domain'
@@ -49,7 +50,7 @@ function unitOptions(line: LineItem): Unit[] {
 
 const vendorName = ref('')
 const invoiceDate = ref('')
-const docType = ref<'invoice' | 'delivery_note'>('invoice')
+const docType = ref<DocType>('invoice')
 const lines = ref<LineItem[]>([])
 const busy = ref(false)
 const retrying = ref(false)
@@ -75,7 +76,7 @@ function pickRate(source: RateSource): void {
 const money = computed<ApprovalMoney>(() => ({
   currency: docCurrency.value,
   ...(needsRate.value && rate.value > 0
-    ? { fx: { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } }
+    ? { fx: { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || todayFor(auth.profile?.timezone) } }
     : {}),
 }))
 
@@ -133,7 +134,7 @@ async function confirmAsExpense(): Promise<void> {
     expenseTag.value.trim(),
     {
       currency: docCurrency.value,
-      ...(foreign.value ? { fx: money.value.fx ?? { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || new Date().toISOString().slice(0, 10) } } : {}),
+      ...(foreign.value ? { fx: money.value.fx ?? { rate: rate.value, source: rateSource.value, asOf: invoiceDate.value || todayFor(auth.profile?.timezone) } } : {}),
     },
     // The header edits count here too, same as a food approval.
     { vendorName: vendorName.value.trim() || null, invoiceDate: invoiceDate.value || null },
@@ -512,10 +513,12 @@ async function approve(): Promise<void> {
       📧 {{ t('triage.detail.emailLine', { from: invoice.email.from, subject: invoice.email.subject }) }}
     </p>
 
-    <!-- Validation-stage warnings: the math didn't cross-check.
-         Amber, not red — the human decides, these just guide the eye. -->
+    <!-- Warnings: before approval the arithmetic cross-checks; after it,
+         what approval could not apply (unit_mismatch) — approval clears the
+         validation ones, so whatever is left is worth seeing. Amber, not
+         red — the human decides, these just guide the eye. -->
     <div
-      v-if="invoice.status === 'needs_review' && invoice.warnings?.length"
+      v-if="invoice.warnings?.length"
       class="card space-y-1 border-ember-100 bg-ember-50 p-3 text-sm"
     >
       <p v-for="w in invoice.warnings" :key="w" class="flex items-start gap-2 text-ember-700">
@@ -592,6 +595,7 @@ async function approve(): Promise<void> {
             <div class="text-xs text-smoke">
               {{ n(line.qty) }} {{ t('common.unit.' + line.unit) }} ×
               {{ fmt(shownLine(i, line).unitPrice, shownLine(i, line).currency) }}
+              <span v-if="line.unitMismatch" class="ml-1 text-ember-700" :title="t('triage.detail.warn.unit_mismatch')">⚠</span>
             </div>
           </div>
           <div class="shrink-0 text-sm font-semibold">
@@ -619,7 +623,7 @@ async function approve(): Promise<void> {
           <div v-if="canEdit" class="space-y-1">
             <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-semibold">
               <button
-                v-for="dt in ['invoice', 'delivery_note'] as const"
+                v-for="dt in ['invoice', 'delivery_note', 'credit_memo'] as const"
                 :key="dt"
                 class="px-3 py-1.5"
                 :class="docType === dt ? 'bg-ink text-white' : 'bg-white text-smoke hover:bg-gray-50'"
@@ -630,6 +634,9 @@ async function approve(): Promise<void> {
             </div>
             <p v-if="docType === 'delivery_note'" class="text-[11px] text-smoke">
               {{ t('triage.detail.docTypeHint') }}
+            </p>
+            <p v-else-if="docType === 'credit_memo'" class="text-[11px] text-smoke">
+              {{ t('triage.detail.creditMemoHint') }}
             </p>
           </div>
           <!-- Document currency — OCR's read, confirmable here. Base is the

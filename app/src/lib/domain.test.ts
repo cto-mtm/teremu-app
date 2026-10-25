@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  actualMarginPct,
+  foodSpend,
   ingredientSpend,
+  reconciliationCandidates,
   isFoodInvoice,
   ingredientResolver,
   possibleDuplicates,
@@ -261,5 +264,52 @@ describe('possibleDuplicates', () => {
     ]
     const pairs = possibleDuplicates(pantry).map((p) => [p.a.id, p.b.id].sort().join('-'))
     expect(pairs).toEqual(['4-5', '1-2'])
+  })
+})
+
+describe('foodSpend (docs/us-market-readiness.md A7)', () => {
+  it('is the sum of the lines, not the printed total that carries tax and delivery', () => {
+    const i = inv({ lineItems: [line('tomato', 40), line('onion', 50)], total: 100 })
+    expect(foodSpend(i)).toBe(90)
+  })
+
+  it('falls back to the total when the document has no priced lines', () => {
+    expect(foodSpend(inv({ lineItems: [], total: 100 }))).toBe(100)
+    expect(foodSpend(inv({ lineItems: [], total: null }))).toBe(0)
+  })
+})
+
+describe('actualMarginPct (docs/us-market-readiness.md A6)', () => {
+  const dish = { id: 'd', name: 'Soup', price: 11, active: true, recipe: [{ ingredientId: 'i', qty: 1, unit: 'kg' }], targetMarginPct: 65 } as unknown as MenuItem
+  const ings = new Map([['i', ing({ id: 'i', lastUnitPrice: 3 })]])
+
+  it('uses the printed price when menu prices are pre-tax', () => {
+    expect(actualMarginPct(dish, ings).margin).toBeCloseTo(((11 - 3) / 11) * 100, 5)
+  })
+
+  it('nets an inclusive price by the rate before the margin', () => {
+    expect(actualMarginPct(dish, ings, new Map(), 0, { pricesIncludeTax: true, rate: 0.1 }).margin).toBeCloseTo(70, 5)
+  })
+})
+
+describe('credit memos (docs/us-market-readiness.md A8)', () => {
+  it('count as food documents whose money comes OUT of spend', () => {
+    const credit = inv({ docType: 'credit_memo', lineItems: [line('tomato', 40)], total: 40 })
+    expect(isFoodInvoice(credit)).toBe(true)
+    expect(foodSpend(credit)).toBe(-40)
+    const spend = ingredientSpend([inv({ lineItems: [line('tomato', 100)], total: 100 }), credit])
+    expect(spend).toEqual([{ ingredientId: null, name: 'tomato', total: 60 }])
+  })
+})
+
+describe('delivery notes and credit memos (A8)', () => {
+  it('never pairs an albarán with a credit memo, by heuristic or as a candidate', () => {
+    const note = inv({ id: 'note', docType: 'delivery_note', vendorName: 'Acme', invoiceDate: '2026-10-20', lineItems: [line('tomato', 84)], total: 84 })
+    const credit = inv({ id: 'credit', docType: 'credit_memo', vendorName: 'Acme', invoiceDate: '2026-10-21', lineItems: [line('tomato', 84)], total: 84 })
+    const bill = inv({ id: 'bill', docType: 'invoice', vendorName: 'Acme', invoiceDate: '2026-10-22', lineItems: [line('tomato', 84)], total: 84 })
+    const [row] = reconcileDeliveryNotes([note, credit, bill])
+    expect(row?.match?.id).toBe('bill')
+    expect(reconciliationCandidates([note, credit, bill], note).map((i) => i.id)).toEqual(['bill'])
+    expect(reconcileDeliveryNotes([note, credit])[0]?.match).toBeFalsy()
   })
 })

@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
-import { DEFAULT_CURRENCY, DEFAULT_LOCALE, LOCALES, type Currency } from '@teremu/shared'
+import { DEFAULT_CURRENCY, LOCALES, type Currency } from '@teremu/shared'
+import { browserLanguages, resolveLocale } from '../lib/locale'
 
 // Per-feature modules, each exporting { es, en } with en typed against es.
 import common from './locales/configs/common'
@@ -22,6 +23,7 @@ import settings from './locales/pages/settings'
 import pricing from './locales/pages/pricing'
 import notfound from './locales/pages/notfound'
 import setup from './locales/pages/setup'
+import legal from './locales/pages/legal'
 
 export const SUPPORTED_LOCALES = LOCALES
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
@@ -47,6 +49,7 @@ const messages = {
     pricing: pricing.es,
     notfound: notfound.es,
     setup: setup.es,
+    legal: legal.es,
   },
   en: {
     common: common.en,
@@ -68,6 +71,7 @@ const messages = {
     pricing: pricing.en,
     notfound: notfound.en,
     setup: setup.en,
+    legal: legal.en,
   },
 } as const
 
@@ -102,11 +106,14 @@ const numberFormats = {
   en: numberFormatFor(DEFAULT_CURRENCY),
 }
 
+// First paint: this device's last language, else the browser's, else the
+// authored default (src/lib/locale.ts). index.html runs the same rule
+// inline before any script loads, so <html lang>, the meta description
+// and the manifest already agree with what renders here.
 const stored =
   typeof localStorage !== 'undefined' ? localStorage.getItem('teremu-locale') : null
-const initialLocale: SupportedLocale = SUPPORTED_LOCALES.includes(stored as SupportedLocale)
-  ? (stored as SupportedLocale)
-  : DEFAULT_LOCALE
+const initialLocale: SupportedLocale = resolveLocale(stored, browserLanguages())
+if (typeof document !== 'undefined') document.documentElement.lang = initialLocale
 
 export const i18n = createI18n({
   legacy: false, // Composition API mode: useI18n() + t(), never $t

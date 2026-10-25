@@ -78,20 +78,51 @@ export async function createCheckoutSession(args: {
   const existingCustomer = (await ref.get()).get("stripeCustomerId") as string | undefined;
   const base = returnBase(origin);
 
-  const session = await stripe().checkout.sessions.create({
+  const session = await stripe().checkout.sessions.create(
+    checkoutSessionParams({ rid, email, price: priceFor(plan, interval), existingCustomer, base }),
+  );
+  if (!session.url) throw new Error("Stripe returned no checkout URL");
+  return session.url;
+}
+
+/**
+ * The Checkout Session body, pure so the tax/address settings are
+ * unit-tested without Stripe (test/billing-units.test.ts).
+ *
+ * Tax (docs/us-market-readiness.md A3): prices are tax-exclusive
+ * everywhere ("taxes not included" on /pricing), so Stripe Tax computes
+ * and adds US sales tax / EU VAT from the billing address it collects
+ * here. Stripe Tax itself is switched on in the dashboard (Tier C); with
+ * it off, `automatic_tax` makes the session fail loudly rather than
+ * silently under-collect. EU businesses enter a VAT id for reverse
+ * charge and for their invoice. An existing customer must let Checkout
+ * refresh name and address, or Stripe refuses automatic tax for them.
+ */
+export function checkoutSessionParams(args: {
+  rid: string;
+  email: string;
+  price: string;
+  existingCustomer: string | undefined;
+  base: string;
+}): Stripe.Checkout.SessionCreateParams {
+  const { rid, email, price, existingCustomer, base } = args;
+  return {
     mode: "subscription",
-    line_items: [{ price: priceFor(plan, interval), quantity: 1 }],
+    line_items: [{ price, quantity: 1 }],
     client_reference_id: rid,
-    ...(existingCustomer ? { customer: existingCustomer } : { customer_email: email }),
+    ...(existingCustomer
+      ? { customer: existingCustomer, customer_update: { address: "auto", name: "auto" } }
+      : { customer_email: email }),
     subscription_data: { metadata: { rid } },
     allow_promotion_codes: true,
+    automatic_tax: { enabled: true },
+    billing_address_collection: "required",
+    tax_id_collection: { enabled: true },
     // The webhook is what actually flips the plan; these URLs just bring
     // the user back. ?billing=success lets Settings re-read the profile.
     success_url: `${base}/settings?billing=success`,
     cancel_url: `${base}/pricing?billing=cancelled`,
-  });
-  if (!session.url) throw new Error("Stripe returned no checkout URL");
-  return session.url;
+  };
 }
 
 /** Billing/customer portal so owners can change card, switch interval, or cancel. */
@@ -203,6 +234,17 @@ export async function handleWebhook(rawBody: Buffer, signature: string): Promise
           sub.metadata = { ...sub.metadata, rid: session.client_reference_id };
         }
         await applySubscription(sub);
+      }
+      // The billing country Checkout collected (A3): shown nowhere yet,
+      // kept so tax reporting and the US/EU split don't need a Stripe
+      // round trip. The subscription doc is the plan's source of truth;
+      // this is a side fact on the same restaurant.
+      const country = session.customer_details?.address?.country;
+      if (session.client_reference_id && country) {
+        await getFirestore()
+          .collection("restaurants")
+          .doc(session.client_reference_id)
+          .set({ billingCountry: country.toUpperCase() }, { merge: true });
       }
       break;
     }

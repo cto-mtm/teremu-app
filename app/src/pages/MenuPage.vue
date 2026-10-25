@@ -75,7 +75,7 @@ const rows = computed(() => {
   const q = search.value.toLowerCase().trim()
   const list = kitchen.dishes
     .filter((m) => !q || m.name.toLowerCase().includes(q))
-    .map((m) => ({ m, ...actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value) }))
+    .map((m) => ({ m, ...actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value, auth.tax) }))
   switch (sortBy.value) {
     case 'name':
       return list.sort((a, b) => a.m.name.localeCompare(b.m.name))
@@ -93,7 +93,7 @@ const prepRows = computed(() => {
   return kitchen.preps
     .filter((m) => !q || m.name.toLowerCase().includes(q))
     .map((m) => {
-      const { cost, missing } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value)
+      const { cost, missing } = actualMarginPct(m, kitchen.ingredientMap, menuMap.value, laborRate.value, auth.tax)
       const usedIn = new Set(recipesUsing(kitchen.menuItems, { subItemId: m.id }).map((u) => u.item.id)).size
       return { m, cost, missing, unitCost: m.yield?.qty ? cost / m.yield.qty : null, usedIn }
     })
@@ -525,6 +525,10 @@ async function save(): Promise<void> {
             <label class="space-y-1 text-sm">
               <span class="text-xs text-smoke">{{ t('menu.editor.menuPrice', { symbol: currencySymbol }) }}</span>
               <input v-model="price" type="number" inputmode="decimal" class="input" />
+              <!-- Tax-inclusive or not (docs/us-market-readiness.md A6): the margin below follows. -->
+              <span class="block text-[11px] text-smoke">
+                {{ auth.tax.pricesIncludeTax && auth.tax.rate > 0 ? t('menu.editor.priceInclTax', { rate: Math.round(auth.tax.rate * 100) }) : t('menu.editor.pricePreTax') }}
+              </span>
             </label>
             <label class="space-y-1 text-sm">
               <span class="text-xs text-smoke">{{ t('menu.editor.targetMargin') }}</span>

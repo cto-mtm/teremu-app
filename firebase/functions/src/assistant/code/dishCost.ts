@@ -1,7 +1,7 @@
 import type { AssistantContext } from "@mtmcya/assistant";
 import { isDish, marginPct, normalizeName, plateCost } from "@teremu/shared";
 import type { DishCostRowT } from "../tools.js";
-import { laborRate, loadIngredients, loadMenuItems, round1, round2 } from "./shared.js";
+import { costingSettings, loadIngredients, loadMenuItems, round1, round2 } from "./shared.js";
 
 /**
  * The assistant's dish-cost `code` tool. Dish cost is not stored anywhere:
@@ -19,10 +19,10 @@ export interface DishCostInput {
 }
 
 export async function dishCosts(input: DishCostInput, ctx: AssistantContext): Promise<DishCostRowT[]> {
-  const [menuItems, ingredients, laborRatePerHour] = await Promise.all([
+  const [menuItems, ingredients, { laborRatePerHour, tax }] = await Promise.all([
     loadMenuItems(ctx),
     loadIngredients(ctx),
-    laborRate(ctx),
+    costingSettings(ctx),
   ]);
 
   const needle = input.name ? normalizeName(input.name) : "";
@@ -38,7 +38,7 @@ export async function dishCosts(input: DishCostInput, ctx: AssistantContext): Pr
       cost: round2(c.cost),
       foodCost: round2(c.foodCost),
       laborCost: round2(c.laborCost),
-      marginPct: round1(marginPct(item.price, c.cost)),
+      marginPct: round1(marginPct(item.price, c.cost, tax)),
       targetMarginPct: item.targetMarginPct,
       incomplete: c.missing,
     });

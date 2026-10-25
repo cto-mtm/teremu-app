@@ -32,10 +32,12 @@ export async function signInWithGoogle(
   user: { email: string; displayName: string } = TEST_OWNER,
 ): Promise<void> {
   await page.goto('/login')
-  await expect(page.getByRole('heading', { name: 'Bienvenido a Teremu' })).toBeVisible()
+  // First paint follows the browser language (app/src/lib/locale.ts): the
+  // suite pins es-ES, the US sign-up spec pins en-US.
+  await expect(page.getByRole('heading', { name: /Bienvenido a Teremu|Welcome to Teremu/ })).toBeVisible()
 
   const popupPromise = page.waitForEvent('popup')
-  await page.getByRole('button', { name: /continuar con google/i }).click()
+  await page.getByRole('button', { name: /continuar con google|continue with google/i }).click()
   const popup = await popupPromise
   await popup.waitForLoadState('domcontentloaded')
 

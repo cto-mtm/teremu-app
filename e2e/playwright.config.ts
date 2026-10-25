@@ -33,11 +33,12 @@ export default defineConfig({
 
   use: {
     baseURL: APP_URL,
-    // The app picks its locale from localStorage only, defaulting to `es`
-    // (app/src/i18n/index.ts) — so the UI is Spanish regardless of what
-    // Playwright reports. These are pinned anyway so date/number
-    // rendering and "today" boundaries behave identically on any machine;
-    // Spain is the first launch market (docs/business-model.md).
+    // First paint follows the browser language (app/src/lib/locale.ts:
+    // localStorage, then navigator.languages, then `es`), so the locale
+    // here is what makes every spec's Spanish copy render. Pinned with the
+    // zone so date/number rendering and "today" boundaries behave
+    // identically on any machine (Spain is one of the two launch markets,
+    // docs/business-model.md; a US spec would pin en-US + America/*).
     locale: 'es-ES',
     timezoneId: 'Europe/Madrid',
     // retain-on-failure, not on-first-retry: local runs have retries=0, so

@@ -53,6 +53,8 @@ export async function ingestAccepted(
   maxDocs: number,
 ): Promise<IngestResult> {
   const result: IngestResult = { created: 0, pending: false };
+  // The meter's month is the restaurant's (plan.ts monthKey, A4).
+  const timeZone = (await db().collection("restaurants").doc(rid).get()).get("timezone") as string | undefined;
   // Let go of what waited too long first — a paused inbox stops at its
   // first refused scan and would never reach the oldest messages.
   const expired = await ingests(rid)
@@ -94,7 +96,7 @@ export async function ingestAccepted(
         const quota = await consumeScan(rid);
         if (!quota.ok) {
           await msg.ref.update({ verdict: "deferred_quota", done: [...done], invoiceIds, updatedAt: Date.now() });
-          await pauseForQuota(rid, connId, quota.limit);
+          await pauseForQuota(rid, connId, quota.limit, timeZone);
           return result;
         }
         if (!pauseCleared) {
@@ -104,7 +106,7 @@ export async function ingestAccepted(
       }
       if (prepared.kind !== "empty") {
         try {
-          invoiceIds.push(await createInvoice(rid, connId, ing, prepared));
+          invoiceIds.push(await createInvoice(rid, connId, ing, prepared, timeZone));
         } catch (err) {
           // The scan was spent but no document exists: give it back, so the
           // retry on the next tick does not charge the same document twice.
@@ -159,6 +161,7 @@ async function createInvoice(
   connId: string,
   ing: IngestDoc,
   prepared: Exclude<Prepared, { kind: "empty" }>,
+  timeZone: string | undefined,
 ): Promise<string> {
   const ref = db().collection(`restaurants/${rid}/invoices`).doc();
   const bucket = getStorage().bucket();
@@ -207,7 +210,7 @@ async function createInvoice(
     warnings: prepared.truncated ? ["pages_truncated"] : [],
     extraction: prepared.extraction,
     email: { ...email, ...(textPath ? { textPath } : {}) },
-    scanPeriod: monthKey(),
+    scanPeriod: monthKey(timeZone),
   };
   await ref.set(doc);
   if (prepared.extraction === "vision") await processInvoiceImage(rid, ref.id, paths);
@@ -224,8 +227,8 @@ async function createInvoice(
  * the most concrete upgrade prompt the product has. Best effort: a mail
  * failure never fails the sync.
  */
-async function pauseForQuota(rid: string, connId: string, limit: number): Promise<void> {
-  const period = monthKey();
+async function pauseForQuota(rid: string, connId: string, limit: number, timeZone: string | undefined): Promise<void> {
+  const period = monthKey(timeZone);
   await connectionRef(connId).update({ quotaPausedPeriod: period });
   const restRef = db().collection("restaurants").doc(rid);
   const first = await db().runTransaction(async (tx) => {

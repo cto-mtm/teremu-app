@@ -4,7 +4,7 @@ import { apiFetch, apiUpload, writeEpoch } from '../lib/api'
 import { compressReceipt } from '../lib/compress'
 import { replaceById } from '../lib/collections'
 import { invoiceListSchema, invoiceSchema } from '../lib/schemas'
-import type { ApprovalMoney, Invoice, LineItem } from '../lib/types'
+import type { ApprovalMoney, Invoice, LineItem, DocType } from '../lib/types'
 
 export const useInvoicesStore = defineStore('invoices', () => {
   const invoices = ref<Invoice[]>([])
@@ -147,7 +147,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     vendorName: string | null,
     invoiceDate: string | null,
     lineItems: LineItem[],
-    docType: 'invoice' | 'delivery_note' = 'invoice',
+    docType: DocType = 'invoice',
     money: ApprovalMoney = {},
   ): Promise<boolean> {
     const res = await apiFetch<Invoice>(

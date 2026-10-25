@@ -17,7 +17,7 @@ import { z } from "zod";
 export const UNITS = [
   "kg", "g", "L", "ml", // metric
   "lb", "oz", "gal", "qt", "pt", "floz", // imperial / US
-  "each", "dozen", "case", "box", "bunch", // counts & containers
+  "each", "dozen", "case", "box", "bunch", "pack", "can", // counts & containers
 ] as const;
 export const unitSchema = z.enum(UNITS);
 export type Unit = z.infer<typeof unitSchema>;
@@ -35,6 +35,10 @@ export const CURRENCIES = ["USD", "EUR", "GBP", "MXN", "CAD", "VES"] as const;
 export const currencySchema = z.enum(CURRENCIES);
 export type Currency = z.infer<typeof currencySchema>;
 export const DEFAULT_CURRENCY: Currency = "USD";
+/** Currencies whose documents write "1,250.50" (comma groups, point decimal);
+ * the rest write "1.250,50". A money convention, not a country rule — OCR
+ * reads an ambiguous "1,250" by the restaurant's base currency. */
+export const DECIMAL_POINT_CURRENCIES: ReadonlySet<Currency> = new Set<Currency>(["USD", "CAD", "GBP", "MXN"]);
 
 // UI languages. The app renders in one of these; each person's choice is
 // stored on users/{uid}.locale, and the API writes the emails that person
@@ -125,8 +129,14 @@ export const pairSubcategory = (
   sub: string | null | undefined,
 ): Subcategory | null => (sub && isSubcategoryOf(category, sub) ? sub : null);
 
-/** Facturas vs albaranes — OCR classifies; reconciliation pairs them. */
-export const docTypeSchema = z.enum(["invoice", "delivery_note"]);
+/**
+ * Facturas vs albaranes — OCR classifies; reconciliation pairs them. A
+ * credit memo (abono / factura rectificativa / credit note) is the
+ * vendor giving money back for returned or short goods: approving one
+ * SUBTRACTS stock and spend and never rolls a price
+ * (docs/us-market-readiness.md A8). Its amounts are stored positive.
+ */
+export const docTypeSchema = z.enum(["invoice", "delivery_note", "credit_memo"]);
 export type DocType = z.infer<typeof docTypeSchema>;
 
 // ── POS integrations (docs/pos.md) ──────────────────────────────────

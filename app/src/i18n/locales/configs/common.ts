@@ -19,8 +19,10 @@ const es = {
     each: 'unidad',
     dozen: 'docena',
     case: 'caja',
-    box: 'paquete',
+    box: 'caja grande',
     bunch: 'manojo',
+    pack: 'paquete',
+    can: 'lata',
   },
   status: {
     processing: 'Procesando',
@@ -142,6 +144,8 @@ const en: typeof es = {
     case: 'case',
     box: 'box',
     bunch: 'bunch',
+    pack: 'pack',
+    can: 'can',
   },
   status: {
     processing: 'Processing',

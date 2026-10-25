@@ -1,4 +1,5 @@
 import { onRequest, type Request } from "firebase-functions/v2/https";
+import { DEFAULT_TIMEZONE, todayIn } from "@teremu/shared";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
 import { createHash } from "node:crypto";
@@ -84,7 +85,7 @@ import {
   updateRevenue,
 } from "./pipeline.js";
 import { toBaseTotal } from "./fx/convert.js";
-import { packFor, profileOf } from "./countries/index.js";
+import { packFor, profileOf, taxSettingFor } from "./countries/index.js";
 import { listingBackend } from "./listing/index.js";
 import { adoptedCurrency } from "./baseCurrency.js";
 import { createImport, importView, loadImport, placeInUse, readMenu, readWebsite } from "./listing/jobs.js";
@@ -289,6 +290,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // Data-only view of the country pack: the client renders from this
       // and carries no per-country code (docs/multi-currency.md).
       countryProfile: profileOf(packFor(planInfo.country)),
+      // Owner overrides of the pack's menu-price tax setting (A6); null = pack.
+      pricesIncludeTax: planInfo.pricesIncludeTax,
+      salesTaxRate: planInfo.salesTaxRate,
+      // Resolved once, server-side (countries/index.ts taxSettingFor): the
+      // margin math in the app and the assistant read the same value.
+      tax: taxSettingFor(planInfo.country, planInfo),
       // "Find your restaurant" first-run step (docs/restaurant-listing.md):
       // the app sends an owner of a `pending` location to /setup/restaurant.
       setupListing: planInfo.setupListing,
@@ -564,7 +571,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         );
         const amount = fx ? toBaseTotal(printedTotal, fx.rate) : printedTotal;
         const expense: ExpenseDoc = {
-          date: invoiceDate ?? new Date().toISOString().slice(0, 10),
+          date: invoiceDate ?? todayIn(planInfo.timezone),
           amount,
           tag: tag.trim(),
           tagKey: normalizeName(tag),
@@ -624,7 +631,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
           if (inv.source === "email" && inv.scanRefunded) {
             const quota = await consumeScan(rid);
             if (!quota.ok) return paywall("scan_limit");
-            await ref.update({ scanRefunded: false, scanPeriod: monthKey() });
+            await ref.update({ scanRefunded: false, scanPeriod: monthKey(planInfo.timezone) });
           }
           await recordOutcome(inv, "restored");
           // Back to where it was: OCR either failed or produced a draft.
@@ -1121,6 +1128,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       }
       if (body.fxDefaultSource !== undefined) patch.fxDefaultSource = body.fxDefaultSource;
       if (body.fxOptIns !== undefined) patch.fxOptIns = body.fxOptIns;
+      // Menu-price tax override (A6): null hands the field back to the pack.
+      if (body.pricesIncludeTax !== undefined) patch.pricesIncludeTax = body.pricesIncludeTax;
+      if (body.salesTaxRate !== undefined) patch.salesTaxRate = body.salesTaxRate;
       if (Object.keys(patch).length === 0) return json(res, 400, { error: "nothing to update" });
       await db.collection("restaurants").doc(rid).set(patch, { merge: true });
       return json(res, 200, { ok: true, ...patch });
@@ -1238,7 +1248,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       plan: planInfo.plan,
       currency: planInfo.currency,
       locale: await userLocale(),
-      timezone: planInfo.timezone ?? "Europe/Madrid",
+      timezone: planInfo.timezone ?? DEFAULT_TIMEZONE,
       permissions: permissionList(member),
       // Pre-resolved facts (manifest.facts reads these by path) so plan /
       // scans-left / "do I have the assistant" are answered from context
@@ -1337,7 +1347,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
   if (head === "email") {
     if (m === "GET" && seg.length === 1) {
       if (!can(member, "integrations")) return forbidden(res);
-      return json(res, 200, await emailStatus(rid, planInfo.plan));
+      return json(res, 200, await emailStatus(rid, planInfo.plan, planInfo.timezone));
     }
     // Finish a connect: completeOAuth checks the CALLER started this flow
     // and re-checks their rights on the restaurant it was for.

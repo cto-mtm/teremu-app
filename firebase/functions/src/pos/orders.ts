@@ -1,4 +1,5 @@
 import { logger } from "firebase-functions/v2";
+import { DEFAULT_TIMEZONE } from "@teremu/shared";
 import type { PosProvider } from "../models.js";
 import { DEFAULT_CURRENCY } from "../models.js";
 import type { PlanLimits } from "../plan.js";
@@ -54,7 +55,7 @@ export interface DayContext {
 export async function dayContext(rid: string, integ: IntegrationDoc): Promise<DayContext> {
   const rest = await db().doc(`restaurants/${rid}`).get();
   return {
-    timeZone: (rest.get("timezone") as string | undefined) || "UTC",
+    timeZone: (rest.get("timezone") as string | undefined) || DEFAULT_TIMEZONE,
     cutoff: integ.settings?.businessDayCutoff || DEFAULT_CUTOFF,
     currency: (rest.get("currency") as string | undefined) || DEFAULT_CURRENCY,
   };

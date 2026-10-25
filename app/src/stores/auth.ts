@@ -7,6 +7,7 @@ import { setActiveRid } from '../lib/activeLocation'
 import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
 import { detectRegion } from '../lib/regions'
 import { currentLocale, setCurrency, setLocale, type SupportedLocale } from '../i18n'
+import { NO_TAX, type TaxSetting } from '@teremu/shared'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 }
@@ -167,8 +168,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** After /me: the stored language wins — unless none is stored yet
-   * (first sync after this shipped) or one was just picked on the login
-   * page; then this device's current language is saved instead. */
+   * (a new person, or the first sync after this shipped) or one was just
+   * picked on the login page; then this device's current language is
+   * saved instead. "Current" is the first-paint resolution in
+   * src/lib/locale.ts (device → browser → default), so a US sign-up that
+   * never touched the switcher persists `en`, not the authored default. */
   function syncLocale(me: Me): void {
     const current = currentLocale()
     if (me.locale && !localeChosenSignedOut) {
@@ -198,10 +202,20 @@ export const useAuthStore = defineStore('auth', () => {
     await fbSignOut()
   }
 
+  // ── Menu-price tax setting (docs/us-market-readiness.md A6) ─────
+  // Resolved by the API (override, else the country pack) and shipped on
+  // GET /me as `tax`; every margin in the app goes through it, and the
+  // assistant reads the same server-side value.
+  const tax = computed<TaxSetting>(() => profile.value?.tax ?? NO_TAX)
+  /** The unit system the country pack prefers (A5); the device may override (stores/settings.ts). */
+  const defaultUnitSystem = computed<'metric' | 'imperial'>(() => profile.value?.countryProfile?.unitSystem ?? 'metric')
+
   return {
     user,
     ready,
     profile,
+    tax,
+    defaultUnitSystem,
     error,
     busy,
     whenReady,

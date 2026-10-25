@@ -1,5 +1,7 @@
 import { getFirestore } from "firebase-admin/firestore";
 import type { AssistantContext } from "@mtmcya/assistant";
+import type { TaxSetting } from "@teremu/shared";
+import { taxSettingFor } from "../../countries/index.js";
 import { ingredientDocSchema, menuItemDocSchema, type IngredientDoc, type MenuItemDoc } from "../../models.js";
 
 /**
@@ -45,7 +47,20 @@ export const loadMenuItems = (ctx: AssistantContext): Promise<Map<string, MenuIt
   loadById(ctx, "menuItems", menuItemDocSchema);
 
 /** The restaurant's labor rate (0 when unset) — plate costing needs it. */
-export async function laborRate(ctx: AssistantContext): Promise<number> {
-  const rate = (await tenantRef(ctx).get()).get("laborRatePerHour");
-  return typeof rate === "number" ? rate : 0;
+/** The costing settings on the restaurant doc, in ONE read: the kitchen
+ * labor rate and the menu-price tax setting (resolved by the same
+ * `taxSettingFor` that `GET /me` uses, so the assistant's margin is the
+ * one on the ficha de plato — docs/us-market-readiness.md A6). */
+export async function costingSettings(ctx: AssistantContext): Promise<{ laborRatePerHour: number; tax: TaxSetting }> {
+  const snap = await tenantRef(ctx).get();
+  const rate = snap.get("laborRatePerHour");
+  const inclusive = snap.get("pricesIncludeTax");
+  const salesTaxRate = snap.get("salesTaxRate");
+  return {
+    laborRatePerHour: typeof rate === "number" ? rate : 0,
+    tax: taxSettingFor((snap.get("country") as string | undefined) ?? null, {
+      pricesIncludeTax: typeof inclusive === "boolean" ? inclusive : null,
+      salesTaxRate: typeof salesTaxRate === "number" ? salesTaxRate : null,
+    }),
+  };
 }

@@ -47,6 +47,9 @@ export const lineItemSchema = z.object({
   // Set by the arithmetic validation stage when qty × unitPrice diverges
   // from the line total — Triage highlights these rows.
   flagged: z.boolean().optional(),
+  // Set at approval when the line's unit does not convert to its
+  // ingredient's stock unit: nothing was applied for it (A9).
+  unitMismatch: z.boolean().optional(),
   // Assigned by OCR; copied onto newly created ingredients at approval.
   category: categorySchema.optional(),
   // Second taxonomy level (meat → beef, produce → fruit…). Best-effort
@@ -427,6 +430,14 @@ export const restaurantDocSchema = z.object({
   // from the device region by the app, shown, editable, never asked.
   country: countryCodeSchema.optional(),
   timezone: timezoneSchema.optional(),
+  // Where Stripe Checkout said the bill goes (billing.ts webhook) — tax
+  // reporting, independent of `country`, which drives behaviour.
+  billingCountry: countryCodeSchema.optional(),
+  // Owner overrides of the country pack's menu-price tax setting
+  // (docs/us-market-readiness.md A6): US rates are local, some Spanish
+  // places run mixed rates. Absent/null = the pack's value.
+  pricesIncludeTax: z.boolean().nullable().optional(),
+  salesTaxRate: z.number().min(0).max(0.5).nullable().optional(),
   // Who set country/timezone: the device guess, the owner in Settings, or
   // the confirmed Google listing. Only an owner choice is never overwritten.
   regionSource: z.enum(["device", "owner", "listing"]).optional(),
@@ -492,6 +503,9 @@ export const updateRestaurantSchema = z.object({
   regionSource: z.enum(["device", "owner"]).optional(),
   fxDefaultSource: fxSourceSchema.optional(),
   fxOptIns: z.array(fxSourceSchema).max(8).optional(),
+  // null clears the override back to the country pack's value.
+  pricesIncludeTax: z.boolean().nullable().optional(),
+  salesTaxRate: z.number().min(0).max(0.5).nullable().optional(),
 });
 
 // ── Restaurant listing import (docs/restaurant-listing.md) ──────────

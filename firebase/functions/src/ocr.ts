@@ -4,6 +4,7 @@ import { chatCompletion, llmEnabled, parseModelJson } from "./llm.js";
 import {
   categorySchema,
   currencySchema,
+  DECIMAL_POINT_CURRENCIES,
   DEFAULT_CURRENCY,
   docTypeSchema,
   foldName,
@@ -13,7 +14,9 @@ import {
   subcategorySchema,
   unitSchema,
   type Currency,
+  type DocType,
   type LineItem,
+  type Unit,
 } from "./models.js";
 import type { CountryPack } from "./countries/types.js";
 
@@ -31,14 +34,14 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
 
 {
   "kind": "one of: receipt (a purchase receipt or vendor invoice/delivery note), other (anything that is not a purchase document: people, food photos, menus, screenshots, blank pages)",
-  "docType": "one of: invoice (factura — a billing document, usually with tax/total due), delivery_note (albarán/remisión/nota de entrega — goods received, often without prices)",
+  "docType": "one of: invoice (factura / bill — a PRICED document, even one signed on delivery), delivery_note (albarán / packing slip / nota de entrega — goods received, NO prices or only reference prices), credit_memo (abono / factura rectificativa / credit note / credit memo / return — the vendor crediting money back; report its quantities and amounts as POSITIVE numbers)",
   "confidence": 0.9,
   "vendor": "vendor or supplier business name, or null",
   "date": "invoice date as YYYY-MM-DD, or null",
   "currency": "ISO 4217 code of the currency the LINE prices are printed in (USD, EUR, VES, MXN, GBP, CAD), or null if it cannot be determined",
   "printedFxRate": null,
   "lineItems": [
-    { "name": "clean product name", "match": "EXACT name from KNOWN INGREDIENTS if it is the same product, else null", "qty": 1.0, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen, case, box, bunch", "unitPrice": 0.00, "total": 0.00, "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other", "subcategory": "the specific type within the category, or null", "packQty": null, "packUnit": null }
+    { "name": "clean product name", "match": "EXACT name from KNOWN INGREDIENTS if it is the same product, else null", "qty": 1.0, "unit": "one of: kg, g, L, ml, lb, oz, gal, qt, pt, floz, each, dozen, case, box, bunch, pack, can", "unitPrice": 0.00, "total": 0.00, "category": "one of: produce, meat, poultry, seafood, dairy, bakery, dry, beverage, alcohol, cleaning, other", "subcategory": "the specific type within the category, or null", "packQty": null, "packUnit": null }
   ],
   "total": 0.00
 }
@@ -49,9 +52,11 @@ Rules:
 - "vendor" is the SELLER who issued the document — never the buyer/customer it is billed or delivered to. Invoices usually show both parties: the buyer appears in a cliente / bill to / deliver to box. When a BUYER name is provided below, that business (or close variants of it) is the customer, NOT the vendor. If the only business name you can read is the buyer's, set "vendor" to null.
 - Normalize product names (e.g. "TOM RMA 25#" -> "Roma Tomatoes").
 - "match": when a KNOWN INGREDIENTS list is provided below and a line is the same product (any spelling/abbreviation/language), copy that list entry EXACTLY into "match". Otherwise null. Never invent names not on the list.
-- For case/box/bunch lines, extract the contents of ONE container when printed (e.g. "CASE 24x400g" -> "packQty": 9.6, "packUnit": "kg"). Use null when not printed.
+- For case/box/pack/can/bunch lines, extract the contents of ONE container when printed, as COUNT/SIZE: "CASE 24x400g" -> "packQty": 9.6, "packUnit": "kg"; "4/5 LB" (4 bags of 5 lb) -> "packQty": 20, "packUnit": "lb"; "12/32 OZ" -> "packQty": 24, "packUnit": "lb"; "6/#10 CAN" (six #10 cans) -> "unit": "case", "packQty": 6, "packUnit": "each". Use null when not printed.
+- Catch-weight lines are billed by weight ("1 CS  38.6 LB @ 3.29/LB"): qty is the billed weight (38.6), unit "lb", unitPrice the per-lb price.
 - If a line shows only a total, estimate unitPrice = total / qty.
-- Map ambiguous units to the closest allowed unit ("ea", "pc" -> "each"; "#" -> "lb").
+- Units: "ea", "pc", "pcs" -> "each"; "cs", "ca", "ct" -> "case"; "pk", "bg", "bag" -> "pack"; "bx" -> "box"; "dz", "doz" -> "dozen"; "cn" -> "can". A number followed by "#" is pounds ("25#" = 25 lb); "#10" / "#5" / "#300" next to "CAN" or after a slash is a CAN SIZE, never a weight.
+- A credit memo lists what was returned or credited: positive numbers, docType "credit_memo". A line with a NEGATIVE amount on an ordinary invoice (a discount, a returned item) is not a product line: leave it out of lineItems; the printed total already reflects it.
 - "subcategory" must come from ITS OWN category's list (or be null when unsure): ${SUBCATEGORY_GUIDE}.
 - Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
 - Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
@@ -63,7 +68,7 @@ Rules:
 export interface OcrResult {
   vendor: string | null;
   date: string | null;
-  docType: "invoice" | "delivery_note";
+  docType: DocType;
   lineItems: LineItem[];
   total: number;
   confidence: number;
@@ -90,6 +95,8 @@ export interface ExtractionContext {
   baseCurrency?: Currency;
   /** The restaurant's country pack: OCR hints, tax-line names, aliases. */
   pack?: CountryPack;
+  /** The restaurant's IANA zone — "today" for a document with no date (A4). */
+  timezone?: string | null;
 }
 
 // ── Zod schema for the (untrusted) model output ─────────────────────
@@ -104,7 +111,7 @@ export interface ExtractionContext {
  * decimal. Real JSON numbers pass through — their misreads are the
  * arithmetic stage's job (pipeline.ts repairThousands).
  */
-export function looseNumber(value: unknown): unknown {
+export function looseNumber(value: unknown, opts: NumberConvention = {}): unknown {
   if (typeof value !== "string") return value;
   let s = value.replace(/[^\d.,-]/g, "");
   const dot = s.lastIndexOf(".");
@@ -116,39 +123,104 @@ export function looseNumber(value: unknown): unknown {
     for (const sep of [".", ","]) {
       if (s.split(sep).length > 2) s = s.split(sep).join("");
     }
-    s = s.replace(",", ".");
+    // A lone comma before exactly three digits is ambiguous: "1,250" is
+    // 1250 on a US invoice and 1.250 kg on a Spanish one. The restaurant's
+    // own money convention decides (docs/us-market-readiness.md A10).
+    if (opts.commaGroups && /^-?\d{1,3}(,\d{3})$/.test(s)) s = s.replace(",", "");
+    else s = s.replace(",", ".");
   }
   return s;
 }
-const num = () => z.preprocess(looseNumber, z.coerce.number());
 
-const ocrLineSchema = z.object({
-  name: z.string().catch(""),
-  match: z.string().nullable().catch(null),
-  qty: num().pipe(z.number().positive()).catch(1),
-  unit: unitSchema.catch("each"),
-  unitPrice: num().pipe(z.number().min(0)).catch(0),
-  total: num().pipe(z.number().min(0)).catch(0),
-  category: categorySchema.catch("other"),
-  subcategory: subcategorySchema.nullable().catch(null),
-  packQty: num().pipe(z.number().positive()).nullable().catch(null),
-  packUnit: unitSchema.nullable().catch(null),
+/** How the restaurant writes numbers — derived from its base currency,
+ * which is a money convention, not a country rule. */
+export interface NumberConvention {
+  /** "," groups thousands and "." is the decimal (USD, CAD, GBP, MXN). */
+  commaGroups?: boolean;
+}
+export const conventionFor = (base: Currency | undefined): NumberConvention => ({
+  commaGroups: base ? DECIMAL_POINT_CURRENCIES.has(base) : false,
 });
 
-const ocrResponseSchema = z.object({
-  error: z.string().optional().catch(undefined),
-  kind: z.enum(["receipt", "other"]).catch("receipt"),
-  docType: docTypeSchema.catch("invoice"),
-  confidence: z.coerce.number().min(0).max(1).catch(0.5),
-  vendor: z.string().min(1).nullable().catch(null),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().catch(null),
-  // Three states on purpose (see OcrResult.currency): an off-vocabulary
-  // code degrades to "not reported", never to "assumed".
-  currency: currencySchema.nullable().optional().catch(undefined),
-  printedFxRate: num().pipe(z.number().positive()).nullable().optional().catch(null),
-  lineItems: z.array(ocrLineSchema).catch([]),
-  total: num().pipe(z.number().positive()).catch(0),
-});
+/**
+ * Deterministic unit aliases — the spellings distributors actually print
+ * (docs/us-market-readiness.md A9/A10). The prompt asks for the enum, but
+ * "LB", "CS" or "lbs" is the likeliest slip and would otherwise degrade
+ * to "each" and put three "units" of a case into stock.
+ */
+const UNIT_ALIASES: Record<string, Unit> = {
+  kg: "kg", kgs: "kg", kilo: "kg", kilos: "kg", kilogram: "kg", kilograms: "kg",
+  g: "g", gr: "g", grs: "g", gram: "g", grams: "g", gramo: "g", gramos: "g",
+  l: "L", lt: "L", ltr: "L", ltrs: "L", litre: "L", litres: "L", liter: "L", liters: "L", litro: "L", litros: "L",
+  ml: "ml", mls: "ml",
+  lb: "lb", lbs: "lb", pound: "lb", pounds: "lb", "#": "lb", libra: "lb", libras: "lb",
+  oz: "oz", ozs: "oz", ounce: "oz", ounces: "oz", onza: "oz", onzas: "oz",
+  gal: "gal", gals: "gal", gallon: "gal", gallons: "gal", galon: "gal", galones: "gal",
+  qt: "qt", qts: "qt", quart: "qt", quarts: "qt",
+  pt: "pt", pts: "pt", pint: "pt", pints: "pt",
+  floz: "floz", "fl oz": "floz", "fl.oz": "floz", "fl. oz": "floz", "fl.oz.": "floz",
+  each: "each", ea: "each", pc: "each", pcs: "each", piece: "each", pieces: "each", unit: "each", units: "each", ud: "each", uds: "each", unidad: "each", unidades: "each",
+  dozen: "dozen", dz: "dozen", doz: "dozen", docena: "dozen", docenas: "dozen",
+  case: "case", cases: "case", cs: "case", ca: "case", ct: "case", caja: "case", cajas: "case",
+  box: "box", boxes: "box", bx: "box",
+  bunch: "bunch", bunches: "bunch", bn: "bunch", manojo: "bunch", manojos: "bunch",
+  pack: "pack", packs: "pack", pk: "pack", pkg: "pack", bg: "pack", bag: "pack", bags: "pack", bolsa: "pack", bolsas: "pack", paquete: "pack", paquetes: "pack",
+  can: "can", cans: "can", cn: "can", lata: "can", latas: "can",
+};
+export function normalizeUnit(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const key = value.trim().toLowerCase().replace(/\.$/, "");
+  return UNIT_ALIASES[key] ?? UNIT_ALIASES[key.replace(/\s+/g, " ")] ?? value;
+}
+
+const unitField = () => z.preprocess(normalizeUnit, unitSchema);
+
+/** Two schema variants (comma groups or not), built once each: the number
+ * convention is the restaurant's, so the pair is picked per document. */
+const SCHEMAS = new Map<boolean, ReturnType<typeof buildSchemas>>();
+function schemasFor(convention: NumberConvention) {
+  const key = Boolean(convention.commaGroups);
+  let built = SCHEMAS.get(key);
+  if (!built) SCHEMAS.set(key, (built = buildSchemas({ commaGroups: key })));
+  return built;
+}
+function buildSchemas(convention: NumberConvention) {
+  const num = () => z.preprocess((v) => looseNumber(v, convention), z.coerce.number());
+  // A sign on a quantity or price is a credit memo written with minus signs
+  // (or a model slip): the magnitude is what the line means. The TOTAL keeps
+  // its sign through parsing because sanitize() uses it to drop a discount
+  // line from an ordinary invoice.
+  const magnitude = () => num().transform((n) => Math.abs(n));
+  const line = z.object({
+    name: z.string().catch(""),
+    match: z.string().nullable().catch(null),
+    qty: magnitude().pipe(z.number().positive()).catch(1),
+    unit: unitField().catch("each"),
+    unitPrice: magnitude().pipe(z.number().min(0)).catch(0),
+    total: num().catch(0),
+    category: categorySchema.catch("other"),
+    subcategory: subcategorySchema.nullable().catch(null),
+    packQty: num().pipe(z.number().positive()).nullable().catch(null),
+    packUnit: unitField().nullable().catch(null),
+  });
+  const response = z.object({
+    error: z.string().optional().catch(undefined),
+    kind: z.enum(["receipt", "other"]).catch("receipt"),
+    docType: docTypeSchema.catch("invoice"),
+    confidence: z.coerce.number().min(0).max(1).catch(0.5),
+    vendor: z.string().min(1).nullable().catch(null),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().catch(null),
+    // Three states on purpose (see OcrResult.currency): an off-vocabulary
+    // code degrades to "not reported", never to "assumed".
+    currency: currencySchema.nullable().optional().catch(undefined),
+    printedFxRate: num().pipe(z.number().positive()).nullable().optional().catch(null),
+    lineItems: z.array(line).catch([]),
+    // A credit memo's printed total may carry a sign; the magnitude is stored.
+    total: num().transform((n) => Math.abs(n)).catch(0),
+  });
+  return { line, response };
+}
+type OcrResponse = z.infer<ReturnType<typeof buildSchemas>["response"]>;
 
 /**
  * Country-pack aliases ("Bs.D" → "VES") applied to the RAW reply before
@@ -169,7 +241,7 @@ function applyCurrencyAliases(raw: unknown, aliases: Record<string, Currency> | 
 }
 
 function sanitize(
-  parsed: z.infer<typeof ocrResponseSchema>,
+  parsed: OcrResponse,
   knownIngredients: string[],
   restaurantName: string | null,
   notVendorNames: string[] = [],
@@ -194,15 +266,19 @@ function sanitize(
   for (const [alias, name] of aliases) if (!canonical.has(alias)) canonical.set(alias, name);
   const canonicalOf = (match: string): string | undefined =>
     canonical.get(match.toLowerCase().trim()) ?? aliases.get(foldName(match));
+  // A credit memo is stored as positive magnitudes (approval applies the
+  // sign); on an ordinary invoice a negative line is a discount or a
+  // return already reflected in the printed total — not a product.
+  const credit = parsed.docType === "credit_memo";
   const items: LineItem[] = parsed.lineItems
-    .filter((l) => l.name.trim().length > 0)
-    .map(({ match, ...l }) => ({
+    .filter((l) => l.name.trim().length > 0 && (credit || l.total >= 0))
+    .map(({ match, total, ...l }) => ({
       ...l,
       name: (match && canonicalOf(match)) || l.name.trim(),
       // A crossed pair (meat + "fruit") degrades to null, never an error.
       subcategory: pairSubcategory(l.category, l.subcategory),
-      // business fallback: derive a missing line total from qty × price
-      total: l.total > 0 ? l.total : +(l.qty * l.unitPrice).toFixed(2),
+      // The magnitude; a missing line total is derived from qty × price.
+      total: Math.abs(total) > 0 ? Math.abs(total) : +(l.qty * l.unitPrice).toFixed(2),
     }));
   return {
     vendor,
@@ -262,7 +338,7 @@ export async function extractInvoice(
       maxTokens: imagesBase64.length > 1 ? 4096 : 2560,
       temperature: 0.1,
       label: "ocr",
-      json: { name: "invoice_extraction", schema: ocrResponseSchema },
+      json: { name: "invoice_extraction", schema: schemasFor(conventionFor(context.baseCurrency)).response },
     },
   );
   return toResult(raw, context);
@@ -293,7 +369,8 @@ function contextPrompt(context: ExtractionContext): string {
 /** Model reply → OcrResult, the same for images and text. Exported for
  * the country-pack tests (aliases and never-a-vendor names). */
 export function toResult(raw: string, context: ExtractionContext): OcrResult {
-  const parsed = ocrResponseSchema.parse(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases));
+  const { response } = schemasFor(conventionFor(context.baseCurrency));
+  const parsed = response.parse(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases));
   if (parsed.error)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, printedFxRate: null, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).
@@ -359,7 +436,7 @@ export async function extractInvoiceFromText(text: string, context: ExtractionCo
       // Text is only ever emailed data (a PDF text layer, a mail body):
       // Gemini on Vertex. Page images stay on the default provider.
       backend: "vertex",
-      json: { name: "invoice_extraction", schema: ocrResponseSchema },
+      json: { name: "invoice_extraction", schema: schemasFor(conventionFor(context.baseCurrency)).response },
     },
   );
   return toResult(raw, context);

@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../stores/auth'
+import type { SupportedLocale } from '../i18n'
+import { legalUrl } from '../lib/legal'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 import logoColor from '../assets/logo-color.svg'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
+// Legal documents live on teremu.com (src/lib/legal.ts); link straight there.
+const privacyUrl = computed(() => legalUrl('privacy', locale.value as SupportedLocale))
+const termsUrl = computed(() => legalUrl('terms', locale.value as SupportedLocale))
 const router = useRouter()
 const auth = useAuthStore()
 
@@ -47,6 +52,15 @@ watch(
       {{ auth.busy ? t('common.loading') : t('auth.google') }}
     </button>
     <p v-if="auth.error" class="text-xs text-coral-600">{{ t('auth.error') }}</p>
+    <!-- Public legal pages (docs/us-market-readiness.md A2). -->
+    <i18n-t keypath="legal.acceptNotice" tag="p" class="max-w-xs text-xs text-smoke">
+      <template #terms>
+        <a :href="termsUrl" target="_blank" rel="noopener" class="underline">{{ t('legal.linkTerms') }}</a>
+      </template>
+      <template #privacy>
+        <a :href="privacyUrl" target="_blank" rel="noopener" class="underline">{{ t('legal.linkPrivacy') }}</a>
+      </template>
+    </i18n-t>
     <div class="mt-2">
       <LocaleSwitcher />
     </div>

@@ -41,6 +41,9 @@ export const lineItemSchema = z.object({
   ingredientId: z.string().nullable().optional(),
   // Set by the server's arithmetic validation when qty × price ≠ total.
   flagged: z.boolean().optional(),
+  // Set at approval when the unit did not convert to the ingredient's
+  // stock unit: nothing was applied for this line.
+  unitMismatch: z.boolean().optional(),
   // OCR-assigned category, copied onto new ingredients at approval.
   category: categorySchema.optional(),
   // Second taxonomy level (meat → beef) — .catch(null) so an off-vocab
@@ -378,6 +381,11 @@ export const countryProfileSchema = z.object({
   defaultSource: fxSourceSchema,
   optInSources: z.array(fxSourceSchema),
   pulseCards: z.array(z.object({ id: z.string(), titleKey: z.string() })),
+  // Menu-price tax default and preferred units (docs/us-market-readiness.md
+  // A5/A6). Lenient: an older API reads as "no adjustment, metric".
+  pricesIncludeTax: z.boolean().optional().catch(false),
+  salesTaxRate: z.number().nullable().optional().catch(null),
+  unitSystem: z.enum(['metric', 'imperial']).optional().catch('metric'),
 })
 
 /** GET /me — resolves (and on first sign-in bootstraps) membership for
@@ -407,6 +415,12 @@ export const meSchema = z.object({
   fxDefaultSource: fxSourceSchema.nullable().optional().catch(null),
   fxOptIns: z.array(fxSourceSchema).optional().catch([]),
   countryProfile: countryProfileSchema.optional().catch(undefined),
+  // Owner overrides of the pack's tax setting; null = the pack's value.
+  pricesIncludeTax: z.boolean().nullable().optional().catch(null),
+  salesTaxRate: z.number().nullable().optional().catch(null),
+  // The EFFECTIVE setting, resolved server-side (override, else pack): what
+  // every margin uses. Absent on an older API → no adjustment.
+  tax: z.object({ pricesIncludeTax: z.boolean(), rate: z.number() }).optional().catch(undefined),
   // "Find your restaurant" first-run step (docs/restaurant-listing.md);
   // an API from before it reads as done, so nobody gets redirected.
   setupListing: setupListingSchema.catch('done'),

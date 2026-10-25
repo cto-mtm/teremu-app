@@ -53,10 +53,13 @@ export interface PlateCost {
   missing: boolean;
 }
 
-/** Recipe qty expressed in the ingredient's stock unit (price basis). */
-export const qtyInStockUnit = (line: CostRecipeLine, ing: CostIngredient): number => {
+/** Recipe qty expressed in the ingredient's stock unit (price basis), or
+ * null when the units do not convert (150 g of an ingredient stocked by
+ * the case): the caller marks the cost incomplete instead of pricing
+ * 150 cases (docs/us-market-readiness.md A9). */
+export const qtyInStockUnit = (line: CostRecipeLine, ing: CostIngredient): number | null => {
   if (!line.unit) return line.qty; // legacy: qty already in stock units
-  return convertQty(line.qty, line.unit, ing.unit) ?? line.qty;
+  return convertQty(line.qty, line.unit, ing.unit);
 };
 
 /** Labor cost of one plate's prep time at the restaurant's rate. */
@@ -95,18 +98,44 @@ export function plateCost<I extends CostIngredient, M extends CostMenuItem>(
       continue;
     }
     const ing = line.ingredientId ? ingredients.get(line.ingredientId) : undefined;
-    if (!ing || ing.lastUnitPrice == null) {
+    const qty = ing ? qtyInStockUnit(line, ing) : null;
+    if (!ing || ing.lastUnitPrice == null || qty == null) {
       missing = true;
       continue;
     }
-    foodCost += ing.lastUnitPrice * qtyInStockUnit(line, ing);
+    foodCost += ing.lastUnitPrice * qty;
   }
   return { cost: foodCost + laborCost, foodCost, laborCost, missing };
 }
 
-/** Margin % over price, or null when the dish has no price. */
-export function marginPct(price: number, cost: number): number | null {
-  return price > 0 ? ((price - cost) / price) * 100 : null;
+/**
+ * How the restaurant's menu prices relate to tax (docs/us-market-
+ * readiness.md A6). Spain prints IVA-inclusive prices (10 % hostelería),
+ * the US prints pre-tax prices and adds sales tax at the till. Margin is
+ * revenue the restaurant keeps against plate cost, so an inclusive price
+ * is netted first — otherwise a Spanish margin is overstated by the tax.
+ * The country pack supplies the default; the restaurant may override.
+ */
+export interface TaxSetting {
+  pricesIncludeTax: boolean;
+  /** Fraction, e.g. 0.10. Ignored when prices are not inclusive. */
+  rate: number;
+}
+
+/** No adjustment: pre-tax prices, or a market whose rate we do not know. */
+export const NO_TAX: TaxSetting = { pricesIncludeTax: false, rate: 0 };
+
+/** The price net of tax when the menu price includes it; else as printed. */
+export function netPrice(price: number, tax: TaxSetting = NO_TAX): number {
+  if (!tax.pricesIncludeTax || !(tax.rate > 0)) return price;
+  return price / (1 + tax.rate);
+}
+
+/** Margin % over the NET price, or null when the dish has no price. The
+ * one formula (app, assistant, demo seed): price in, tax setting in. */
+export function marginPct(price: number, cost: number, tax: TaxSetting = NO_TAX): number | null {
+  const net = netPrice(price, tax);
+  return net > 0 ? ((net - cost) / net) * 100 : null;
 }
 
 /**

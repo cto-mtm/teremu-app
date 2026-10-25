@@ -6,6 +6,7 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useListingStore } from '../stores/listing'
 import { useAuthStore } from '../stores/auth'
+import { PUBLIC } from '../router'
 import { AssistantModal, useAssistant } from '@mtmcya/assistant/vue'
 import BootLoader from './BootLoader.vue'
 import LocationSwitcher from './LocationSwitcher.vue'
@@ -23,8 +24,11 @@ const kitchenStore = useKitchenStore()
 const listingStore = useListingStore()
 const authStore = useAuthStore()
 
-// Chromeless routes: the scanner owns the viewport, login has no nav.
-const bare = computed(() => route.name === 'scan' || route.name === 'login')
+// Chromeless routes: the scanner owns the viewport, login has no nav, and
+// the public legal pages have none for a signed-out visitor.
+const bare = computed(
+  () => route.name === 'scan' || route.name === 'login' || (!authStore.user && PUBLIC.has(String(route.name))),
+)
 // Focused flows keep the nav but lose the phone FABs: the restaurant
 // setup's sticky action bar sits exactly where they float.
 const focused = computed(() => route.name === 'restaurant-setup')
@@ -149,10 +153,15 @@ watch(
 
 // Bounce to /login on sign-out (the route guard only runs on
 // navigation, not on auth-state changes).
+// The route is in the source too: on a cold load of a public page the
+// first run happens before the router has resolved anything (no name
+// yet), and that must not read as "a private page" — it re-runs once the
+// route is known.
 watch(
-  () => [authStore.ready, authStore.user] as const,
-  ([ready, user]) => {
-    if (ready && !user && route.name !== 'login') {
+  () => [authStore.ready, authStore.user, route.name] as const,
+  ([ready, user, name]) => {
+    if (name == null) return
+    if (ready && !user && !PUBLIC.has(String(name))) {
       if (import.meta.env.DEV) {
         console.warn('[AppShell] redirecting to login — user is null, current route:', route.name)
       }

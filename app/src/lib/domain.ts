@@ -1,7 +1,7 @@
 // Pure domain math — no I/O, no Vue. Everything the Pulse, Menu and
 // Pantry pages derive client-side from the fetched collections.
 
-import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RecipeLine, RevenueEntry, Unit } from './types'
+import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RecipeLine, RevenueEntry, Unit, LineItem } from './types'
 import { convertQty } from './units'
 import {
   expandUsage,
@@ -32,6 +32,16 @@ const DAY_MS = 86_400_000
  */
 export const isFoodInvoice = (inv: Invoice): boolean =>
   inv.status === 'approved' && !inv.expenseTag && inv.docType !== 'delivery_note'
+
+/** +1 for a purchase, −1 for a credit memo: its amounts are stored as
+ * positive magnitudes and every spend sum applies the sign here
+ * (docs/us-market-readiness.md A8). */
+export const invoiceSign = (inv: Pick<Invoice, 'docType'>): 1 | -1 => (inv.docType === 'credit_memo' ? -1 : 1)
+/** A document's total as money in or out of the restaurant (null total = 0). */
+export const signedTotal = (inv: Pick<Invoice, 'docType' | 'total'>): number => (inv.total ?? 0) * invoiceSign(inv)
+/** A line's total with its document's sign. */
+export const signedLineTotal = (inv: Pick<Invoice, 'docType'>, line: Pick<LineItem, 'total'>): number =>
+  line.total * invoiceSign(inv)
 
 // ── Delivery-note reconciliation (albarán ↔ factura) ────────────────
 
@@ -78,7 +88,8 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
       !i.expenseTag &&
       (i.status === 'approved' || i.status === 'needs_review'),
   )
-  const bills = invoices.filter((i) => isFoodInvoice(i) && i.vendorName)
+  // Only facturas pair with an albarán: a credit memo is money back, not a bill (A8).
+  const bills = invoices.filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.vendorName)
 
   return notes.map((note) => {
     // Manual link wins over the heuristic.
@@ -112,7 +123,7 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
 export function reconciliationCandidates(invoices: Invoice[], note: Invoice): Invoice[] {
   const noteKey = note.vendorName ? normalizeName(note.vendorName) : ''
   return invoices
-    .filter((i) => isFoodInvoice(i) && i.id !== note.id)
+    .filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.id !== note.id)
     .sort((a, b) => {
       const aSame = a.vendorName && normalizeName(a.vendorName) === noteKey ? 0 : 1
       const bSame = b.vendorName && normalizeName(b.vendorName) === noteKey ? 0 : 1
@@ -190,16 +201,24 @@ export function realtimeSpend(
  * historical name for the call sites below and in the pages.
  */
 export { plateCost } from '@teremu/shared'
+import { marginPct, NO_TAX, type TaxSetting } from '@teremu/shared'
 
+/**
+ * Margin over the NET menu price (docs/us-market-readiness.md A6): `tax`
+ * is the restaurant's setting (`auth.tax` — the pack default or the
+ * owner's override), so an IVA-inclusive Spanish price is netted and a
+ * pre-tax US price is used as is. The formula itself is shared/src/cost.ts
+ * `marginPct`, the same one the assistant quotes.
+ */
 export function actualMarginPct(
   item: MenuItem,
   ingredients: Map<string, Ingredient>,
   menuItems: Map<string, MenuItem> = new Map(),
   laborRatePerHour = 0,
+  tax: TaxSetting = NO_TAX,
 ): { margin: number | null; cost: number; foodCost: number; laborCost: number; missing: boolean } {
   const costs = plateCost(item, ingredients, menuItems, laborRatePerHour)
-  if (item.price <= 0) return { margin: null, ...costs }
-  return { margin: ((item.price - costs.cost) / item.price) * 100, ...costs }
+  return { margin: marginPct(item.price, costs.cost, tax), ...costs }
 }
 
 /** % change between the last two known prices for an ingredient. */
@@ -220,6 +239,18 @@ function startOfWeek(d: Date): Date {
   x.setHours(0, 0, 0, 0)
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7)) // Monday
   return x
+}
+
+/**
+ * What a food invoice spent on FOOD: the sum of its lines, which is what
+ * ingredientSpend and the vendor pages add up too. The printed `total`
+ * also carries tax, delivery and deposits (docs/us-market-readiness.md
+ * A7) — dividing that by net revenue overstated food cost % in every
+ * market. A document with no priced lines falls back to its total.
+ */
+export function foodSpend(inv: Invoice): number {
+  const lines = inv.lineItems.reduce((s, l) => s + (l.total > 0 ? l.total : 0), 0)
+  return lines > 0 ? lines * invoiceSign(inv) : signedTotal(inv)
 }
 
 /**
@@ -245,9 +276,9 @@ export function weeklySeries(
     return weeks.find((w) => w.weekStart === ws) ?? null
   }
   for (const inv of invoices) {
-    if (!isFoodInvoice(inv) || inv.total == null) continue
+    if (!isFoodInvoice(inv)) continue
     const w = bucket(inv.invoiceDate, inv.createdAt)
-    if (w) w.expenses += inv.total
+    if (w) w.expenses += foodSpend(inv)
   }
   for (const r of revenue) {
     const w = bucket(r.date)
@@ -303,7 +334,7 @@ export function vendorSummaries(
     if (!key) continue
     const v = acc(key, inv.vendorName)
     v.invoiceCount += 1
-    v.totalSpend += inv.total ?? 0
+    v.totalSpend += signedTotal(inv)
     if (inv.invoiceDate && (!v.lastDate || inv.invoiceDate > v.lastDate)) v.lastDate = inv.invoiceDate
     for (const line of inv.lineItems) {
       if (line.category && line.category !== 'other') v.cats.add(line.category)
@@ -459,10 +490,10 @@ export function receiptsForIngredient(invoices: Invoice[], ing: Ingredient): Rec
           invoiceId: inv.id,
           date: inv.invoiceDate,
           vendorName: inv.vendorName,
-          qty: line.qty,
+          qty: line.qty * invoiceSign(inv),
           unit: line.unit,
           unitPrice: line.unitPrice,
-          total: line.total,
+          total: signedLineTotal(inv, line),
         })
       }
     }
@@ -523,7 +554,8 @@ export function productionPlan(
   for (const [ingredientId, entries] of raw) {
     const ing = ingredients.get(ingredientId)
     if (!ing) continue
-    const required = entries.reduce((s, e) => s + qtyInStockUnit(e, ing), 0)
+    // An unconvertible line counts as nothing here (its dish already reads as incomplete — A9).
+    const required = entries.reduce((s, e) => s + (qtyInStockUnit(e, ing) ?? 0), 0)
     const stock = Math.max(0, ing.theoreticalQty)
     rows.push({
       ingredient: ing,
@@ -556,6 +588,7 @@ export function menuEngineering(
   revenue: RevenueEntry[],
   ingredients: Map<string, Ingredient>,
   laborRatePerHour = 0,
+  tax: TaxSetting = NO_TAX,
 ): { points: MenuEngineeringPoint[]; avgUnits: number; avgMargin: number } {
   const units = new Map<string, number>()
   for (const r of revenue) {
@@ -567,7 +600,7 @@ export function menuEngineering(
     .map((m) => ({
       item: m,
       units: units.get(m.id) ?? 0,
-      margin: actualMarginPct(m, ingredients, menuMap, laborRatePerHour).margin ?? 0,
+      margin: actualMarginPct(m, ingredients, menuMap, laborRatePerHour, tax).margin ?? 0,
     }))
   if (raw.length === 0) return { points: [], avgUnits: 0, avgMargin: 0 }
   const avgUnits = raw.reduce((s, p) => s + p.units, 0) / raw.length
@@ -620,7 +653,7 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
     if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
     const key = normalizeName(inv.vendorName)
     const v = totals.get(key) ?? { name: inv.vendorName, total: 0 }
-    v.total += inv.total
+    v.total += signedTotal(inv)
     totals.set(key, v)
   }
   const top = [...totals.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 4)
@@ -643,8 +676,8 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
         const key = normalizeName(inv.vendorName)
         const seg = w.segments.find((s) => s.key === (topKeys.has(key) ? key : 'other'))
         if (seg) {
-          seg.amount += inv.total
-          w.total += inv.total
+          seg.amount += signedTotal(inv)
+          w.total += signedTotal(inv)
         }
         break
       }
@@ -672,7 +705,7 @@ export function ingredientSpend(
     for (const line of inv.lineItems) {
       const key = line.ingredientId ?? foldName(line.name)
       const row = map.get(key) ?? { ingredientId: line.ingredientId ?? null, name: line.name, total: 0 }
-      row.total += line.total
+      row.total += signedLineTotal(inv, line)
       map.set(key, row)
     }
   }
@@ -721,7 +754,7 @@ export function vendorWeeklyTotals(invoices: Invoice[], vendorKey: string): numb
     if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
     if (normalizeName(inv.vendorName) !== vendorKey) continue
     const i = weekIndex(inv.invoiceDate, weeks)
-    if (i >= 0) out[i] += inv.total
+    if (i >= 0) out[i] += signedTotal(inv)
   }
   return out
 }
@@ -774,7 +807,8 @@ export function costBreakdown(
         ingredient: ing,
         qty: line.qty,
         unit: line.unit ?? ing.unit, // display in the authored unit
-        cost: (ing.lastUnitPrice ?? 0) * qtyInStockUnit(line, ing),
+        // null = the units do not convert: shown as a zero-cost row; plateCost marks the dish incomplete (A9).
+        cost: (ing.lastUnitPrice ?? 0) * (qtyInStockUnit(line, ing) ?? 0),
       }
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
@@ -852,7 +886,7 @@ export function spendTree(
     if (!isFoodInvoice(inv)) continue
     const date = inv.invoiceDate ?? new Date(inv.createdAt).toISOString().slice(0, 10)
     if (date < cutoff) continue
-    foodTotal += inv.total ?? 0
+    foodTotal += signedTotal(inv)
     for (const line of inv.lineItems) {
       if (line.total <= 0) continue
       const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
@@ -869,9 +903,9 @@ export function spendTree(
         total: 0,
         ingredientId: line.ingredientId ?? null,
       }
-      acc.total += line.total
+      acc.total += signedLineTotal(inv, line)
       ings.set(ingKey, acc)
-      linesTotal += line.total
+      linesTotal += signedLineTotal(inv, line)
     }
   }
 
@@ -991,7 +1025,7 @@ export function groceryList(
   const rows: GroceryRow[] = []
   for (const ing of ingredients) {
     const totalUsed = (used.get(ing.id) ?? []).reduce(
-      (s, e) => s + qtyInStockUnit(e, ing),
+      (s, e) => s + (qtyInStockUnit(e, ing) ?? 0),
       0,
     )
     const usagePerDay = totalUsed / usageWindow

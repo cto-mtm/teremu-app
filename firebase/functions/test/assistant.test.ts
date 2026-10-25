@@ -110,6 +110,42 @@ describe("assistant", () => {
     expect(usage?.used).toBe(1);
   });
 
+  it("nets an IVA-inclusive menu price before the margin for a Spanish location (A6)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    await getFirestore().collection("restaurants").doc(owner.rid).set({ country: "ES" }, { merge: true });
+    const tomato = await seedIngredient(owner.rid, { name: "Tomate", nameKey: "tomate", unit: "kg", lastUnitPrice: 2, prevUnitPrice: 1.5 });
+    // 11 € on the menu is 10 € net of 10 % IVA; 4 kg × 2 = 8 cost → 20 %, not 27.3 %.
+    await seedMenuItem(owner.rid, { name: "Plato caro", price: 11, targetMarginPct: 70, recipe: [{ ingredientId: tomato.id, qty: 4 }] });
+
+    const t = await turn(owner.token, owner.rid, "¿Qué platos tienen menos margen?");
+    expect(t.errors).toEqual([]);
+    const rows = t.toolOutputs[0] as Array<{ name: string; marginPct: number | null }>;
+    expect(rows[0]).toMatchObject({ name: "Plato caro", marginPct: 20 });
+  });
+
+  it("labels its cards and chips in the person's language (A11)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const metaFor = async (locale: "es" | "en") => {
+      await getFirestore().collection("users").doc(owner.uid).set({ locale }, { merge: true });
+      const res = await fetch(`${ASSISTANT}/conversation`, {
+        headers: { Authorization: `Bearer ${owner.token}`, "X-Restaurant-Id": owner.rid, "X-Assistant-Version": "0" },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { meta: { locale: string; tools: Array<{ name: string; label?: string; output?: { items?: { properties?: Record<string, { card?: { label?: unknown } }> } } }> } };
+      return body.meta;
+    };
+    const en = await metaFor("en");
+    expect(en.locale).toBe("en");
+    expect(en.tools.find((t) => t.name === "getPriceChanges")?.label).toBe("Price changes");
+    expect(en.tools.find((t) => t.name === "openScanner")?.label).toBe("Scan invoice");
+    // Card labels travel as the per-locale record; the client picks.
+    expect(en.tools.find((t) => t.name === "getVendors")?.output?.items?.properties?.["name"]?.card?.label).toEqual({ es: "Proveedor", en: "Vendor" });
+    const es = await metaFor("es");
+    expect(es.tools.find((t) => t.name === "getPriceChanges")?.label).toBe("Cambios de precio");
+  });
+
   it("searches the pantry by name prefix and never sees another restaurant's ingredients", async () => {
     const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
     await setPlan(owner.rid, "pro");

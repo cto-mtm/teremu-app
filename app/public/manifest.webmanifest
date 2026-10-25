@@ -1,8 +1,8 @@
 {
   "name": "Teremu",
   "short_name": "Teremu",
-  "description": "Facturas, márgenes e inventario para tu restaurante.",
-  "lang": "es",
+  "description": "Invoices, margins and inventory for your restaurant.",
+  "lang": "en",
   "id": "./",
   "start_url": "./",
   "scope": "./",

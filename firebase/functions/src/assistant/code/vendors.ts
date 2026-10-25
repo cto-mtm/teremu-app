@@ -44,9 +44,14 @@ export async function vendors(input: VendorInput, ctx: AssistantContext): Promis
     const key = normalizeName(inv.vendorName);
     if (needle && !key.includes(needle)) continue;
     const agg = byKey.get(key) ?? { key, name: inv.vendorName, spend: 0, deliveries: 0, lastOrder: null };
-    agg.spend += num(inv.baseTotal) ?? num(inv.total) ?? 0;
-    agg.deliveries += 1;
-    if (inv.invoiceDate && (!agg.lastOrder || inv.invoiceDate > agg.lastOrder)) agg.lastOrder = inv.invoiceDate;
+    // A credit memo gives money back and is not a delivery (A8) — the same
+    // sign the app's domain.ts applies.
+    const credit = inv.docType === "credit_memo";
+    agg.spend += (credit ? -1 : 1) * (num(inv.baseTotal) ?? num(inv.total) ?? 0);
+    if (!credit) {
+      agg.deliveries += 1;
+      if (inv.invoiceDate && (!agg.lastOrder || inv.invoiceDate > agg.lastOrder)) agg.lastOrder = inv.invoiceDate;
+    }
     byKey.set(key, agg);
   }
 

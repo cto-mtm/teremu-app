@@ -26,6 +26,9 @@ export type PlanDailyKind = "emailClassify";
 
 const DAY_MS = 86_400_000;
 
+// UTC day on purpose: these are abuse valves nobody sees, so the exact
+// midnight does not matter, and callers rarely have the restaurant's zone
+// at hand. User-facing "today" goes through @teremu/shared todayIn (A4).
 const usageRef = (rid: string) =>
   getFirestore().doc(`restaurants/${rid}/dailyUsage/${new Date().toISOString().slice(0, 10)}`);
 

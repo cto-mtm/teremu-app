@@ -14,8 +14,10 @@ export async function getCounts(_input: Record<string, never>, ctx: AssistantCon
   const rest = tenantRef(ctx);
   const invoices = rest.collection("invoices");
   const active = rest.collection("menuItems").where("active", "==", true);
-  const [approved, pending, menuItems, preps, ingredients] = await Promise.all([
+  const [approved, credits, pending, menuItems, preps, ingredients] = await Promise.all([
     invoices.where("status", "==", "approved").count().get(),
+    // Credit memos are approved documents but not invoices (A8).
+    invoices.where("status", "==", "approved").where("docType", "==", "credit_memo").count().get(),
     invoices.where("status", "==", "needs_review").count().get(),
     active.count().get(),
     active.where("kind", "==", "prep").count().get(), // preps are not dishes
@@ -23,7 +25,7 @@ export async function getCounts(_input: Record<string, never>, ctx: AssistantCon
   ]);
   return [
     {
-      approvedInvoices: approved.data().count,
+      approvedInvoices: approved.data().count - credits.data().count,
       pendingInvoices: pending.data().count,
       dishes: menuItems.data().count - preps.data().count,
       ingredients: ingredients.data().count,

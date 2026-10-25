@@ -16,6 +16,8 @@
  * then invoice lines per day per vendor per ingredient, then stock per
  * ingredient). Add new randomness at the END of a phase, never inside.
  */
+import { marginPct, type TaxSetting } from "@teremu/shared";
+import { packFor } from "../countries/index.js";
 import {
   convertQty,
   IngredientIndex,
@@ -33,6 +35,13 @@ import {
 } from "../models.js";
 
 export const DEMO_PROFILE_NAMES = ["harbor-bistro", "taqueria", "pastry-stall"] as const;
+
+/** The profile's country pack decides whether its menu prices include tax
+ * (docs/us-market-readiness.md A6) — the same resolution the app makes. */
+const taxFor = (country: string): TaxSetting => {
+  const pack = packFor(country);
+  return { pricesIncludeTax: pack.pricesIncludeTax, rate: pack.salesTaxRate ?? 0 };
+};
 export type DemoProfileName = (typeof DEMO_PROFILE_NAMES)[number];
 
 // ── Spec ────────────────────────────────────────────────────────────
@@ -348,7 +357,7 @@ export function calendar(now: number, timeZone: string) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 const r2 = (x: number): number => Math.round(x * 100) / 100;
-const COUNT_UNITS: ReadonlySet<Unit> = new Set<Unit>(["each", "dozen", "case", "box", "bunch"]);
+const COUNT_UNITS: ReadonlySet<Unit> = new Set<Unit>(["each", "dozen", "case", "box", "bunch", "pack", "can"]);
 
 /** Natural recipe unit for a stock unit (g per kg, ml per L, counts as-is). */
 export function recipeUnitFor(stock: Unit): Unit {
@@ -380,6 +389,8 @@ const UNIT_LABEL_EN: Record<Unit, string> = {
   case: "case",
   box: "box",
   bunch: "bunch",
+  pack: "pack",
+  can: "can",
 };
 const fmtPct = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const fmtUsd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", currencyDisplay: "narrowSymbol" });
@@ -646,7 +657,7 @@ export function buildProfile(spec: ProfileSpec, opts: BuildOptions): BuiltProfil
     const { costIngs, costItems } = costInputs(ings);
     const item = costItems.get(dishId(d.key))!;
     const cost = plateCost(item, costIngs, costItems).cost;
-    const margin = ((d.price - cost) / d.price) * 100;
+    const margin = marginPct(d.price, cost, taxFor(spec.country)) ?? 0;
     return {
       id: dishId(d.key),
       key: d.key,
@@ -688,7 +699,7 @@ export function buildProfile(spec: ProfileSpec, opts: BuildOptions): BuiltProfil
     for (const [id, m] of byName) {
       if (!m.active || m.price <= 0) continue;
       const cost = plateCost(costItems.get(id)!, costIngs, costItems).cost;
-      const pct = ((m.price - cost) / m.price) * 100;
+      const pct = marginPct(m.price, cost, taxFor(spec.country)) ?? 0;
       if (pct >= m.targetMarginPct) continue;
       margin.push({
         menuItemId: id,

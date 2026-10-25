@@ -12,6 +12,12 @@ export const DEFAULT_PACK: CountryPack = {
   defaultCurrency: DEFAULT_CURRENCY,
   rateProviders: [],
   defaultSource: "manual",
+  // Most of the world prints tax-inclusive menu prices, but without a
+  // known rate there is nothing to net — so the world pack does not
+  // adjust margins. A market that wants netting gets a pack with a rate
+  // (es/, ve/) or the owner sets the override in Settings.
+  pricesIncludeTax: false,
+  unitSystem: "metric",
 };
 
 /**

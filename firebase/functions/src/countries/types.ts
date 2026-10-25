@@ -33,6 +33,15 @@ export interface CountryPack {
   pulseCards?: PulseCardSpec[];
   /** When the pack's providers publish — drives the daily job (Phase 2). */
   publishSchedule?: { cron: string; tz: string };
+  /** Menu prices as printed include tax (docs/us-market-readiness.md A6):
+   * true where the till charges what the menu says (Spain, Venezuela…),
+   * false where tax is added at the till (US). Margins net an inclusive
+   * price by `salesTaxRate`; the restaurant may override both. */
+  pricesIncludeTax: boolean;
+  /** Fraction (0.10 = 10 %) used to net inclusive prices; omit when unknown. */
+  salesTaxRate?: number;
+  /** Units the app offers first (dropdowns only — nothing is converted). */
+  unitSystem: "metric" | "imperial";
 }
 
 export interface PulseCardSpec {
@@ -55,4 +64,7 @@ export interface CountryProfile {
   defaultSource: FxSource;
   optInSources: FxSource[];
   pulseCards: PulseCardSpec[];
+  pricesIncludeTax: boolean;
+  salesTaxRate: number | null;
+  unitSystem: "metric" | "imperial";
 }
