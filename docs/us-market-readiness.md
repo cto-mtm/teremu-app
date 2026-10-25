@@ -1,7 +1,8 @@
 # US market readiness
 
-Status (2026-10-25): **Tier A complete, A1–A11 built (uncommitted);
-Tiers B–C not started.** What shipped, and what it left:
+Status (2026-10-25): **Tier A deployed (commits 6662ed6, 4358859,
+bbc819c); Tier B1–B4 built; B5–B8 and Tier C open.** What shipped, and
+what it left:
 
 - **A1** `app/src/lib/locale.ts` (`resolveLocale`, unit-tested) drives the
   i18n first paint; `index.html` runs the same rule inline for `<html
@@ -132,8 +133,37 @@ specs to the netted Spanish margins the suite's own es-ES owner now
 produces (76.4 %, 17.5 %, 94.5 % — the A6 change made visible) and
 loosening the manifest href check to Vite's normalised path.
 
-Still owed: a rendered Sysco-style receipt and a recorded cassette (B6)
-and the fake inbox's US entries (B3).
+**Tier B, first pass (2026-10-25):**
+
+- **B1** `vendorKey()` in `shared/src/utils.ts` strips trailing legal
+  forms (Inc., LLC, Co., Corp., S.L., S.A., GmbH…) from the normalized
+  name; every vendor grouping, link, contact lookup and `isTwin` uses it
+  (app `domain.ts` and pages, assistant `vendors.ts`, pipeline). Display
+  names keep the suffix. Contacts saved under a pre-B1 key fold onto the
+  new key when loaded (app store, assistant); a save writes the new doc,
+  the old one is harmless.
+- **B2** `dateOrder: "DMY" | "MDY"` on every country pack and on
+  `countryProfile`; the CSV import reads dates in the restaurant's
+  country order (`parseDate(raw, order)`, UI language only as the
+  fallback) and decimals in the base currency's convention
+  (`decimalMarkForCurrency`, from the shared `DECIMAL_POINT_CURRENCIES`).
+  Typed prices still follow the UI language.
+- **B3** The fake inbox has a second account, `fake-inbox-us` (`code=
+  fake:fake-inbox-us`): a Sysco-style invoice, credit memo and packing
+  slip, a statement and an order confirmation; the offline classifier
+  knows credit memo / packing slip / bill. `email-sync.test.ts` pins the
+  verdicts. Still owed from B3/B6: a rendered Sysco-style JPG receipt and
+  a recorded cassette for the vision path.
+- **B4** Every mail footer prints the sender's postal address
+  (`MAIL_POSTAL_ADDRESS`, fallback names the entity — set it when the
+  registered address is final, Tier C); the upgrade nudge (`email-quota`)
+  is sent with `unsubscribeTopic` so the shared mailer adds one-click
+  unsubscribe and honours the opt-out.
+
+Open in Tier B: **B5** supplier ordering (+1 / E.164 and an email
+alternative to WhatsApp), **B6** Harbor Bistro in imperial units with a
+rendered Sysco-style receipt, **B7** Sunday week start for `en-US`,
+**B8** the forwarding-address inbox for Microsoft 365 restaurants.
 
 Four
 read-only audits (tax & money, document pipeline, locale & defaults,

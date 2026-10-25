@@ -8,6 +8,8 @@
  * are honored, so a comma decimal never splits a column.
  */
 
+import { DECIMAL_POINT_CURRENCIES } from '@teremu/shared'
+
 export type Delimiter = ',' | ';' | '\t'
 
 /** Semicolon or tab if the file uses them anywhere, else comma. */
@@ -47,9 +49,10 @@ export function splitCsvLine(line: string, delimiter: Delimiter): string[] {
  * With both separators present the LAST one is the decimal mark. With
  * only one kind: repeated = grouping ("1.234.567"); single and NOT
  * followed by exactly 3 digits = decimal ("1234,5"). What's left —
- * "1,234" / "1.234" — is genuinely ambiguous, and is read in the UI
- * language's convention (`decimal`): the user's own language is the
- * best evidence.
+ * "1,234" / "1.234" — is genuinely ambiguous, and is read in the given
+ * convention (`decimal`): for a sales export, the restaurant's base
+ * currency (`decimalMarkForCurrency`); for something a person types, the
+ * UI language (`decimalMarkFor`).
  */
 export function parseAmount(raw: string, decimal: ',' | '.'): number {
   const s = raw.replace(/[^\d.,-]/g, '') // currency symbols, spaces, NBSP
@@ -73,13 +76,20 @@ export function parseAmount(raw: string, decimal: ',' | '.'): number {
   return Number(s.replace(grouping, '').replace(',', '.'))
 }
 
+/** How numeric dates are written: day first (Spain, most of the world) or
+ * month first (the US). The restaurant's country pack says which
+ * (`countryProfile.dateOrder`, docs/us-market-readiness.md B2); without a
+ * profile, `dateOrderFor(locale)` guesses from the UI language. */
+export type DateOrder = 'DMY' | 'MDY'
+
 /**
  * A sales date → "YYYY-MM-DD", or null. ISO always works; otherwise the
- * UI language's own order decides — "01/05/2026" is 1 May in Spanish and
- * January 5 in English, exactly as that user's spreadsheet wrote it.
- * Separators / - . and two-digit years (→ 20xx) are accepted.
+ * given order decides — "01/05/2026" is 1 May for a Spanish restaurant and
+ * January 5 for a US one, exactly as that POS export wrote it — the
+ * COUNTRY's convention, not the UI language's: a Spanish-speaking owner in
+ * Texas exports MM/DD. Separators / - . and two-digit years (→ 20xx).
  */
-export function parseDate(raw: string, locale: string): string | null {
+export function parseDate(raw: string, order: DateOrder): string | null {
   const s = raw.trim()
   let y: number, m: number, d: number
   const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
@@ -89,7 +99,7 @@ export function parseDate(raw: string, locale: string): string | null {
     const parts = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/)
     if (!parts) return null
     const [a, b] = [Number(parts[1]), Number(parts[2])]
-    ;[d, m] = monthFirst(locale) ? [b, a] : [a, b]
+    ;[d, m] = order === 'MDY' ? [b, a] : [a, b]
     y = parts[3].length === 2 ? 2000 + Number(parts[3]) : Number(parts[3])
   }
   const date = new Date(Date.UTC(y, m - 1, d))
@@ -98,16 +108,23 @@ export function parseDate(raw: string, locale: string): string | null {
   return date.toISOString().slice(0, 10)
 }
 
-/** Does this language write the month before the day ("en" → 5/1/2026)? */
-function monthFirst(locale: string): boolean {
+/** The date order a UI language implies ("en" → 5/1/2026 → MDY) — the
+ * fallback when the restaurant has no country profile yet. */
+export function dateOrderFor(locale: string): DateOrder {
   const order = new Intl.DateTimeFormat(locale).formatToParts(new Date(2000, 10, 22)).map((p) => p.type)
-  return order.indexOf('month') < order.indexOf('day')
+  return order.indexOf('month') < order.indexOf('day') ? 'MDY' : 'DMY'
 }
 
-/** The decimal mark of a UI language ("es" → ",", "en" → "."). */
+/** The decimal mark of a UI language ("es" → ",", "en" → ".") — for what a person types. */
 export function decimalMarkFor(locale: string): ',' | '.' {
   const part = new Intl.NumberFormat(locale).formatToParts(1.1).find((p) => p.type === 'decimal')
   return part?.value === ',' ? ',' : '.'
+}
+
+/** The decimal mark a currency's documents use ("USD" → ".", "EUR" → ",") —
+ * for exports and paper, which follow the money, not the reader. */
+export function decimalMarkForCurrency(currency: string | null | undefined): ',' | '.' {
+  return currency && (DECIMAL_POINT_CURRENCIES as ReadonlySet<string>).has(currency) ? '.' : ','
 }
 
 /**

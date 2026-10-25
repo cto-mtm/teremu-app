@@ -248,6 +248,8 @@ async function pauseForQuota(rid: string, connId: string, limit: number, timeZon
       to: owner.to,
       ...emailQuotaEmail({ locale: owner.locale, waiting: waiting.data().count, limit }),
       kind: "email-quota",
+      // Promotional (an upgrade nudge): one-click unsubscribe, honoured by the mailer (B4).
+      unsubscribeTopic: "email-quota",
       // One per restaurant per month (the flag above); the key makes a retry free.
       idempotencyKey: `email-quota-${mailKeyHash(rid, period)}`,
     });

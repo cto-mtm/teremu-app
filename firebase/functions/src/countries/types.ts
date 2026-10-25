@@ -42,6 +42,9 @@ export interface CountryPack {
   salesTaxRate?: number;
   /** Units the app offers first (dropdowns only — nothing is converted). */
   unitSystem: "metric" | "imperial";
+  /** How a numeric date is written on paper and in exports: 03/04 is 3 April
+   * (DMY) or March 4 (MDY). Drives the CSV import and the OCR date hint (B2). */
+  dateOrder: "DMY" | "MDY";
 }
 
 export interface PulseCardSpec {
@@ -67,4 +70,5 @@ export interface CountryProfile {
   pricesIncludeTax: boolean;
   salesTaxRate: number | null;
   unitSystem: "metric" | "imperial";
+  dateOrder: "DMY" | "MDY";
 }

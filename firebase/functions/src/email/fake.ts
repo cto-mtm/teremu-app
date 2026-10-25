@@ -8,8 +8,12 @@ import { MailAuthError, MailNotFoundError, type MailAdapter, type MailBody, type
  *
  * OAuth: the consent URL points straight back at our callback with
  * `code=fake` (account `fake-inbox`) — a test can pick another account
- * with `code=fake:<accountId>`. A refresh token containing "revoked"
- * behaves like a grant the user removed in their Google account.
+ * with `code=fake:<accountId>`. Two accounts have mail: `fake-inbox` (the
+ * Spanish restaurant below, 17 messages) and `fake-inbox-us` (a US
+ * distributor's invoice, credit memo, packing slip, statement and order
+ * confirmation — docs/us-market-readiness.md B3); any other account is
+ * empty. A refresh token containing "revoked" behaves like a grant the
+ * user removed in their Google account.
  *
  * Dates are relative to now, so the 31-day backfill window always cuts
  * the same messages. History ids are positions in the inbox.
@@ -208,6 +212,59 @@ const INBOX: FakeMessage[] = [
   }),
 ];
 
+/** A US distributor's document: "Invoice" / "Credit Memo" / "Packing
+ * Slip", MM/DD dates, "Sold To / Ship To", case-priced lines, a fuel
+ * surcharge and sales tax folded into the total (B3). */
+function usDocumentPdf(kind: "Invoice" | "Credit Memo" | "Packing Slip", number: string, priced: boolean): Buffer {
+  const lines: string[][] = priced
+    ? [
+        ["Item", "Qty", "Price", "Amount"],
+        ["Tomato Paste 6/#10 CAN", "2 CS", "42.00", "84.00"],
+        ["Chicken Breast Boneless 4/10 LB", "1 CS", "98.40", "98.40"],
+        ["Roma Tomatoes 25#", "3 CS", "28.50", "85.50"],
+        ["Subtotal", "", "", "267.90"],
+        ["Fuel Surcharge", "", "", "6.00"],
+        ["Sales Tax", "", "", "0.00"],
+        [`Total USD`, "", "", "273.90"],
+      ]
+    : [
+        ["Item", "Qty", "", ""],
+        ["Tomato Paste 6/#10 CAN", "2 CS", "", ""],
+        ["Chicken Breast Boneless 4/10 LB", "1 CS", "", ""],
+        ["Roma Tomatoes 25#", "3 CS", "", ""],
+      ];
+  return textPdf([
+    ["Sysco Chicago, Inc."],
+    ["250 Wieboldt Dr, Des Plaines, IL 60018"],
+    [`${kind} ${number}`],
+    ["Date: 10/14/2026", "", "", ""],
+    ["Sold To: Harbor Bistro LLC", "", "Ship To: Harbor Bistro, 12 Pier St", ""],
+    ...lines,
+  ]);
+}
+
+/** The US account's inbox (`fake-inbox-us`). Newest last. */
+const US_INBOX: FakeMessage[] = [
+  message(14, "Sysco Chicago <invoices@sysco.test>", "Invoice 123456 from Sysco Chicago, Inc.", "Attached is your invoice 123456 for delivery on 10/14. Thank you for your business.", {
+    files: [{ name: "Invoice_123456.pdf", mime: "application/pdf", data: usDocumentPdf("Invoice", "123456", true) }],
+  }),
+  message(12, "Sysco Chicago <invoices@sysco.test>", "Credit Memo 123490", "Credit memo for the chicken returned on 10/16.", {
+    files: [{ name: "CreditMemo_123490.pdf", mime: "application/pdf", data: usDocumentPdf("Credit Memo", "123490", true) }],
+  }),
+  message(9, "US Foods <ar@usfoods.test>", "Statement of Account - September", "Your monthly statement of account is attached.", {
+    files: [{ name: "Statement_2026-09.pdf", mime: "application/pdf", data: textPdf([["Statement of Account"], ["Balance due", "", "", "1,240.00"]]) }],
+  }),
+  message(6, "Restaurant Depot <orders@restaurantdepot.test>", "Order Confirmation #88213", "We received your order #88213. Estimated total $312.40.", {}),
+  message(4, "Sysco Chicago <invoices@sysco.test>", "Packing slip 123501", "Packing slip for tomorrow's delivery.", {
+    files: [{ name: "PackingSlip_123501.pdf", mime: "application/pdf", data: usDocumentPdf("Packing Slip", "123501", false) }],
+  }),
+];
+
+/** Per account; an unknown account has no mail. */
+const INBOXES: Record<string, FakeMessage[]> = { "fake-inbox": INBOX, "fake-inbox-us": US_INBOX };
+const inboxOf = (access: { accessToken: string }): FakeMessage[] =>
+  INBOXES[access.accessToken.replace(/^fake-access-fake-refresh-/, "")] ?? [];
+
 /** Fixture PDFs, for the pdf.ts tests. */
 export const FAKE_PDFS = {
   digital: () => invoicePdf("Distribuciones Frescos S.L.", "FV-2026-0931", FRESCOS_LINES),
@@ -215,7 +272,7 @@ export const FAKE_PDFS = {
   protected: protectedPdf,
 };
 
-const byId = new Map(INBOX.map((m) => [m.meta.id, m]));
+const byId = new Map(Object.values(INBOXES).flat().map((m) => [m.meta.id, m]));
 const metaOf = (m: FakeMessage): MailMessageMeta => ({ ...m.meta, internalDate: Date.now() - m.daysAgo * DAY_MS });
 
 function find(id: string, part: "message" | "body" = "message"): FakeMessage {
@@ -250,9 +307,9 @@ export const fakeMailAdapter: MailAdapter = {
 
   async revoke() {},
 
-  async listMessageIds(_access, query) {
+  async listMessageIds(access, query) {
     const offset = query.cursor ? Number(query.cursor) : 0;
-    const matching = INBOX.filter((m) => m.gone !== "message")
+    const matching = inboxOf(access).filter((m) => m.gone !== "message")
       .map(metaOf)
       // Like Gmail's query: spam & co. never list, but History returns them.
       .filter((m) => m.internalDate > query.after && !m.excluded)
@@ -261,14 +318,15 @@ export const fakeMailAdapter: MailAdapter = {
     return { ids: page.map((m) => m.id), cursor: offset + PAGE < matching.length ? String(offset + PAGE) : null };
   },
 
-  async listHistory(_access, startHistoryId) {
+  async listHistory(access, startHistoryId) {
     const start = Number(startHistoryId);
     if (!Number.isInteger(start) || start < 0) return "expired";
-    return { added: INBOX.slice(start).map((m) => m.meta.id), historyId: String(INBOX.length) };
+    const inbox = inboxOf(access);
+    return { added: inbox.slice(start).map((m) => m.meta.id), historyId: String(inbox.length) };
   },
 
-  async currentHistoryId() {
-    return String(INBOX.length);
+  async currentHistoryId(access) {
+    return String(inboxOf(access).length);
   },
 
   async getMessageMeta(_access, id) {

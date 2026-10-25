@@ -15,6 +15,26 @@ export const normalizeName = (s: string): string =>
  */
 export const foldName = (s: string): string => normalizeName(s.normalize("NFKD").replace(/\p{M}/gu, ""));
 
+// Legal-form suffixes a vendor's name carries on the invoice but not in
+// anyone's head: "Sysco Chicago, Inc." and "SYSCO CHICAGO" are one vendor
+// (docs/us-market-readiness.md B1). Trailing tokens only, after
+// normalizeName; several in a row ("Foods Co., Inc.") all go.
+const LEGAL_SUFFIXES = new Set([
+  "inc", "incorporated", "llc", "llp", "lp", "ltd", "limited", "co", "corp", "corporation", "company", "plc",
+  "sl", "slu", "sll", "sa", "sau", "scp", "cb", "srl", "sas", "gmbh", "bv", "ag", "spa", "sapi", "sadecv", "cv",
+]);
+
+/**
+ * The key a vendor is grouped, linked and looked up by: normalizeName with
+ * the legal form stripped. Display keeps the printed name; only the key
+ * forgets the suffix. A name that is nothing but a suffix keeps it.
+ */
+export function vendorKey(name: string): string {
+  const tokens = normalizeName(name).split(" ").filter(Boolean);
+  while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();
+  return tokens.join(" ");
+}
+
 // ── Unit conversion ─────────────────────────────────────────────────
 // Mass and volume convert within their dimension; each↔dozen converts;
 // containers (case/box/bunch) are vendor-specific sizes and only match

@@ -18,6 +18,13 @@ import { PLAN_LIMITS, planOf } from "./plan.js";
  */
 
 const MAILER_URL = process.env.MAILER_URL;
+/** The sender's physical postal address, printed under every message:
+ * CAN-SPAM requires it on anything promotional and it does no harm on the
+ * rest. Set MAIL_POSTAL_ADDRESS once the registered address is final
+ * (docs/us-market-readiness.md B4 / Tier C); the fallback names the entity. */
+const POSTAL_ADDRESS = (process.env.MAIL_POSTAL_ADDRESS || "MTM CYA Corp · United States").trim();
+/** Text-part footer: the message's own line, then the postal address. */
+const footerText = (footer: string): string => `${footer}\n${POSTAL_ADDRESS}`;
 const auth = new GoogleAuth();
 
 export interface SendMailInput {
@@ -207,7 +214,7 @@ function layout(locale: Locale, bodyHtml: string, footer: string): string {
 <tr><td style="padding:24px 28px 8px;font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:bold;color:#2b2420">Teremu</td></tr>
 <tr><td style="padding:8px 28px 24px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#2b2420">${bodyHtml}</td></tr>
 </table>
-<p style="max-width:600px;margin:12px auto 0;font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#7a6f66">${footer}</p>
+<p style="max-width:600px;margin:12px auto 0;font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#7a6f66">${footer}<br>${esc(POSTAL_ADDRESS)}</p>
 </td></tr></table>
 </body></html>`;
 }
@@ -244,7 +251,7 @@ export function orderEmail(args: {
       "",
       c.questions(replyToEmail),
       "",
-      c.footer,
+      footerText(c.footer),
     ].join("\n"),
     html: layout(
       locale,
@@ -278,7 +285,7 @@ export function inviteEmail(args: {
       "",
       loginUrl,
       "",
-      c.footer,
+      footerText(c.footer),
     ].join("\n"),
     html: layout(
       locale,
@@ -302,7 +309,7 @@ export function claimCodeEmail(args: { locale: Locale; code: string; placeName: 
   const c = COPY[args.locale].claimCode;
   return {
     subject: c.subject(args.placeName).slice(0, 200),
-    text: [c.intro(args.placeName), "", args.code, "", c.expires, "", c.footer].join("\n"),
+    text: [c.intro(args.placeName), "", args.code, "", c.expires, footerText(c.footer)].join("\n"),
     html: layout(
       args.locale,
       `<p style="margin:0 0 12px">${c.intro(`<strong>${esc(args.placeName)}</strong>`)}</p>
@@ -324,7 +331,10 @@ export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: 
   const pricingUrl = `${APP_URL}/pricing`;
   return {
     subject: c.subject(args.waiting).slice(0, 200),
-    text: [c.body(args.limit), "", c.next, "", pricingUrl, "", c.footer].join("\n"),
+    // An upgrade nudge is promotional: it carries the mailer's one-click
+    // unsubscribe (`unsubscribeTopic: "email-quota"` on the send; the mailer
+    // fills {{unsubscribeUrl}} and honours the opt-out — docs/mtmcya-mailer.md).
+    text: [c.body(args.limit), "", c.next, "", pricingUrl, "", footerText(c.footer), `${c.unsubscribe}: {{unsubscribeUrl}}`].join("\n"),
     html: layout(
       args.locale,
       `<p style="margin:0 0 12px">${c.body(args.limit)}</p>
@@ -332,7 +342,7 @@ export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: 
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
 <a href="${esc(pricingUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.cta}</a>
 </td></tr></table>`,
-      c.footer,
+      `${c.footer} · <a href="{{unsubscribeUrl}}" style="color:#7a6f66">${c.unsubscribe}</a>`,
     ),
   };
 }
@@ -347,7 +357,7 @@ export function emailReauthEmail(args: { locale: Locale; accountEmail: string })
   const settingsUrl = `${APP_URL}/settings`;
   return {
     subject: c.subject(args.accountEmail).slice(0, 200),
-    text: [c.body(args.accountEmail), "", c.next, "", settingsUrl, "", c.footer].join("\n"),
+    text: [c.body(args.accountEmail), "", c.next, "", settingsUrl, footerText(c.footer)].join("\n"),
     html: layout(
       args.locale,
       `<p style="margin:0 0 12px">${c.body(`<strong>${esc(args.accountEmail)}</strong>`)}</p>
@@ -365,7 +375,7 @@ export function claimTransferredEmail(args: { locale: Locale; placeName: string 
   const c = COPY[args.locale].claimTransferred;
   return {
     subject: c.subject(args.placeName).slice(0, 200),
-    text: [c.body(args.placeName), "", c.data, "", c.footer].join("\n"),
+    text: [c.body(args.placeName), "", c.data, footerText(c.footer)].join("\n"),
     html: layout(
       args.locale,
       `<p style="margin:0 0 12px">${c.body(`<strong>${esc(args.placeName)}</strong>`)}</p>
@@ -421,6 +431,7 @@ const es = {
     next: "Se importan solas el mes que viene, o en cuanto mejores tu plan.",
     cta: "Ver planes",
     footer: "Enviado con Teremu.",
+    unsubscribe: "Dejar de recibir estos avisos",
   },
   emailReauth: {
     subject: (email: string) => `Teremu ya no puede leer ${email}`,
@@ -470,6 +481,7 @@ const en: typeof es = {
     next: "They come in on their own next month, or as soon as you upgrade.",
     cta: "See plans",
     footer: "Sent with Teremu.",
+    unsubscribe: "Stop these notices",
   },
   emailReauth: {
     subject: (email) => `Teremu can no longer read ${email}`,

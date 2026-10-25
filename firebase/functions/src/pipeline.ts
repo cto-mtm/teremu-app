@@ -3,7 +3,7 @@ import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { extractInvoice, extractInvoiceFromText, type ExtractionContext, type OcrResult } from "./ocr.js";
 import { refundScan } from "./plan.js";
-import { expandUsage, todayIn } from "@teremu/shared";
+import { expandUsage, todayIn, vendorKey } from "@teremu/shared";
 import { convertQty } from "./units.js";
 import { convertInvoice, hasPricedLines, rerateBasePrice, toBaseTotal } from "./fx/convert.js";
 import { packFor } from "./countries/index.js";
@@ -385,7 +385,7 @@ export function isTwin(
   if (!doc.vendorName || !doc.total || !other.vendorName || other.total == null) return false;
   if (!(other.status === "needs_review" || other.status === "approved")) return false;
   if ((doc.docType ?? "invoice") !== (other.docType ?? "invoice")) return false;
-  return normalizeName(other.vendorName) === normalizeName(doc.vendorName) && Math.abs(other.total - doc.total) <= Math.max(0.05, doc.total * 0.02);
+  return vendorKey(other.vendorName) === vendorKey(doc.vendorName) && Math.abs(other.total - doc.total) <= Math.max(0.05, doc.total * 0.02);
 }
 
 /** The money side of an approval — see docs/multi-currency.md. */

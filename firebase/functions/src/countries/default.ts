@@ -18,6 +18,7 @@ export const DEFAULT_PACK: CountryPack = {
   // (es/, ve/) or the owner sets the override in Settings.
   pricesIncludeTax: false,
   unitSystem: "metric",
+  dateOrder: "DMY",
 };
 
 /**

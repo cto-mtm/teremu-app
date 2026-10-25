@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { isDish } from '@teremu/shared'
+import { isDish, vendorKey } from '@teremu/shared'
 import { unusedIngredients } from '../lib/domain'
 import { apiFetch, writeEpoch } from '../lib/api'
 import { replaceById } from '../lib/collections'
@@ -104,7 +104,9 @@ export const useKitchenStore = defineStore('kitchen', () => {
     if (menu?.ok) menuItems.value = menu.data
     if (rev?.ok) revenue.value = rev.data
     if (exp?.ok) expenses.value = exp.data
-    if (contacts?.ok) vendorContacts.value = contacts.data
+    // Contacts saved before vendor keys dropped legal suffixes ("… sl",
+    // "… inc") fold onto today's key; a save then writes the new doc.
+    if (contacts?.ok) vendorContacts.value = contacts.data.map((c) => ({ ...c, vendorKey: vendorKey(c.vendorKey) }))
     const failed = results.find((r) => r && !r.ok)
     error.value = failed && !failed.ok ? failed.error : null
     loading.value = false

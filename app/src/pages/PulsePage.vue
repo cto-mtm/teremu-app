@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currencySymbol } from '../i18n'
-import { amountField, decimalMarkFor, detectDelimiter, parseAmount, parseDate, splitCsvLine } from '../lib/csv'
+import { amountField, dateOrderFor, decimalMarkForCurrency, detectDelimiter, parseAmount, parseDate, splitCsvLine } from '../lib/csv'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
@@ -13,12 +13,12 @@ import {
   foodCostSeries,
   ingredientSpend,
   menuEngineering,
-  normalizeName,
   pantryValue,
   priceChangePct,
   priceHistory,
   realtimeSpend,
   vendorWeeklySpend,
+  vendorKey,
   weeklySeries,
 } from '../lib/domain'
 import type { ExpenseEntry, Ingredient, MenuItem, RevenueEntry } from '../lib/types'
@@ -326,7 +326,10 @@ async function importCsv(event: Event): Promise<void> {
   try {
     const text = await file.text()
     const delimiter = detectDelimiter(text)
-    const decimal = decimalMarkFor(locale.value)
+    // A POS export follows the restaurant, not the reader: dates in the
+    // country's order, decimals in the base currency's (B2).
+    const decimal = decimalMarkForCurrency(auth.profile?.currency)
+    const dateOrder = auth.profile?.countryProfile?.dateOrder ?? dateOrderFor(locale.value)
     const existing = new Set(kitchen.revenue.map((r) => r.date))
     let ok = 0
     let skipped = 0
@@ -336,8 +339,7 @@ async function importCsv(event: Event): Promise<void> {
       const line = raw.trim()
       if (!line) continue
       const fields = splitCsvLine(line, delimiter)
-      // Dates in the UI language's order (01/05/2026 = 1 May in es).
-      const dateStr = parseDate(fields[0] ?? '', locale.value)
+      const dateStr = parseDate(fields[0] ?? '', dateOrder)
       const header = firstRow
       firstRow = false
       if (!dateStr) {
@@ -748,7 +750,7 @@ watch(showExpense, (open) => {
               <template #vendor>
                 <component
                   :is="ing.lastVendorName ? RouterLink : 'span'"
-                  :to="ing.lastVendorName ? `/vendors/${normalizeName(ing.lastVendorName)}` : undefined"
+                  :to="ing.lastVendorName ? `/vendors/${vendorKey(ing.lastVendorName)}` : undefined"
                   class="font-semibold"
                   :class="ing.lastVendorName ? 'underline decoration-gray-300 hover:text-ember-700' : ''"
                 >

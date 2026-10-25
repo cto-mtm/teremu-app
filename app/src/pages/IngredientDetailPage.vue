@@ -7,11 +7,11 @@ import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import {
   ingredientWeeklyQty,
-  normalizeName,
   priceChangePct,
   priceHistory,
   receiptsForIngredient,
   recipesUsing,
+  vendorKey,
 } from '../lib/domain'
 import { CATEGORIES, SUBCATEGORIES, type Category, type Subcategory } from '../lib/types'
 import Sparkline from '../components/Sparkline.vue'
@@ -121,7 +121,7 @@ const suppliers = computed(() => {
   const map = new Map<string, { name: string; key: string; count: number; lastPrice: number; lastDate: string }>()
   for (const r of receipts.value) {
     if (!r.vendorName) continue
-    const key = normalizeName(r.vendorName)
+    const key = vendorKey(r.vendorName)
     const existing = map.get(key)
     const date = r.date ?? ''
     if (existing) {

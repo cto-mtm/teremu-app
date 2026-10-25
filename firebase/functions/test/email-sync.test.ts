@@ -50,6 +50,27 @@ const syncNow = (o: Owner, conn = CONN) => api(`/email/inboxes/${conn}/sync`, { 
 
 const TAKEN = new Set(["accepted", "ingested", "deferred_quota"]);
 
+describe("email sync: a US distributor's inbox (docs/us-market-readiness.md B3)", () => {
+  it("takes the invoice, the credit memo and the packing slip; drops the statement and the order confirmation", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await connect(owner, "fake-inbox-us");
+    const conn = "gmail_fake-inbox-us";
+    const res = await syncNow(owner, conn);
+    expect(res.status).toBe(200);
+    const docs = (await ingests(owner.rid).get()).docs.map((d) => ({ id: d.id, verdict: d.get("verdict") as string }));
+    const verdictOf = (n: string) => docs.find((d) => d.id === `${conn}_fake-msg-${n}`)?.verdict;
+    const ids = docs.map((d) => d.id.replace(`${conn}_fake-msg-`, "")).sort();
+    expect(ids).toHaveLength(5);
+    // Positions are stable: the US inbox is built after the Spanish one.
+    const [invoice, credit, statement, order, slip] = ids;
+    expect(TAKEN.has(verdictOf(invoice)!)).toBe(true);
+    expect(TAKEN.has(verdictOf(credit)!)).toBe(true);
+    expect(TAKEN.has(verdictOf(slip)!)).toBe(true);
+    expect(verdictOf(statement)).toBe("classified_no");
+    expect(verdictOf(order)).toBe("classified_no");
+  });
+});
+
 /** Verdict counts, with the ingest progress of taken messages folded. */
 async function verdicts(rid: string): Promise<Record<string, number>> {
   const out: Record<string, number> = {};

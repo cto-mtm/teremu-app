@@ -6,7 +6,7 @@ import { armHero, heroStyle } from '../composables/useHero'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
-import { groceryList, normalizeName, possibleDuplicates, productionPlan, type GroceryRow } from '../lib/domain'
+import { groceryList, normalizeName, possibleDuplicates, productionPlan, vendorKey, type GroceryRow } from '../lib/domain'
 import { CATEGORIES, type Category, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import PageLoader from '../components/PageLoader.vue'
@@ -136,7 +136,7 @@ const groceryByVendor = computed(() => {
 const sentVendor = ref<string | null>(null)
 
 function contactFor(vendorName: string) {
-  return kitchen.vendorContacts.find((c) => c.vendorKey === normalizeName(vendorName))
+  return kitchen.vendorContacts.find((c) => c.vendorKey === vendorKey(vendorName))
 }
 
 function orderLines(rows: GroceryRow[]) {
@@ -148,7 +148,7 @@ function orderLines(rows: GroceryRow[]) {
 async function emailOrder(vendorName: string, rows: GroceryRow[]): Promise<void> {
   const lines = orderLines(rows)
   if (!lines.length) return
-  const ok = await kitchen.sendOrder(normalizeName(vendorName), vendorName, lines)
+  const ok = await kitchen.sendOrder(vendorKey(vendorName), vendorName, lines)
   if (ok) {
     sentVendor.value = vendorName
     setTimeout(() => (sentVendor.value = null), 2500)

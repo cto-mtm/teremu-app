@@ -19,7 +19,7 @@ import {
   SUBCATEGORIES,
 } from '@teremu/shared'
 
-export { foldName, ingredientKeys, normalizeName }
+export { foldName, ingredientKeys, normalizeName, vendorKey }
 
 /** Milliseconds in one day — shared constant for all time math below. */
 const DAY_MS = 86_400_000
@@ -101,10 +101,10 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
       }
     }
 
-    const noteKey = note.vendorName ? normalizeName(note.vendorName) : ''
+    const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
     const noteTime = note.invoiceDate ? new Date(note.invoiceDate + 'T12:00:00').getTime() : null
     const candidates = bills.filter((b) => {
-      if (!noteKey || normalizeName(b.vendorName!) !== noteKey) return false
+      if (!noteKey || vendorKey(b.vendorName!) !== noteKey) return false
       if (noteTime == null || !b.invoiceDate) return true
       const dt = Math.abs(new Date(b.invoiceDate + 'T12:00:00').getTime() - noteTime)
       return dt <= RECON_WINDOW_DAYS * 86_400_000
@@ -121,12 +121,12 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
 
 /** Invoices a note could plausibly link to by hand (same vendor first). */
 export function reconciliationCandidates(invoices: Invoice[], note: Invoice): Invoice[] {
-  const noteKey = note.vendorName ? normalizeName(note.vendorName) : ''
+  const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
   return invoices
     .filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.id !== note.id)
     .sort((a, b) => {
-      const aSame = a.vendorName && normalizeName(a.vendorName) === noteKey ? 0 : 1
-      const bSame = b.vendorName && normalizeName(b.vendorName) === noteKey ? 0 : 1
+      const aSame = a.vendorName && vendorKey(a.vendorName) === noteKey ? 0 : 1
+      const bSame = b.vendorName && vendorKey(b.vendorName) === noteKey ? 0 : 1
       if (aSame !== bSame) return aSame - bSame
       return (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? '')
     })
@@ -201,7 +201,7 @@ export function realtimeSpend(
  * historical name for the call sites below and in the pages.
  */
 export { plateCost } from '@teremu/shared'
-import { marginPct, NO_TAX, type TaxSetting } from '@teremu/shared'
+import { marginPct, NO_TAX, vendorKey, type TaxSetting } from '@teremu/shared'
 
 /**
  * Margin over the NET menu price (docs/us-market-readiness.md A6): `tax`
@@ -330,7 +330,7 @@ export function vendorSummaries(
 
   for (const inv of invoices) {
     if (!isFoodInvoice(inv) || !inv.vendorName) continue
-    const key = normalizeName(inv.vendorName)
+    const key = vendorKey(inv.vendorName)
     if (!key) continue
     const v = acc(key, inv.vendorName)
     v.invoiceCount += 1
@@ -343,7 +343,7 @@ export function vendorSummaries(
 
   for (const e of expenses) {
     if (!e.vendorName) continue
-    const key = normalizeName(e.vendorName)
+    const key = vendorKey(e.vendorName)
     if (!key) continue
     const v = acc(key, e.vendorName)
     v.invoiceCount += 1
@@ -362,16 +362,16 @@ export function vendorSummaries(
 }
 
 /** One vendor's food invoices, newest first. */
-export function vendorInvoicesFor(invoices: Invoice[], vendorKey: string): Invoice[] {
+export function vendorInvoicesFor(invoices: Invoice[], key: string): Invoice[] {
   return invoices
-    .filter((i) => isFoodInvoice(i) && i.vendorName && normalizeName(i.vendorName) === vendorKey)
+    .filter((i) => isFoodInvoice(i) && i.vendorName && vendorKey(i.vendorName) === key)
     .sort((a, b) => (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? ''))
 }
 
 /** Expense entries paid to one vendor (service side), newest first. */
-export function vendorExpensesFor(expenses: ExpenseEntry[], vendorKey: string): ExpenseEntry[] {
+export function vendorExpensesFor(expenses: ExpenseEntry[], key: string): ExpenseEntry[] {
   return expenses
-    .filter((e) => e.vendorName && normalizeName(e.vendorName) === vendorKey)
+    .filter((e) => e.vendorName && vendorKey(e.vendorName) === key)
     .sort((a, b) => b.date.localeCompare(a.date))
 }
 
@@ -651,7 +651,7 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
   const totals = new Map<string, { name: string; total: number }>()
   for (const inv of invoices) {
     if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
-    const key = normalizeName(inv.vendorName)
+    const key = vendorKey(inv.vendorName)
     const v = totals.get(key) ?? { name: inv.vendorName, total: 0 }
     v.total += signedTotal(inv)
     totals.set(key, v)
@@ -673,7 +673,7 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
     for (const w of weeks) {
       const start = new Date(w.weekStart + 'T00:00:00').getTime()
       if (d.getTime() >= start && d.getTime() < start + 7 * DAY_MS) {
-        const key = normalizeName(inv.vendorName)
+        const key = vendorKey(inv.vendorName)
         const seg = w.segments.find((s) => s.key === (topKeys.has(key) ? key : 'other'))
         if (seg) {
           seg.amount += signedTotal(inv)
@@ -747,12 +747,12 @@ export function unitsSoldWeekly(revenue: RevenueEntry[], menuItemId: string): nu
 }
 
 /** One vendor's spend per week (8 weeks) for the vendor detail bars. */
-export function vendorWeeklyTotals(invoices: Invoice[], vendorKey: string): number[] {
+export function vendorWeeklyTotals(invoices: Invoice[], key: string): number[] {
   const weeks = weeklySeries([], [])
   const out = weeks.map(() => 0)
   for (const inv of invoices) {
     if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
-    if (normalizeName(inv.vendorName) !== vendorKey) continue
+    if (vendorKey(inv.vendorName) !== key) continue
     const i = weekIndex(inv.invoiceDate, weeks)
     if (i >= 0) out[i] += signedTotal(inv)
   }
@@ -962,7 +962,7 @@ export function spendTree(
     let tag = tags.get(e.tagKey)
     if (!tag) tags.set(e.tagKey, (tag = { label: e.tag, total: 0, vendors: new Map() }))
     tag.total += e.amount
-    const vKey = e.vendorName ? normalizeName(e.vendorName) : ''
+    const vKey = e.vendorName ? vendorKey(e.vendorName) : ''
     const v = tag.vendors.get(vKey) ?? { label: e.vendorName ?? null, total: 0 }
     v.total += e.amount
     tag.vendors.set(vKey, v)

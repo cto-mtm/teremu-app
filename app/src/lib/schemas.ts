@@ -386,6 +386,7 @@ export const countryProfileSchema = z.object({
   pricesIncludeTax: z.boolean().optional().catch(false),
   salesTaxRate: z.number().nullable().optional().catch(null),
   unitSystem: z.enum(['metric', 'imperial']).optional().catch('metric'),
+  dateOrder: z.enum(['DMY', 'MDY']).optional().catch('DMY'),
 })
 
 /** GET /me — resolves (and on first sign-in bootstraps) membership for

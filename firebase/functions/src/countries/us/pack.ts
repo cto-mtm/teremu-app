@@ -21,6 +21,7 @@ export const US_PACK: CountryPack = {
   defaultSource: "manual",
   pricesIncludeTax: false,
   unitSystem: "imperial",
+  dateOrder: "MDY",
   ocrHints: [
     "US DOCUMENTS:",
     '- Dates are MM/DD/YYYY ("03/04/2026" is March 4). Numbers use "," to group thousands and "." for decimals ("1,250.00" = 1250).',

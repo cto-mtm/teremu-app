@@ -1,5 +1,5 @@
 import type { AssistantContext } from "@mtmcya/assistant";
-import { normalizeName } from "@teremu/shared";
+import { normalizeName, vendorKey } from "@teremu/shared";
 import { invoiceDocSchema, vendorContactSchema } from "../../models.js";
 import type { VendorRowT } from "../tools.js";
 import { MAX_DOCS, num, round2, str, tenantRef } from "./shared.js";
@@ -41,7 +41,7 @@ export async function vendors(input: VendorInput, ctx: AssistantContext): Promis
     if (!p.success) continue;
     const inv = p.data;
     if (inv.expenseTag || !inv.vendorName) continue; // non-food bill or unnamed → not a vendor
-    const key = normalizeName(inv.vendorName);
+    const key = vendorKey(inv.vendorName);
     if (needle && !key.includes(needle)) continue;
     const agg = byKey.get(key) ?? { key, name: inv.vendorName, spend: 0, deliveries: 0, lastOrder: null };
     // A credit memo gives money back and is not a delivery (A8) — the same
@@ -59,7 +59,8 @@ export async function vendors(input: VendorInput, ctx: AssistantContext): Promis
   const contacts = new Map(
     contactSnap.docs.flatMap((d) => {
       const c = vendorContactSchema.safeParse({ vendorKey: d.id, ...d.data() });
-      return c.success ? [[d.id, c.data] as const] : [];
+      // Pre-B1 contacts were keyed with the legal suffix; fold onto today's key.
+      return c.success ? [[vendorKey(d.id), c.data] as const] : [];
     }),
   );
 

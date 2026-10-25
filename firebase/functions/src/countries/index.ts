@@ -58,5 +58,6 @@ export function profileOf(pack: CountryPack): CountryProfile {
     pricesIncludeTax: pack.pricesIncludeTax,
     salesTaxRate: pack.salesTaxRate ?? null,
     unitSystem: pack.unitSystem,
+    dateOrder: pack.dateOrder,
   };
 }

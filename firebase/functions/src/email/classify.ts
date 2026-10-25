@@ -104,7 +104,7 @@ function describe(m: ClassifyInput): string {
  * its YES list. Enough for the fake inbox and the emulator; the model
  * does the real work when it is available. */
 const MOCK_NO = /(estado de cuenta|extracto|statement|tarifa|lista de precios|cat[aá]logo|price list|confirmaci[oó]n de pedido|order confirmation|presupuesto|pago realizado|aviso de pago|payment|newsletter|oferta)/i;
-const MOCK_YES = /(factura|albar[aá]n|recibo|invoice|receipt)/i;
+const MOCK_YES = /(factura|albar[aá]n|recibo|abono|invoice|receipt|packing slip|credit (?:memo|note)|\bbill\b)/i;
 
 export function mockVerdict(m: ClassifyInput): Verdict {
   const text = `${m.subject} ${m.snippet} ${m.attachments.map((a) => a.filename).join(" ")} ${m.bodyPreview ?? ""}`;

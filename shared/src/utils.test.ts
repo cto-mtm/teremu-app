@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertQty, foldName, normalizeName } from "./utils.js";
+import { convertQty, foldName, normalizeName, vendorKey } from "./utils.js";
 
 describe("normalizeName", () => {
   it("lowercases, drops punctuation and collapses whitespace", () => {
@@ -41,5 +41,20 @@ describe("convertQty", () => {
     expect(convertQty(1, "kg", "L")).toBeNull();
     expect(convertQty(1, "each", "g")).toBeNull();
     expect(convertQty(1, "case", "each")).toBeNull();
+  });
+});
+
+describe("vendorKey (docs/us-market-readiness.md B1)", () => {
+  it("forgets the legal form at the end of a vendor name", () => {
+    expect(vendorKey("Sysco Chicago, Inc.")).toBe("sysco chicago");
+    expect(vendorKey("SYSCO CHICAGO")).toBe("sysco chicago");
+    expect(vendorKey("Distribuciones Frescos S.L.")).toBe("distribuciones frescos");
+    expect(vendorKey("Acme Foods Co., Inc.")).toBe("acme foods");
+    expect(vendorKey("Huerta La Vega")).toBe("huerta la vega");
+  });
+
+  it("keeps a suffix that is inside the name or is the whole name", () => {
+    expect(vendorKey("Inc Produce")).toBe("inc produce");
+    expect(vendorKey("Co")).toBe("co");
   });
 });

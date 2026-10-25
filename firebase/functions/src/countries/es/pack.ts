@@ -20,6 +20,7 @@ export const ES_PACK: CountryPack = {
   pricesIncludeTax: true,
   salesTaxRate: 0.1,
   unitSystem: "metric",
+  dateOrder: "DMY",
   ocrHints: [
     "SPANISH DOCUMENTS:",
     '- Dates are DD/MM/YYYY ("03/04/2026" is 3 April). Numbers use "." to group thousands and "," for decimals ("9.312,50" = 9312.50).',
