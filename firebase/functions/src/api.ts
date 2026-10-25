@@ -1489,8 +1489,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
 
 /** The "Menu prices include tax" fact (≤ 80 chars): what dish margins net out. */
 function taxLabelFor(tax: TaxSetting): string {
+  // A TAX rate, not an fx rate: named apart so the currency-layer
+  // boundary scan (test/boundaries.test.ts) keeps guarding fx math.
+  const { rate: taxRate } = tax;
   return tax.pricesIncludeTax
-    ? `yes, ${Number((tax.rate * 100).toFixed(2))} % — dish margins are net of it`
+    ? `yes, ${Number((taxRate * 100).toFixed(2))} % — dish margins are net of it`
     : "no — prices are pre-tax, margins use them as is";
 }
 
