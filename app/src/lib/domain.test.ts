@@ -65,10 +65,15 @@ describe('reconcileDeliveryNotes', () => {
     expect(row.status).toBe('matched')
   })
 
+  // A second note dated after the factura can never be covered by it, but
+  // it does mean the vendor has more than one note: the lone-pair
+  // exception (below) stays out of these cases.
+  const decoy = () => note({ invoiceDate: '2026-06-01', total: 7 })
+
   it('leaves a note unmatched for another vendor, or when no invoice is near its value', () => {
     const n = note({ total: 98 })
     expect(reconcileDeliveryNotes([n, inv({ vendorName: 'Other Foods', total: 98 })])[0].status).toBe('unmatched')
-    expect(reconcileDeliveryNotes([n, inv({ total: 300 })])[0].status).toBe('unmatched')
+    expect(reconcileDeliveryNotes([n, decoy(), inv({ total: 300 })])[0].status).toBe('unmatched')
   })
 
   it('lets a factura cover the oldest notes that add up to it (consolidated billing)', () => {
@@ -117,7 +122,7 @@ describe('reconcileDeliveryNotes', () => {
   it('sizes the band by how sure the value is: printed lines tight, pantry estimates loose', () => {
     // (Different products, so the only evidence is the money.)
     const printed = note({ lineItems: [line('Leek', 90)], total: 90 })
-    expect(reconcileDeliveryNotes([printed, inv({ lineItems: [line('Onion', 100)], total: 100 })])[0].status).toBe('unmatched')
+    expect(reconcileDeliveryNotes([printed, decoy(), inv({ lineItems: [line('Onion', 100)], total: 100 })])[0].status).toBe('unmatched')
     const unpriced = { name: 'Leek', qty: 9, unit: 'kg' as const, unitPrice: 0, total: 0, ingredientId: 'leek' }
     const pantry = new Map([['leek', ing({ id: 'leek', unit: 'kg', lastUnitPrice: 10 })]])
     const estimated = note({ lineItems: [unpriced], total: 0 })
@@ -133,7 +138,7 @@ describe('reconcileDeliveryNotes', () => {
     expect(reconcileDeliveryNotes([drifted, bill])[0].match?.id).toBe(bill.id)
     // …but never more goods than the factura bills.
     const bigger = note({ invoiceDate: '2026-10-09', lineItems: [line('Salmon', 100), line('Tuna', 50)], total: 150 })
-    expect(reconcileDeliveryNotes([bigger, bill])[0].status).toBe('unmatched')
+    expect(reconcileDeliveryNotes([bigger, note({ invoiceDate: '2026-11-09', total: 7 }), bill])[0].status).toBe('unmatched')
   })
 
   it('keeps the closest factura as a near miss on an unmatched row', () => {
@@ -147,6 +152,23 @@ describe('reconcileDeliveryNotes', () => {
     expect(row.nearMiss?.overlap).toBe(0)
     expect(reconciliationCandidates([n, far, close], n, close.id)[0].id).toBe(close.id)
     expect(reconcileDeliveryNotes([n, inv({ vendorName: 'Other' })])[0].nearMiss).toBeUndefined()
+  })
+
+  it('pairs a vendor’s lone note with its lone factura whatever OCR made of the money', () => {
+    const n = note({ invoiceDate: '2026-10-02', lineItems: [line('Lechuga', 80)], total: 80 })
+    const bill = inv({ invoiceDate: '2026-10-02', lineItems: [line('Tomate', 300)], total: 300 })
+    expect(reconcileDeliveryNotes([n, bill])[0].match?.id).toBe(bill.id)
+    // …but not when there is a second note the factura might mean instead,
+    const other = note({ invoiceDate: '2026-10-01', lineItems: [line('Cebolla', 10)], total: 10 })
+    expect(reconcileDeliveryNotes([n, other, bill]).map((r) => r.status)).toEqual(['unmatched', 'unmatched'])
+    // …nor a second factura the note might belong to,
+    expect(reconcileDeliveryNotes([n, bill, inv({ invoiceDate: '2026-10-03', total: 500 })])[0].status).toBe('unmatched')
+    // …nor across the never-after rule.
+    const later = note({ invoiceDate: '2026-10-20', lineItems: [line('Lechuga', 80)], total: 80 })
+    expect(reconcileDeliveryNotes([later, bill])[0].status).toBe('unmatched')
+    // An unexplained factura the note cannot reach is no alternative.
+    const stale = inv({ invoiceDate: '2026-03-01', total: 500 })
+    expect(reconcileDeliveryNotes([n, bill, stale])[0].match?.id).toBe(bill.id)
   })
 
   it('compares food value (the lines), not the printed total with tax', () => {

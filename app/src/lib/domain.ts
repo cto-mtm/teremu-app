@@ -157,7 +157,10 @@ export function valueNote(note: Invoice, ingredientsById: Map<string, Ingredient
  * one, so one factura cannot absorb a whole month of deliveries it did
  * not bill. Anything left is unmatched, with the closest factura kept
  * as a near miss for Triage, and stays visible until its factura (or a
- * manual resolution) arrives.
+ * manual resolution) arrives. The one exception to the evidence rule:
+ * a vendor's only note in reach of its only unexplained factura pairs
+ * with it anyway (a lone albarán and a lone factura from the same
+ * vendor are the same purchase until someone says otherwise).
  *
  * A manual link (note.reconInvoiceId) overrides the matcher; notes
  * marked handled are excluded entirely, and so are notes diverted to an
@@ -260,6 +263,19 @@ export function reconcileDeliveryNotes(
     }
     for (const note of claimed) matchOf.set(note.id, bill)
     pool.set(key, unclaimed.filter((n) => !matchOf.has(n.id)))
+  }
+
+  // 5. A vendor's lone leftover note and lone unexplained factura:
+  //    nothing else accounts for either, so they belong together even
+  //    when OCR read the money or the names apart — what a person
+  //    would assume. Still never a delivery made after the factura, and
+  //    only facturas the note can reach count as its alternatives.
+  const explained = new Set([...matchOf.values()].map((b) => b.id))
+  for (const [key, remaining] of pool) {
+    if (remaining.length !== 1) continue
+    const [note] = remaining
+    const lone = sortedBills.filter((b) => vendorKey(b.vendorName!) === key && !explained.has(b.id) && coverable(note, b))
+    if (lone.length === 1) matchOf.set(note.id, lone[0])
   }
 
   return notes.map((note) => {

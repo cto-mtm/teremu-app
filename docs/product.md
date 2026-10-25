@@ -49,7 +49,7 @@ Stuck processing (a trigger hiccup) self-surfaces after 90 seconds with a retry.
 
 The inbox where digitized documents wait. Review is side-by-side — the receipt photo next to editable line items, with amber warnings and coral-ringed rows where the math didn't check out (fixing a line clears its flag). From here you can: **approve** (prices roll, pantry fills — quantities and prices converting across units automatically, lb→kg, case→contents); **approve as expense** for non-food bills (hosting, the menu photographer — tagged, excluded from all food math); flip **factura ↔ albarán** if the AI misjudged; or retry failed scans.
 
-**Delivery-note reconciliation** (albarán ↔ factura): automatic pairing by vendor, date window, and totals, with per-line price comparison — "salmon: note $23.40 vs invoice $24.10" is the billing-error catch. Rows resolve manually too: link a note to the right invoice when the matcher misses, or mark it handled. Delivery notes never double-count: the matching invoice carries the money and the stock.
+**Delivery-note reconciliation** (albarán ↔ factura): a factura automatically claims the same-vendor notes delivered before it whose value adds up to its own, or whose lines appear on it (a lone note and a lone factura pair regardless), with per-line price comparison — "salmon: note $23.40 vs invoice $24.10" is the billing-error catch. Rows resolve manually too: link a note to the right invoice when the matcher misses, or mark it handled. Delivery notes never double-count: the matching invoice carries the money and the stock.
 
 ### 4 · Pulse (the dashboard)
 

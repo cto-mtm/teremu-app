@@ -21,15 +21,17 @@ const showInfo = ref(false)
 // The pantry prices value unpriced albarán lines, the way Pulse does.
 const reconciliation = computed(() => reconcileDeliveryNotes(store.invoices, kitchen.ingredientMap))
 
-// Link options for every unmatched row, computed once per data change —
-// not per render (each call filters + sorts every invoice). The
-// matcher's near miss leads the list.
+// Link options for every row, computed once per data change — not per
+// render (each call filters + sorts every invoice). The matcher's near
+// miss leads the list. Matched rows get the list too: a wrong automatic
+// pair is corrected the same way, and that correction is the gap data.
 const candidatesByNote = computed(
   () =>
     new Map(
-      reconciliation.value
-        .filter((row) => row.status !== 'matched')
-        .map((row) => [row.note.id, reconciliationCandidates(store.invoices, row.note, row.nearMiss?.invoice.id)]),
+      reconciliation.value.map((row) => [
+        row.note.id,
+        reconciliationCandidates(store.invoices, row.note, row.nearMiss?.invoice.id).filter((c) => c.id !== row.match?.id),
+      ]),
     ),
 )
 const nearMissGap = (row: ReconciliationRow): string =>
@@ -50,10 +52,13 @@ async function restore(id: string): Promise<void> {
 }
 
 // A manual link also tells the server what the matcher had paired the
-// note with (nothing, for an unmatched row) — the gap it records is how
-// the matcher's bands get tuned from real clients.
+// note with (nothing for an unmatched row, nothing for a pair the person
+// made themselves) — the gap it records is how the matcher's bands get
+// tuned from real clients.
 async function linkNote(row: ReconciliationRow, invoiceId: string): Promise<void> {
-  if (invoiceId) await store.reconcile(row.note.id, { invoiceId, autoMatchId: row.match?.id ?? null })
+  if (!invoiceId) return
+  const autoMatchId = row.note.reconInvoiceId ? null : (row.match?.id ?? null)
+  await store.reconcile(row.note.id, { invoiceId, autoMatchId })
 }
 
 // The shell loads invoices at sign-in; only refetch here when that data
@@ -197,11 +202,10 @@ onUnmounted(() => {
           <!-- Manual resolution: link to the right invoice, or close the row -->
           <div v-if="canEdit" class="flex flex-wrap items-center gap-2 pt-1">
             <select
-              v-if="row.status !== 'matched'"
               class="input w-auto max-w-full px-2 py-1 text-xs"
               @change="linkNote(row, ($event.target as HTMLSelectElement).value)"
             >
-              <option value="">{{ t('triage.recon.linkPlaceholder') }}</option>
+              <option value="">{{ t(row.match ? 'triage.recon.relinkPlaceholder' : 'triage.recon.linkPlaceholder') }}</option>
               <option v-for="cand in candidatesFor(row.note)" :key="cand.id" :value="cand.id">
                 {{
                   t('triage.recon.linkOption', {
