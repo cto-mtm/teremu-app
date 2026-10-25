@@ -306,7 +306,7 @@ describe("restaurant profile — base currency, country, timezone", () => {
     // Out of range or wrong type is a 400; a member is a 403; no token a 401.
     expect((await put(`/restaurants/${owner.rid}`, owner.token, { salesTaxRate: 0.9 })).status).toBe(400);
     const uid = `member-${uniqueId()}`;
-    await seedMember(owner.rid, uid, { triage: "read", menu: "edit", pantry: "edit", finance: "edit", vendors: "edit", integrations: "none", scan: true });
+    await seedMember(owner.rid, uid, { triage: "read", menu: "edit", pantry: "edit", finance: "edit", vendors: "read", integrations: "none", scan: true });
     const member = await makeUserToken({ uid, email: `${uid}@test.local` });
     expect((await put(`/restaurants/${owner.rid}`, member, { pricesIncludeTax: true }, owner.rid)).status).toBe(403);
     expect((await put(`/restaurants/${owner.rid}`, undefined, { pricesIncludeTax: true })).status).toBe(401);

@@ -22,7 +22,8 @@ test('a US sign-up lands in English with imperial units and dollars', async ({ p
   await expect(page.getByRole('heading', { name: 'Welcome to Teremu' })).toBeVisible()
   await expect(page.getByText(/By signing in you agree to the/)).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', './manifest.webmanifest')
+  // Vite normalises the relative href; what matters is the English manifest, not the Spanish one.
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', /(^|\/)manifest\.webmanifest$/)
 
   await signInWithGoogle(page, { email: `us-${slug}-${Date.now()}@test.teremu`, displayName: 'US Owner' })
 

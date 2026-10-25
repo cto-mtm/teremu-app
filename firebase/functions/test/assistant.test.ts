@@ -125,10 +125,11 @@ describe("assistant", () => {
   });
 
   it("labels its cards and chips in the person's language (A11)", async () => {
-    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const uid = `owner-${uniqueId()}`;
+    const owner = await makeOwner({ uid, email: `${uid}@example.com` });
     await setPlan(owner.rid, "pro");
     const metaFor = async (locale: "es" | "en") => {
-      await getFirestore().collection("users").doc(owner.uid).set({ locale }, { merge: true });
+      await getFirestore().collection("users").doc(uid).set({ locale }, { merge: true });
       const res = await fetch(`${ASSISTANT}/conversation`, {
         headers: { Authorization: `Bearer ${owner.token}`, "X-Restaurant-Id": owner.rid, "X-Assistant-Version": "0" },
       });

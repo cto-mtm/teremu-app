@@ -126,10 +126,14 @@ language). Docs refreshed: multi-currency, architecture (mail caps),
 product (units, tax), ocr-samples and real-samples (credit memos), i18n
 (first paint), testing (hermetic functions tests).
 
-Still owed: a rendered Sysco-style receipt and a recorded cassette (B6),
-the fake inbox's US entries (B3), and **running the integration and e2e
-tiers** (`credit-memo.test.ts`, the new cases above, `us-signup.spec.ts`)
-once the emulators are up — none of them has executed yet.
+**Gate run (2026-10-25):** `npm run test:integration:exec` 42 files /
+488 tests green; `npm run test:e2e` green after re-pinning the three menu
+specs to the netted Spanish margins the suite's own es-ES owner now
+produces (76.4 %, 17.5 %, 94.5 % — the A6 change made visible) and
+loosening the manifest href check to Vite's normalised path.
+
+Still owed: a rendered Sysco-style receipt and a recorded cassette (B6)
+and the fake inbox's US entries (B3).
 
 Four
 read-only audits (tax & money, document pipeline, locale & defaults,

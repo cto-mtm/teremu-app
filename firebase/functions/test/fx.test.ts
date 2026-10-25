@@ -130,6 +130,10 @@ describe("countries — the default pack", () => {
       defaultSource: "manual",
       optInSources: [],
       pulseCards: [],
+      // docs/us-market-readiness.md A5/A6: the world pack nets nothing, metric.
+      pricesIncludeTax: false,
+      salesTaxRate: null,
+      unitSystem: "metric",
     });
     // Nothing in the profile is a function or a provider — it is JSON.
     expect(JSON.parse(JSON.stringify(profile))).toEqual(profile);

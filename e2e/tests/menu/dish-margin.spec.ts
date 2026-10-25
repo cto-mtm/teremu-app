@@ -22,8 +22,10 @@ test.describe('Dish margins', () => {
     await createIngredient(page, { name: salmon, unit: 'kg', price: 20, stock: 10 })
     await createIngredient(page, { name: rice, unit: 'kg', price: 3, stock: 10 })
 
-    // Sells at $20 → margin (20 − 4.30) / 20 = 78.5%, comfortably over a
-    // 70% target, so the dish must NOT be flagged.
+    // Sells at 20 € on a Spanish menu (the suite's owner is es-ES → the ES
+    // country pack: menu prices include 10 % IVA, docs/us-market-readiness.md
+    // A6), so the margin is over the NET price: (18.18 − 4.30) / 18.18 =
+    // 76.4 %, comfortably over a 70 % target — the dish must NOT be flagged.
     await createDish(page, {
       name: dish,
       price: 20,
@@ -37,7 +39,7 @@ test.describe('Dish margins', () => {
     const card = dishCard(page, dish)
     // Margin and currency both go through vue-i18n's `es` formatter: comma
     // decimal, and a (no-break) space before the percent sign.
-    await expect(card).toContainText(/78,5\s%/)
+    await expect(card).toContainText(/76,4\s%/)
     await expect(card).toContainText(/objetivo 70\s%/)
     await expect(card).toContainText('4,30')
 
@@ -53,8 +55,9 @@ test.describe('Dish margins', () => {
     const truffle = unique(testInfo, 'Trufa')
     const dish = unique(testInfo, 'Pasta trufada')
 
-    // 0.05 kg × $600/kg = $30 cost on a $40 plate → 25% margin, far below
-    // the 70% target: the list must show the coral "needs attention" dot.
+    // 0.05 kg × 600 €/kg = 30 € cost on a 40 € plate, 36.36 € net of IVA →
+    // 17.5 % margin, far below the 70 % target: the list must show the
+    // coral "needs attention" dot.
     await createIngredient(page, { name: truffle, unit: 'kg', price: 600, stock: 1 })
     await createDish(page, {
       name: dish,
@@ -64,7 +67,7 @@ test.describe('Dish margins', () => {
     })
 
     const card = dishCard(page, dish)
-    await expect(card).toContainText(/25,0\s%/)
+    await expect(card).toContainText(/17,5\s%/)
     await expect(card).toContainText('●')
   })
 })

@@ -29,7 +29,8 @@ test.describe('Prep recipes', () => {
     await createDish(page, { name: dish, price: 20, recipe: [{ ingredient: stock, qty: 500, unit: 'ml' }] })
     const card = dishCard(page, dish)
     await expect(card).toContainText('1,00')
-    await expect(card).toContainText(/95,0\s%/)
+    // 1 € on a 20 € plate that nets 18.18 € after 10 % IVA (ES pack): 94.5 %.
+    await expect(card).toContainText(/94,5\s%/)
 
     // The prep stays off the dishes tab and now counts its use.
     await expect(dishCard(page, stock)).toHaveCount(0)
