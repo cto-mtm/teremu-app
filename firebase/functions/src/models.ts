@@ -168,6 +168,22 @@ export const invoiceDocSchema = z.object({
   // specific invoice overrides the auto-matcher; handled hides the row.
   reconInvoiceId: z.string().nullable().optional(),
   reconHandled: z.boolean().optional(),
+  // Written when a person links a note by hand: how far the note sat
+  // from the invoice they chose, and what the matcher had paired it with
+  // (null = nothing). Ground truth for tuning the matcher's bands —
+  // read in aggregate, never shown.
+  reconGap: z
+    .object({
+      invoiceId: z.string(),
+      autoMatchId: z.string().nullable(),
+      noteValue: z.number(),
+      invoiceValue: z.number(),
+      gapPct: z.number().nullable(),
+      overlap: z.number(),
+      unpricedLines: z.number(),
+      at: z.number(),
+    })
+    .optional(),
   error: z.string().nullable(),
   createdAt: z.number(),
   approvedAt: z.number().nullable(),
@@ -637,6 +653,9 @@ export const orderSchema = z.object({
 export const reconcileSchema = z.object({
   invoiceId: z.string().nullable().optional(), // manual link (or clear)
   handled: z.boolean().optional(), // mark resolved / reopen
+  // What the client's matcher had paired the note with when the person
+  // linked it by hand (null = it was unmatched) — recorded as reconGap.
+  autoMatchId: z.string().nullable().optional(),
 });
 
 /** PUT /invoices/:id/discard — drop a scan from Triage, or put it back. */

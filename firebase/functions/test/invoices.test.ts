@@ -213,6 +213,35 @@ describe("invoice lifecycle", () => {
     expect(reconciled.status).toBe(200);
     expect((reconciled.body as any).reconInvoiceId).toBe("some-matching-invoice-id");
     expect((reconciled.body as any).reconHandled).toBe(true);
+    expect((reconciled.body as any).reconGap).toBeUndefined(); // no such invoice: nothing to measure
+
+    // Linking to a real invoice records the gap the matcher would have
+    // had to bridge — ground truth for its bands.
+    const bill = await seedInvoice(owner.rid, {});
+    await col(owner.rid, "invoices").doc(bill.id).update({
+      status: "approved",
+      vendorName: "Bella Dairy",
+      invoiceDate: "2026-07-31",
+      lineItems: [
+        { name: "Heavy cream", qty: 5, unit: "qt", unitPrice: 5, total: 25 },
+        { name: "Butter", qty: 1, unit: "kg", unitPrice: 25, total: 25 },
+      ],
+      total: 50,
+    });
+    const linked = await put<{ id: string } & InvoiceDoc>(`/invoices/${note.id}/reconcile`, owner.token, {
+      invoiceId: bill.id,
+      autoMatchId: null,
+    });
+    expect(linked.status).toBe(200);
+    expect(linked.body.reconGap).toMatchObject({
+      invoiceId: bill.id,
+      autoMatchId: null,
+      noteValue: 23,
+      invoiceValue: 50,
+      gapPct: -54,
+      overlap: 1,
+      unpricedLines: 0,
+    });
   });
 
   it("discard takes a scan out of triage and can put it back where it was", async () => {

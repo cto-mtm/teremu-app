@@ -3,31 +3,37 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
+import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import { reconcileDeliveryNotes, reconciliationCandidates } from '../lib/domain'
+import { reconcileDeliveryNotes, reconciliationCandidates, type ReconciliationRow } from '../lib/domain'
 import type { Invoice } from '../lib/types'
 import InvoiceCard from '../components/InvoiceCard.vue'
 import PageLoader from '../components/PageLoader.vue'
 
 const { t, n, d } = useI18n()
 const store = useInvoicesStore()
+const kitchen = useKitchenStore()
 const auth = useAuthStore()
 const canEdit = computed(() => auth.can('triage', 'edit'))
 const showInfo = ref(false)
 
 // Albarán ↔ factura pairing: automatic from scans, manually resolvable.
-const reconciliation = computed(() => reconcileDeliveryNotes(store.invoices))
+// The pantry prices value unpriced albarán lines, the way Pulse does.
+const reconciliation = computed(() => reconcileDeliveryNotes(store.invoices, kitchen.ingredientMap))
 
 // Link options for every unmatched row, computed once per data change —
-// not per render (each call filters + sorts every invoice).
+// not per render (each call filters + sorts every invoice). The
+// matcher's near miss leads the list.
 const candidatesByNote = computed(
   () =>
     new Map(
       reconciliation.value
         .filter((row) => row.status !== 'matched')
-        .map((row) => [row.note.id, reconciliationCandidates(store.invoices, row.note)]),
+        .map((row) => [row.note.id, reconciliationCandidates(store.invoices, row.note, row.nearMiss?.invoice.id)]),
     ),
 )
+const nearMissGap = (row: ReconciliationRow): string =>
+  n(Math.abs(row.nearMiss?.gapPct ?? 0) / 100, 'percent')
 function candidatesFor(note: Invoice): Invoice[] {
   return candidatesByNote.value.get(note.id) ?? []
 }
@@ -43,9 +49,11 @@ async function restore(id: string): Promise<void> {
   if (!(await store.discard(id, false))) alert(t('triage.restoreFailed'))
 }
 
-async function linkNote(note: Invoice, event: Event): Promise<void> {
-  const invoiceId = (event.target as HTMLSelectElement).value
-  if (invoiceId) await store.reconcile(note.id, { invoiceId })
+// A manual link also tells the server what the matcher had paired the
+// note with (nothing, for an unmatched row) — the gap it records is how
+// the matcher's bands get tuned from real clients.
+async function linkNote(row: ReconciliationRow, invoiceId: string): Promise<void> {
+  if (invoiceId) await store.reconcile(row.note.id, { invoiceId, autoMatchId: row.match?.id ?? null })
 }
 
 // The shell loads invoices at sign-in; only refetch here when that data
@@ -171,12 +179,27 @@ onUnmounted(() => {
           <p v-for="diff in row.diffs" :key="diff.name" class="text-xs text-smoke">
             {{ t('triage.recon.diff', { name: diff.name, note: n(diff.notePrice, 'currency'), invoice: n(diff.invoicePrice, 'currency') }) }}
           </p>
+          <!-- Near miss: the factura the matcher almost paired, one tap away -->
+          <p v-if="row.nearMiss" class="flex flex-wrap items-center gap-x-2 text-xs text-smoke">
+            <span>
+              {{
+                t('triage.recon.nearMiss', {
+                  date: row.nearMiss.invoice.invoiceDate ? d(new Date(row.nearMiss.invoice.invoiceDate + 'T12:00:00'), 'short') : '—',
+                  total: n(row.nearMiss.invoice.total ?? 0, 'currency'),
+                  gap: nearMissGap(row),
+                })
+              }}
+            </span>
+            <button v-if="canEdit" class="font-semibold text-ember-700 hover:underline" @click="linkNote(row, row.nearMiss.invoice.id)">
+              {{ t('triage.recon.nearMissLink') }}
+            </button>
+          </p>
           <!-- Manual resolution: link to the right invoice, or close the row -->
           <div v-if="canEdit" class="flex flex-wrap items-center gap-2 pt-1">
             <select
               v-if="row.status !== 'matched'"
               class="input w-auto max-w-full px-2 py-1 text-xs"
-              @change="linkNote(row.note, $event)"
+              @change="linkNote(row, ($event.target as HTMLSelectElement).value)"
             >
               <option value="">{{ t('triage.recon.linkPlaceholder') }}</option>
               <option v-for="cand in candidatesFor(row.note)" :key="cand.id" :value="cand.id">

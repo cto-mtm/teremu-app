@@ -68,8 +68,10 @@ watch(
 )
 
 // ── Billed vs real-time spend (facturado vs recibido) ───────────
-// Real time adds approved albaranes no factura covers yet; the toggle
-// only appears while such notes exist (the views are identical
+// Real time dates spend by delivery: approved albaranes no factura
+// covers yet are added, and covered ones keep their own date while the
+// factura keeps only what they do not explain. The toggle only appears
+// while an approved note shapes the picture (the views are identical
 // otherwise). Price history & alerts stay billed-only — albarán prices
 // are estimates, not payments.
 const spendMode = ref<'billed' | 'realtime'>('billed')
@@ -416,7 +418,7 @@ watch(showExpense, (open) => {
     </div>
 
     <!-- Tab strip: Overview / Categories / Providers -->
-    <div class="flex gap-1 rounded-xl bg-gray-100 p-1" role="tablist" :aria-label="t('pulse.title')">
+    <div class="flex gap-1 rounded-xl bg-gray-100 p-1 sm:inline-flex" role="tablist" :aria-label="t('pulse.title')">
       <button
         v-for="tb in tabs"
         :key="tb"
@@ -430,15 +432,20 @@ watch(showExpense, (open) => {
       </button>
     </div>
 
-    <!-- Billed vs real-time toggle: only while pending albaranes exist
-         (the two views are identical otherwise) -->
+    <!-- Billed vs real-time toggle: only while an approved albarán
+         shapes the picture (the two views are identical otherwise) -->
     <div
-      v-if="tab !== 'providers' && realtime.pendingCount > 0"
+      v-if="tab !== 'providers' && realtime.noteCount > 0"
       class="flex items-center gap-2"
       role="group"
       :aria-label="t('pulse.view.label')"
     >
       <span class="text-xs text-smoke">{{ t('pulse.view.label') }}</span>
+      <InfoButton :title="t('pulse.view.label')">
+        <p>{{ t('pulse.info.view.p1') }}</p>
+        <p>{{ t('pulse.info.view.p2') }}</p>
+        <p>{{ t('pulse.info.view.p3') }}</p>
+      </InfoButton>
       <div class="flex gap-1 rounded-lg bg-gray-100 p-0.5">
         <button
           v-for="m in (['billed', 'realtime'] as const)"
@@ -507,6 +514,9 @@ watch(showExpense, (open) => {
         <div class="text-sm font-semibold">{{ t('pulse.pendingNotes') }}</div>
         <div class="text-xs text-smoke">
           {{ t('pulse.pendingNotesDetail', { n: realtime.pendingCount }) }}
+          <template v-if="realtime.oldestPending">
+            · {{ t('pulse.pendingOldest', { date: d(new Date(realtime.oldestPending + 'T12:00:00'), 'short') }) }}
+          </template>
           <template v-if="realtime.unvaluedLines">
             · {{ t('pulse.pendingUnvalued', { n: realtime.unvaluedLines }) }}
           </template>

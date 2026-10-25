@@ -50,9 +50,29 @@ export interface ReconciliationRow {
   match: Invoice | null
   status: 'matched' | 'price_mismatch' | 'unmatched'
   diffs: { name: string; notePrice: number; invoicePrice: number }[]
+  /** Unmatched only: the same-vendor factura that came closest, so Triage
+   * can offer it as a one-tap link. `gapPct` is how far the note's value
+   * sits from it (+ = the note is bigger), `overlap` the share of the
+   * note's lines that also appear on it. */
+  nearMiss?: { invoice: Invoice; gapPct: number; overlap: number }
 }
 
-const RECON_WINDOW_DAYS = 40
+// A factura may consolidate deliveries from this far back…
+const RECON_LOOKBACK_DAYS = 120
+// …but never a delivery made after it (a few days of slack for the date
+// a vendor prints vs the date the goods actually landed).
+const RECON_LOOKAHEAD_DAYS = 3
+// How far a value may sit from the factura that bills it, per unit of
+// evidence: a printed line is exact (2%, the same band priceDiffs uses),
+// a line valued at the pantry's last price is an estimate (15%), and a
+// few units of slack absorb rounding and a deposit line.
+const FIRM_BAND = 0.02
+const SOFT_BAND = 0.15
+const BAND_FLOOR = 5
+// With most of a note's lines on the factura, the goods are evidently
+// billed there: the value only has to stay plausible.
+const OVERLAP_STRONG = 0.5
+const OVERLAP_BAND = 0.25
 
 /** Shared line items priced differently on note vs invoice (>2%). */
 function priceDiffs(note: Invoice, invoice: Invoice): ReconciliationRow['diffs'] {
@@ -71,16 +91,84 @@ function priceDiffs(note: Invoice, invoice: Invoice): ReconciliationRow['diffs']
   return diffs
 }
 
+/** Share of the note's named lines that also appear on the invoice. */
+export function lineOverlap(note: Invoice, invoice: Invoice): number {
+  const names = new Set(invoice.lineItems.map((l) => normalizeName(l.name)).filter(Boolean))
+  const mine = note.lineItems.map((l) => normalizeName(l.name)).filter(Boolean)
+  if (!mine.length || !names.size) return 0
+  return mine.filter((n) => names.has(n)).length / mine.length
+}
+
+const noonMs = (date: string | null): number | null =>
+  date ? new Date(date + 'T12:00:00').getTime() : null
+
+/** A delivery note with its lines valued: printed prices as they are,
+ * unpriced lines at the pantry's last price (unit-converted), the rest
+ * left at 0 and counted. `firm` is the printed money, `soft` the
+ * estimated money — the matcher trusts them differently. */
+export interface ValuedNote {
+  lineItems: LineItem[]
+  total: number
+  firm: number
+  soft: number
+  unvalued: number
+}
+
+export function valueNote(note: Invoice, ingredientsById: Map<string, Ingredient>): ValuedNote {
+  let firm = 0
+  let soft = 0
+  let unvalued = 0
+  const lineItems = note.lineItems.map((line) => {
+    if (line.total > 0) {
+      firm += line.total
+      return line
+    }
+    const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
+    if (ing?.lastUnitPrice != null) {
+      const qty = line.unit === ing.unit ? line.qty : convertQty(line.qty, line.unit, ing.unit)
+      if (qty != null) {
+        const total = +(qty * ing.lastUnitPrice).toFixed(2)
+        soft += total
+        return { ...line, total }
+      }
+    }
+    unvalued += 1
+    return line
+  })
+  const total = +(firm + soft).toFixed(2)
+  // A note with no priced lines at all still has a printed total.
+  return total > 0 || !note.total
+    ? { lineItems, total, firm, soft, unvalued }
+    : { lineItems, total: note.total, firm: 0, soft: note.total, unvalued }
+}
+
 /**
- * Pair each delivery note with its most plausible invoice: same vendor,
- * dated within the window, closest total. A manual link
- * (note.reconInvoiceId) overrides the auto-matcher; notes marked
- * handled are excluded entirely, and so are notes diverted to an
+ * Pair each delivery note with the invoice that COVERS it. A factura
+ * claims, oldest first, the same-vendor notes dated up to 120 days
+ * before it (never after it: October's factura cannot cover November's
+ * deliveries, however close the dates) whose value adds up to its own
+ * food value within a band sized by how sure that value is — printed
+ * lines are near-exact, lines valued at the pantry's last price are
+ * estimates. Failing that, the notes whose lines mostly appear on the
+ * factura are evidently billed there and are claimed on a loose band;
+ * then a single note within band. A note nobody can value attaches to
+ * the nearest factura the valued notes left unexplained. Facturas are
+ * walked in date order and a claimed note is never offered to a later
+ * one, so one factura cannot absorb a whole month of deliveries it did
+ * not bill. Anything left is unmatched, with the closest factura kept
+ * as a near miss for Triage, and stays visible until its factura (or a
+ * manual resolution) arrives.
+ *
+ * A manual link (note.reconInvoiceId) overrides the matcher; notes
+ * marked handled are excluded entirely, and so are notes diverted to an
  * expense — the expense ledger already carries that money, and only
  * food facturas are candidates. Price differences on shared line items
  * (>2%) surface as diffs — that's the billing-error catch.
  */
-export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[] {
+export function reconcileDeliveryNotes(
+  invoices: Invoice[],
+  ingredientsById: Map<string, Ingredient> = new Map(),
+): ReconciliationRow[] {
   const notes = invoices.filter(
     (i) =>
       i.docType === 'delivery_note' &&
@@ -91,40 +179,121 @@ export function reconcileDeliveryNotes(invoices: Invoice[]): ReconciliationRow[]
   // Only facturas pair with an albarán: a credit memo is money back, not a bill (A8).
   const bills = invoices.filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.vendorName)
 
-  return notes.map((note) => {
+  const valued = new Map(notes.map((n) => [n.id, valueNote(n, ingredientsById)]))
+  const value = (n: Invoice) => valued.get(n.id)!.total
+  const band = (set: Invoice[], target: number): number =>
+    Math.max(
+      BAND_FLOOR,
+      target * FIRM_BAND +
+        set.reduce((s, n) => s + valued.get(n.id)!.firm * FIRM_BAND + valued.get(n.id)!.soft * SOFT_BAND, 0),
+    )
+
+  const matchOf = new Map<string, Invoice>()
+  const pool = new Map<string, Invoice[]>() // vendor key → unclaimed notes
+  for (const note of notes) {
     // Manual link wins over the heuristic.
-    if (note.reconInvoiceId) {
-      const linked = invoices.find((i) => i.id === note.reconInvoiceId)
-      if (linked) {
-        const diffs = priceDiffs(note, linked)
-        return { note, match: linked, status: diffs.length ? ('price_mismatch' as const) : ('matched' as const), diffs }
+    const linked = note.reconInvoiceId ? invoices.find((i) => i.id === note.reconInvoiceId) : undefined
+    if (linked) {
+      matchOf.set(note.id, linked)
+      continue
+    }
+    if (!note.vendorName) continue
+    const key = vendorKey(note.vendorName)
+    pool.set(key, [...(pool.get(key) ?? []), note])
+  }
+
+  const byDate = (a: Invoice, b: Invoice) => (a.invoiceDate ?? '').localeCompare(b.invoiceDate ?? '')
+  const dateGap = (a: Invoice, billTime: number | null): number => {
+    const t = noonMs(a.invoiceDate)
+    return billTime == null || t == null ? 0 : Math.abs(t - billTime)
+  }
+  const coverable = (note: Invoice, bill: Invoice): boolean => {
+    const billTime = noonMs(bill.invoiceDate)
+    const noteTime = noonMs(note.invoiceDate)
+    if (billTime == null || noteTime == null) return true
+    const ahead = noteTime - billTime
+    return ahead <= RECON_LOOKAHEAD_DAYS * DAY_MS && -ahead <= RECON_LOOKBACK_DAYS * DAY_MS
+  }
+  const sum = (set: Invoice[]) => set.reduce((s, n) => s + value(n), 0)
+
+  const sortedBills = [...bills].sort(byDate)
+  for (const bill of sortedBills) {
+    const key = vendorKey(bill.vendorName!)
+    const unclaimed = pool.get(key)
+    if (!unclaimed?.length) continue
+    const billTime = noonMs(bill.invoiceDate)
+    const inWindow = unclaimed.filter((n) => coverable(n, bill))
+    if (!inWindow.length) continue
+
+    const target = Math.abs(foodSpend(bill))
+    const priced = inWindow.filter((n) => value(n) > 0).sort(byDate)
+    let claimed: Invoice[] = []
+
+    // 1. Consolidated billing: the oldest notes that add up to the factura.
+    for (const note of priced) {
+      if (sum(claimed) + value(note) <= target + band([...claimed, note], target)) claimed.push(note)
+    }
+    if (Math.abs(sum(claimed) - target) > band(claimed, target)) {
+      // 2. The goods themselves: notes whose lines mostly appear on the
+      //    factura are billed there, however far the estimates drifted —
+      //    as long as together they do not exceed what it bills.
+      const evident = priced.filter((n) => lineOverlap(n, bill) >= OVERLAP_STRONG)
+      const loose = Math.max(band(evident, target), target * OVERLAP_BAND)
+      if (evident.length && sum(evident) <= target + loose) claimed = evident
+      else {
+        // 3. A single note the factura bills on its own.
+        const single = priced
+          .filter((n) => Math.abs(value(n) - target) <= band([n], target))
+          .sort((a, b) => Math.abs(value(a) - target) - Math.abs(value(b) - target))[0]
+        claimed = single ? [single] : []
       }
     }
+    // 4. Notes nobody could value: nothing to compare, so they attach to
+    //    a factura the valued notes do not already explain — nearest date
+    //    first, one per factura once something else explains part of it.
+    const covered = sum(claimed)
+    if (target - covered > band(claimed, target) || target === 0) {
+      const unvalued = inWindow
+        .filter((n) => value(n) <= 0)
+        .sort((a, b) => dateGap(a, billTime) - dateGap(b, billTime))
+      claimed.push(...(claimed.length ? unvalued.slice(0, 1) : unvalued))
+    }
+    for (const note of claimed) matchOf.set(note.id, bill)
+    pool.set(key, unclaimed.filter((n) => !matchOf.has(n.id)))
+  }
 
+  return notes.map((note) => {
+    const match = matchOf.get(note.id) ?? null
+    if (match) {
+      const diffs = priceDiffs(note, match)
+      return { note, match, status: diffs.length ? ('price_mismatch' as const) : ('matched' as const), diffs }
+    }
+    const row: ReconciliationRow = { note, match: null, status: 'unmatched', diffs: [] }
+    // The closest same-vendor factura in reach: most shared lines, then
+    // the smallest value gap — the one a person would link by hand.
     const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
-    const noteTime = note.invoiceDate ? new Date(note.invoiceDate + 'T12:00:00').getTime() : null
-    const candidates = bills.filter((b) => {
-      if (!noteKey || vendorKey(b.vendorName!) !== noteKey) return false
-      if (noteTime == null || !b.invoiceDate) return true
-      const dt = Math.abs(new Date(b.invoiceDate + 'T12:00:00').getTime() - noteTime)
-      return dt <= RECON_WINDOW_DAYS * 86_400_000
-    })
-    if (candidates.length === 0) return { note, match: null, status: 'unmatched' as const, diffs: [] }
-
-    const match = candidates.reduce((best, b) =>
-      Math.abs((b.total ?? 0) - (note.total ?? 0)) < Math.abs((best.total ?? 0) - (note.total ?? 0)) ? b : best,
-    )
-    const diffs = priceDiffs(note, match)
-    return { note, match, status: diffs.length ? ('price_mismatch' as const) : ('matched' as const), diffs }
+    const near = sortedBills
+      .filter((b) => noteKey && vendorKey(b.vendorName!) === noteKey && coverable(note, b))
+      .map((invoice) => {
+        const target = Math.abs(foodSpend(invoice))
+        const gapPct = target > 0 ? ((value(note) - target) / target) * 100 : 0
+        return { invoice, gapPct, overlap: lineOverlap(note, invoice) }
+      })
+      .sort((a, b) => b.overlap - a.overlap || Math.abs(a.gapPct) - Math.abs(b.gapPct))[0]
+    if (near) row.nearMiss = near
+    return row
   })
 }
 
-/** Invoices a note could plausibly link to by hand (same vendor first). */
-export function reconciliationCandidates(invoices: Invoice[], note: Invoice): Invoice[] {
+/** Invoices a note could plausibly link to by hand (same vendor first,
+ * the matcher's near miss before all). */
+export function reconciliationCandidates(invoices: Invoice[], note: Invoice, nearMissId?: string): Invoice[] {
   const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
   return invoices
     .filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.id !== note.id)
     .sort((a, b) => {
+      if (a.id === nearMissId) return -1
+      if (b.id === nearMissId) return 1
       const aSame = a.vendorName && vendorKey(a.vendorName) === noteKey ? 0 : 1
       const bSame = b.vendorName && vendorKey(b.vendorName) === noteKey ? 0 : 1
       if (aSame !== bSame) return aSame - bSame
@@ -136,61 +305,104 @@ export function reconciliationCandidates(invoices: Invoice[], note: Invoice): In
 // ── Billed vs real-time spend (factura vs albarán consolidation) ────
 
 export interface RealtimeSpend {
-  /** Billed invoices + pending delivery notes shaped as invoices. */
+  /** Food spend by DELIVERY date: invoices with their covered notes
+   * swapped in, plus the pending notes, all shaped as invoices. */
   docs: Invoice[]
   /** Value received but not yet billed — the billed↔realtime delta. */
   pendingTotal: number
   pendingCount: number
+  /** Delivery date of the oldest note still awaiting its factura. */
+  oldestPending: string | null
+  /** Approved notes that shape this view at all (pending or covered):
+   * 0 means the two views are the same picture. */
+  noteCount: number
   /** Pending lines nobody could price (no line price, no pantry price). */
   unvaluedLines: number
 }
 
 /**
- * The REAL-TIME view of food spend. Facturas alone are the accounting
- * truth, but a vendor on consolidated billing delivers for weeks on
- * albaranes before the factura lands — so this view adds every approved
- * delivery note that no factura covers yet (reconciliation says
- * unmatched, not marked handled). Once the factura arrives and matches,
- * its notes drop out and the factura takes over: the two views converge
- * and nothing is ever double-counted.
+ * The REAL-TIME view of food spend: money by the day the goods landed.
+ * Facturas alone are the accounting truth, but a vendor on consolidated
+ * billing delivers for weeks on albaranes before the factura lands, and
+ * the factura then dates a month of deliveries to one day. So this view
+ * (1) adds every approved delivery note no factura covers yet
+ * (reconciliation says unmatched, not marked handled) and (2) keeps a
+ * covered note at its own date, taking its value off the factura that
+ * covers it — the factura keeps only what its notes do not explain
+ * (a delivery it billed without a note, a fee). Nothing is counted
+ * twice: billed and real time agree on the total and differ on the
+ * week it falls in.
  *
- * Pending notes are returned as invoice-shaped docs (docType flipped,
- * lines valued) so every existing aggregate — weeklySeries,
- * vendorWeeklySpend, spendTree — consumes them unchanged. Albarán lines
- * are often unpriced: a line is valued at its own printed price, else
- * at the matched ingredient's current price (unit-converted), else it
- * counts as received-but-unvalued.
+ * Notes are returned as invoice-shaped docs (docType flipped, lines
+ * valued by `valueNote`: printed price, else the matched ingredient's
+ * current price, else received-but-unvalued) so every existing
+ * aggregate — weeklySeries, vendorWeeklySpend, spendTree — consumes
+ * them unchanged.
  */
 export function realtimeSpend(
   invoices: Invoice[],
   ingredientsById: Map<string, Ingredient>,
 ): RealtimeSpend {
-  const pendingNotes = reconcileDeliveryNotes(invoices)
-    .filter((r) => r.status === 'unmatched' && r.note.status === 'approved')
-    .map((r) => r.note)
+  const rows = reconcileDeliveryNotes(invoices, ingredientsById).filter((r) => r.note.status === 'approved')
 
   let pendingTotal = 0
+  let pendingCount = 0
+  let oldestPending: string | null = null
   let unvaluedLines = 0
-  const docs = [...invoices]
-  for (const note of pendingNotes) {
-    const lineItems = note.lineItems.map((line) => {
-      if (line.total > 0) return line
-      const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
-      if (ing?.lastUnitPrice != null) {
-        const qty = line.unit === ing.unit ? line.qty : convertQty(line.qty, line.unit, ing.unit)
-        if (qty != null) return { ...line, total: +(qty * ing.lastUnitPrice).toFixed(2) }
-      }
-      unvaluedLines += 1
-      return line
+  const covered = new Map<string, number>() // factura id → value its notes explain
+  const noteDocs: { doc: Invoice; matchId: string | null }[] = []
+  for (const { note, match } of rows) {
+    const { lineItems, total, unvalued } = valueNote(note, ingredientsById)
+    noteDocs.push({ doc: { ...note, docType: 'invoice', lineItems, total }, matchId: match?.id ?? null })
+    if (match) {
+      covered.set(match.id, (covered.get(match.id) ?? 0) + total)
+    } else {
+      pendingTotal += total
+      pendingCount += 1
+      unvaluedLines += unvalued
+      if (note.invoiceDate && (!oldestPending || note.invoiceDate < oldestPending)) oldestPending = note.invoiceDate
+    }
+  }
+
+  const docs: Invoice[] = []
+  // Notes that together say MORE than their factura (estimates drift
+  // up, the overlap rule tolerates it) are scaled down to it: the
+  // factura is the accounting truth, so the two views agree on the total.
+  const scale = new Map<string, number>()
+  for (const inv of invoices) {
+    const byNotes = covered.get(inv.id)
+    if (byNotes == null) {
+      docs.push(inv)
+      continue
+    }
+    const billed = Math.abs(foodSpend(inv))
+    if (byNotes > billed) {
+      scale.set(inv.id, billed / byNotes)
+      continue
+    }
+    // The factura keeps only what its notes do not explain. Its lines go
+    // with the notes (which carry the same goods, now at delivery date).
+    const remainder = +(billed - byNotes).toFixed(2)
+    if (remainder > 0) docs.push({ ...inv, lineItems: [], total: remainder })
+  }
+  for (const { doc, matchId } of noteDocs) {
+    const k = matchId ? scale.get(matchId) : undefined
+    if (k == null) {
+      docs.push(doc)
+      continue
+    }
+    docs.push({
+      ...doc,
+      lineItems: doc.lineItems.map((l) => ({ ...l, total: +(l.total * k).toFixed(2) })),
+      total: +(doc.total! * k).toFixed(2),
     })
-    const total = +lineItems.reduce((s, l) => s + l.total, 0).toFixed(2)
-    pendingTotal += total
-    docs.push({ ...note, docType: 'invoice', lineItems, total })
   }
   return {
     docs,
     pendingTotal: +pendingTotal.toFixed(2),
-    pendingCount: pendingNotes.length,
+    pendingCount,
+    oldestPending,
+    noteCount: rows.length,
     unvaluedLines,
   }
 }
@@ -349,7 +561,7 @@ export function vendorSummaries(
     if (!key) continue
     const v = acc(key, inv.vendorName)
     v.invoiceCount += 1
-    v.totalSpend += signedTotal(inv)
+    v.totalSpend += foodSpend(inv)
     if (inv.invoiceDate && (!v.lastDate || inv.invoiceDate > v.lastDate)) v.lastDate = inv.invoiceDate
     for (const line of inv.lineItems) {
       if (line.category && line.category !== 'other') v.cats.add(line.category)
@@ -657,7 +869,9 @@ export interface VendorWeekSpend {
 
 /**
  * Weekly spend stacked by vendor (top 4 + "other") over the same
- * 8-week window as weeklySeries.
+ * 8-week window as weeklySeries, on the same food value (`foodSpend`:
+ * the lines, not the printed total with tax and delivery) so the bars
+ * add up to the expenses line and billed and real-time docs compare.
  */
 export function vendorWeeklySpend(invoices: Invoice[]): {
   weeks: VendorWeekSpend[]
@@ -665,10 +879,10 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
 } {
   const totals = new Map<string, { name: string; total: number }>()
   for (const inv of invoices) {
-    if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
+    if (!isFoodInvoice(inv) || !inv.vendorName) continue
     const key = vendorKey(inv.vendorName)
     const v = totals.get(key) ?? { name: inv.vendorName, total: 0 }
-    v.total += signedTotal(inv)
+    v.total += foodSpend(inv)
     totals.set(key, v)
   }
   const top = [...totals.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 4)
@@ -683,7 +897,7 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
     segments: vendors.map((v) => ({ ...v, amount: 0 })),
   }))
   for (const inv of invoices) {
-    if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
+    if (!isFoodInvoice(inv) || !inv.vendorName) continue
     const d = inv.invoiceDate ? new Date(inv.invoiceDate + 'T12:00:00') : new Date(inv.createdAt)
     for (const w of weeks) {
       const start = new Date(w.weekStart + 'T00:00:00').getTime()
@@ -691,8 +905,8 @@ export function vendorWeeklySpend(invoices: Invoice[]): {
         const key = vendorKey(inv.vendorName)
         const seg = w.segments.find((s) => s.key === (topKeys.has(key) ? key : 'other'))
         if (seg) {
-          seg.amount += signedTotal(inv)
-          w.total += signedTotal(inv)
+          seg.amount += foodSpend(inv)
+          w.total += foodSpend(inv)
         }
         break
       }
@@ -761,15 +975,16 @@ export function unitsSoldWeekly(revenue: RevenueEntry[], menuItemId: string): nu
   return out
 }
 
-/** One vendor's spend per week (8 weeks) for the vendor detail bars. */
+/** One vendor's spend per week (8 weeks) for the vendor detail bars —
+ * the same food value the dashboard stacks (`foodSpend`). */
 export function vendorWeeklyTotals(invoices: Invoice[], key: string): number[] {
   const weeks = weeklySeries([], [])
   const out = weeks.map(() => 0)
   for (const inv of invoices) {
-    if (!isFoodInvoice(inv) || !inv.vendorName || inv.total == null) continue
+    if (!isFoodInvoice(inv) || !inv.vendorName) continue
     if (vendorKey(inv.vendorName) !== key) continue
     const i = weekIndex(inv.invoiceDate, weeks)
-    if (i >= 0) out[i] += signedTotal(inv)
+    if (i >= 0) out[i] += foodSpend(inv)
   }
   return out
 }

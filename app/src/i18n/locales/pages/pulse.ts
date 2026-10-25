@@ -25,6 +25,7 @@ const es = {
   },
   pendingNotes: 'Recibido sin facturar',
   pendingNotesDetail: '{n} albaranes pendientes de factura',
+  pendingOldest: 'el más antiguo del {date}',
   pendingUnvalued: '{n} líneas sin precio',
   expensesThisWeek: 'Gastos esta semana',
   revenueThisWeek: 'Ingresos esta semana',
@@ -75,6 +76,11 @@ const es = {
   },
   // The ⓘ explainers on each chart.
   info: {
+    view: {
+      p1: 'Facturado: el gasto en la fecha de cada factura. Es lo que dice la contabilidad.',
+      p2: 'Tiempo real: el gasto en la fecha en que llegó la mercancía. Los albaranes que aún no tienen factura se suman, y los que ya la tienen se quedan en su semana de entrega en vez de amontonarse en la de la factura.',
+      p3: 'Las dos vistas suman lo mismo; solo cambia la semana en que cae cada gasto. Los precios de los albaranes son estimaciones hasta que llega la factura.',
+    },
     revenue: {
       p1: 'Compara, semana a semana, lo que vendiste (verde) con lo que gastaste (rojo): compras a proveedores y otros gastos registrados.',
       p2: 'Si la línea roja se acerca a la verde, esa semana casi no queda margen. Es la forma más rápida de ver si el negocio va bien.',
@@ -161,6 +167,7 @@ const en: typeof es = {
   },
   pendingNotes: 'Received, not yet billed',
   pendingNotesDetail: '{n} delivery notes awaiting their invoice',
+  pendingOldest: 'oldest from {date}',
   pendingUnvalued: '{n} unpriced lines',
   expensesThisWeek: 'This week — expenses',
   revenueThisWeek: 'This week — revenue',
@@ -209,6 +216,11 @@ const en: typeof es = {
     editDish: 'Edit dish',
   },
   info: {
+    view: {
+      p1: 'Billed: spend on the date of each invoice. This is what the books say.',
+      p2: 'Real time: spend on the day the goods arrived. Delivery notes with no invoice yet are added, and those already invoiced stay in their delivery week instead of piling up in the invoice week.',
+      p3: 'Both views add up to the same total; only the week each expense lands in changes. Delivery-note prices are estimates until the invoice arrives.',
+    },
     revenue: {
       p1: 'Compares, week by week, what you sold (green) with what you spent (red): vendor purchases plus other logged expenses.',
       p2: 'When the red line gets close to the green one, that week left almost no margin. It is the quickest read on how the business is doing.',

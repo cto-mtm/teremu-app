@@ -12,6 +12,8 @@ import {
   priceChangePct,
   realtimeSpend,
   recipesUsing,
+  lineOverlap,
+  valueNote,
   receiptsForIngredient,
   reconcileDeliveryNotes,
   suggestIngredients,
@@ -52,47 +54,132 @@ describe('isFoodInvoice', () => {
 })
 
 describe('reconcileDeliveryNotes', () => {
-  it('matches a note to the same vendor’s invoice with the closest total', () => {
-    const note = inv({ docType: 'delivery_note', total: 98 })
+  const note = (over: Partial<Invoice> = {}) => inv({ docType: 'delivery_note', ...over })
+
+  it('matches a note to the same vendor’s invoice whose value it explains', () => {
+    const n = note({ total: 98 })
     const far = inv({ total: 300 })
     const close = inv({ total: 100, vendorName: 'ACME produce' })
-    const [row] = reconcileDeliveryNotes([note, far, close])
+    const [row] = reconcileDeliveryNotes([n, far, close])
     expect(row.match?.id).toBe(close.id)
     expect(row.status).toBe('matched')
   })
 
-  it('leaves a note unmatched outside the 40-day window or for another vendor', () => {
-    const note = inv({ docType: 'delivery_note', invoiceDate: '2026-05-10' })
-    const late = inv({ invoiceDate: '2026-07-01' })
-    const other = inv({ vendorName: 'Other Foods' })
-    expect(reconcileDeliveryNotes([note, late, other])[0].status).toBe('unmatched')
+  it('leaves a note unmatched for another vendor, or when no invoice is near its value', () => {
+    const n = note({ total: 98 })
+    expect(reconcileDeliveryNotes([n, inv({ vendorName: 'Other Foods', total: 98 })])[0].status).toBe('unmatched')
+    expect(reconcileDeliveryNotes([n, inv({ total: 300 })])[0].status).toBe('unmatched')
+  })
+
+  it('lets a factura cover the oldest notes that add up to it (consolidated billing)', () => {
+    const a = note({ invoiceDate: '2026-10-02', total: 40 })
+    const b = note({ invoiceDate: '2026-10-09', total: 35 })
+    const c = note({ invoiceDate: '2026-10-16', total: 25 })
+    const d = note({ invoiceDate: '2026-10-23', total: 30 })
+    const bill = inv({ invoiceDate: '2026-10-31', total: 100 })
+    const rows = reconcileDeliveryNotes([a, b, c, d, bill])
+    expect(rows.map((r) => r.match?.id ?? null)).toEqual([bill.id, bill.id, bill.id, null])
+  })
+
+  it('never lets a factura cover a delivery made after it — early-month notes stay pending', () => {
+    const october = note({ invoiceDate: '2026-10-20', total: 100 })
+    const november = note({ invoiceDate: '2026-11-02', total: 100 })
+    const bill = inv({ invoiceDate: '2026-11-05', total: 100 })
+    const rows = reconcileDeliveryNotes([november, october, bill])
+    expect(rows.find((r) => r.note.id === october.id)?.match?.id).toBe(bill.id)
+    expect(rows.find((r) => r.note.id === november.id)?.status).toBe('unmatched')
+  })
+
+  it('reaches back further than 40 days for a late factura, but not past 120', () => {
+    const n = note({ invoiceDate: '2026-05-10', total: 100 })
+    expect(reconcileDeliveryNotes([n, inv({ invoiceDate: '2026-07-01', total: 100 })])[0].status).toBe('matched')
+    expect(reconcileDeliveryNotes([n, inv({ invoiceDate: '2026-10-01', total: 100 })])[0].status).toBe('unmatched')
+  })
+
+  it('offers a claimed note to no later factura', () => {
+    const n = note({ invoiceDate: '2026-10-02', total: 100 })
+    const first = inv({ invoiceDate: '2026-10-05', total: 100 })
+    const second = inv({ invoiceDate: '2026-10-12', total: 100 })
+    const [row] = reconcileDeliveryNotes([n, second, first])
+    expect(row.match?.id).toBe(first.id)
+  })
+
+  it('attaches an unpriced note only to a factura its priced notes do not explain', () => {
+    const priced = note({ invoiceDate: '2026-10-02', total: 100, lineItems: [line('Leek', 100)] })
+    const blank = note({ invoiceDate: '2026-10-09', total: 0, lineItems: [] })
+    const bill = inv({ invoiceDate: '2026-10-31', total: 100, lineItems: [line('Leek', 100)] })
+    const rows = reconcileDeliveryNotes([priced, blank, bill])
+    expect(rows.map((r) => r.status)).toEqual(['matched', 'unmatched'])
+    const lone = note({ invoiceDate: '2026-10-09', total: 0, lineItems: [] })
+    expect(reconcileDeliveryNotes([lone, bill])[0].match?.id).toBe(bill.id)
+  })
+
+  it('sizes the band by how sure the value is: printed lines tight, pantry estimates loose', () => {
+    // (Different products, so the only evidence is the money.)
+    const printed = note({ lineItems: [line('Leek', 90)], total: 90 })
+    expect(reconcileDeliveryNotes([printed, inv({ lineItems: [line('Onion', 100)], total: 100 })])[0].status).toBe('unmatched')
+    const unpriced = { name: 'Leek', qty: 9, unit: 'kg' as const, unitPrice: 0, total: 0, ingredientId: 'leek' }
+    const pantry = new Map([['leek', ing({ id: 'leek', unit: 'kg', lastUnitPrice: 10 })]])
+    const estimated = note({ lineItems: [unpriced], total: 0 })
+    const bill = inv({ lineItems: [line('Leek', 100)], total: 100 })
+    expect(valueNote(estimated, pantry)).toMatchObject({ total: 90, firm: 0, soft: 90, unvalued: 0 })
+    expect(reconcileDeliveryNotes([estimated, bill], pantry)[0].status).toBe('matched')
+  })
+
+  it('claims a note whose lines are on the factura even when its estimate drifted far', () => {
+    const drifted = note({ invoiceDate: '2026-10-02', lineItems: [line('Salmon', 60), line('Tuna', 20)], total: 80 })
+    const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('salmon', 70), line('tuna', 30)], total: 100 })
+    expect(lineOverlap(drifted, bill)).toBe(1)
+    expect(reconcileDeliveryNotes([drifted, bill])[0].match?.id).toBe(bill.id)
+    // …but never more goods than the factura bills.
+    const bigger = note({ invoiceDate: '2026-10-09', lineItems: [line('Salmon', 100), line('Tuna', 50)], total: 150 })
+    expect(reconcileDeliveryNotes([bigger, bill])[0].status).toBe('unmatched')
+  })
+
+  it('keeps the closest factura as a near miss on an unmatched row', () => {
+    const n = note({ invoiceDate: '2026-10-02', lineItems: [line('Leek', 80)], total: 80 })
+    const far = inv({ invoiceDate: '2026-10-10', lineItems: [line('Onion', 300)], total: 300 })
+    const close = inv({ invoiceDate: '2026-10-20', lineItems: [line('Onion', 100)], total: 100 })
+    const [row] = reconcileDeliveryNotes([n, far, close])
+    expect(row.status).toBe('unmatched')
+    expect(row.nearMiss?.invoice.id).toBe(close.id)
+    expect(row.nearMiss?.gapPct).toBeCloseTo(-20)
+    expect(row.nearMiss?.overlap).toBe(0)
+    expect(reconciliationCandidates([n, far, close], n, close.id)[0].id).toBe(close.id)
+    expect(reconcileDeliveryNotes([n, inv({ vendorName: 'Other' })])[0].nearMiss).toBeUndefined()
+  })
+
+  it('compares food value (the lines), not the printed total with tax', () => {
+    const n = note({ lineItems: [line('Tomato', 50), line('Onion', 50)], total: 100 })
+    const bill = inv({ lineItems: [line('tomato', 50), line('Onion', 50)], total: 121 })
+    expect(reconcileDeliveryNotes([n, bill])[0].status).toBe('matched')
   })
 
   it('flags a >2% price difference on a shared line as price_mismatch', () => {
-    const note = inv({ docType: 'delivery_note', lineItems: [line('Tomato', 2.0), line('Onion', 1.0)] })
-    const bill = inv({ lineItems: [line('tomato', 2.2), line('Onion', 1.01)] })
-    const [row] = reconcileDeliveryNotes([note, bill])
+    const n = note({ lineItems: [line('Tomato', 2.0), line('Onion', 1.0)], total: 3 })
+    const bill = inv({ lineItems: [line('tomato', 2.2), line('Onion', 1.01)], total: 3.21 })
+    const [row] = reconcileDeliveryNotes([n, bill])
     expect(row.status).toBe('price_mismatch')
     expect(row.diffs).toEqual([{ name: 'Tomato', notePrice: 2.0, invoicePrice: 2.2 }])
   })
 
   it('honours a manual link over the heuristic and skips handled notes', () => {
     const linked = inv({ vendorName: 'Somebody Else', total: 999 })
-    const note = inv({ docType: 'delivery_note', reconInvoiceId: linked.id } as Partial<Invoice>)
-    const handled = inv({ docType: 'delivery_note', reconHandled: true } as Partial<Invoice>)
-    const rows = reconcileDeliveryNotes([note, handled, inv(), linked])
+    const n = note({ reconInvoiceId: linked.id } as Partial<Invoice>)
+    const handled = note({ reconHandled: true } as Partial<Invoice>)
+    const rows = reconcileDeliveryNotes([n, handled, inv(), linked])
     expect(rows).toHaveLength(1)
     expect(rows[0].match?.id).toBe(linked.id)
   })
 
   it('skips a note diverted to an expense — the expense ledger already has it', () => {
-    const diverted = inv({ docType: 'delivery_note', expenseTag: 'Limpieza' } as Partial<Invoice>)
+    const diverted = note({ expenseTag: 'Limpieza' } as Partial<Invoice>)
     expect(reconcileDeliveryNotes([diverted, inv()])).toEqual([])
   })
 })
 
 describe('realtimeSpend', () => {
-  const food = (docs: Invoice[]) => docs.filter(isFoodInvoice).reduce((s, i) => s + (i.total ?? 0), 0)
+  const food = (docs: Invoice[]) => docs.filter(isFoodInvoice).reduce((s, i) => s + foodSpend(i), 0)
 
   it('is billed + pending notes, never counting a note filed as an expense', () => {
     const bill = inv({ total: 100 })
@@ -106,8 +193,42 @@ describe('realtimeSpend', () => {
     } as Partial<Invoice>)
     const rt = realtimeSpend([bill, pending, diverted], new Map())
     expect(rt.pendingCount).toBe(1)
+    expect(rt.noteCount).toBe(1)
     expect(rt.pendingTotal).toBe(40)
+    expect(rt.oldestPending).toBe(pending.invoiceDate)
     expect(food(rt.docs)).toBeCloseTo(food([bill]) + rt.pendingTotal, 2)
+  })
+
+  it('keeps a covered note at its delivery date and leaves the factura only the remainder', () => {
+    const a = inv({ docType: 'delivery_note', invoiceDate: '2026-10-02', lineItems: [line('Leek', 40)], total: 40 })
+    const b = inv({ docType: 'delivery_note', invoiceDate: '2026-10-16', lineItems: [line('Leek', 35)], total: 35 })
+    const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('Leek', 75), line('Delivery', 3)], total: 94 })
+    const rt = realtimeSpend([bill, a, b], new Map())
+    expect(rt.pendingCount).toBe(0)
+    expect(rt.noteCount).toBe(2)
+    expect(food(rt.docs)).toBeCloseTo(food([bill]), 2)
+    const byDate = Object.fromEntries(rt.docs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
+    expect(byDate).toEqual({ '2026-10-02': 40, '2026-10-16': 35, '2026-10-31': 3 })
+  })
+
+  it('never shows more than Billed: notes that over-explain their factura are scaled to it', () => {
+    const a = inv({ docType: 'delivery_note', invoiceDate: '2026-10-02', lineItems: [line('Leek', 60)], total: 60 })
+    const b = inv({ docType: 'delivery_note', invoiceDate: '2026-10-16', lineItems: [line('Leek', 55)], total: 55 })
+    const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('leek', 100)], total: 100 })
+    const rt = realtimeSpend([bill, a, b], new Map())
+    expect(rt.noteCount).toBe(2)
+    expect(food(rt.docs)).toBeCloseTo(100, 1)
+    const byDate = Object.fromEntries(rt.docs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
+    expect(byDate['2026-10-02']).toBeCloseTo(52.17, 1)
+    expect(byDate['2026-10-16']).toBeCloseTo(47.83, 1)
+    expect(byDate['2026-10-31']).toBeUndefined()
+  })
+
+  it('drops a factura its notes fully explain', () => {
+    const a = inv({ docType: 'delivery_note', invoiceDate: '2026-10-02', lineItems: [line('Leek', 100)], total: 100 })
+    const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('Leek', 100)], total: 121 })
+    const rt = realtimeSpend([bill, a], new Map())
+    expect(rt.docs.filter(isFoodInvoice).map((d) => d.invoiceDate)).toEqual(['2026-10-02'])
   })
 })
 

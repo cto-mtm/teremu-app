@@ -605,6 +605,39 @@ async function route(req: Request, res: Response): Promise<unknown> {
         const patch: Record<string, unknown> = {};
         if (body.invoiceId !== undefined) patch.reconInvoiceId = body.invoiceId;
         if (body.handled !== undefined) patch.reconHandled = body.handled;
+        // A manual link is ground truth the matcher missed (or got wrong):
+        // record how far the note sat from the invoice the person chose,
+        // so the matcher's bands can be tuned from real clients, not
+        // guesses. Logged too, for an aggregate read without a query.
+        if (body.invoiceId) {
+          const target = await col("invoices").doc(body.invoiceId).get();
+          const note = snap.data() as InvoiceDoc;
+          const target_ = target.exists ? (target.data() as InvoiceDoc) : null;
+          if (target_) {
+            // Base amounts (docs/multi-currency.md): the line value the app
+            // compares, never a document-currency figure.
+            const lineValue = (d: InvoiceDoc): number => {
+              const lines = d.lineItems.reduce((s, l) => s + Math.max(0, l.baseTotal ?? l.total), 0);
+              return lines > 0 ? lines : (d.baseTotal ?? d.total ?? 0);
+            };
+            const names = new Set(target_.lineItems.map((l) => normalizeName(l.name)).filter(Boolean));
+            const mine = note.lineItems.map((l) => normalizeName(l.name)).filter(Boolean);
+            const noteValue = lineValue(note);
+            const invoiceValue = lineValue(target_);
+            const gap = {
+              invoiceId: body.invoiceId,
+              autoMatchId: body.autoMatchId ?? null,
+              noteValue,
+              invoiceValue,
+              gapPct: invoiceValue > 0 ? +(((noteValue - invoiceValue) / invoiceValue) * 100).toFixed(1) : null,
+              overlap: mine.length ? +(mine.filter((n) => names.has(n)).length / mine.length).toFixed(2) : 0,
+              unpricedLines: note.lineItems.filter((l) => !(l.total > 0)).length,
+              at: Date.now(),
+            };
+            patch.reconGap = gap;
+            logger.info("recon_gap", { rid, noteId: id, ...gap });
+          }
+        }
         await ref.update(patch);
         return json(res, 200, invoiceView(await ref.get()));
       }

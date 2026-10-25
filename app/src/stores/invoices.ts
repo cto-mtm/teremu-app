@@ -182,7 +182,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
   /** Resolve a delivery-note reconciliation row: link and/or mark handled. */
   async function reconcile(
     id: string,
-    patch: { invoiceId?: string | null; handled?: boolean },
+    patch: { invoiceId?: string | null; handled?: boolean; autoMatchId?: string | null },
   ): Promise<boolean> {
     const res = await apiFetch<Invoice>(
       `/invoices/${id}/reconcile`,

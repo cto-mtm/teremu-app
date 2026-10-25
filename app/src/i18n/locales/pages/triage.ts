@@ -33,6 +33,8 @@ const es = {
     markHandled: 'Resuelto',
     linkPlaceholder: 'Vincular a factura…',
     linkOption: '{vendor} · {date} · {total}',
+    nearMiss: 'La más parecida: factura del {date} por {total} ({gap} de diferencia)',
+    nearMissLink: 'Vincular con esa',
   },
   // One-time prompt before the FIRST approval locks the base currency
   currencyConfirm: {
@@ -170,6 +172,8 @@ const en: typeof es = {
     markHandled: 'Resolved',
     linkPlaceholder: 'Link to invoice…',
     linkOption: '{vendor} · {date} · {total}',
+    nearMiss: 'Closest: invoice from {date} for {total} ({gap} apart)',
+    nearMissLink: 'Link to that one',
   },
   currencyConfirm: {
     title: 'Confirm your main currency',
