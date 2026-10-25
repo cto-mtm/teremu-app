@@ -184,6 +184,16 @@ loosening the manifest href check to Vite's normalised path.
   series by it, applied once per profile load (`setWeekStart`, like the
   base currency). Unit-tested.
 
+**Tier B review (docs/code-review.md, 2026-10-25) folded in:** `POST
+/orders` falls back to the pre-B1 contact key, so contacts saved under a
+suffixed key still take orders; `vendorKey()` takes the connector with
+the suffixes ("S.A. de C.V.") but never a "de" inside a name; the
+WhatsApp helper knows the US "011" exit code; the setup page reuses
+`decimalMarkFor`; `test/mail-units.test.ts` pins the postal address and
+the unsubscribe footer; `isTwin` has a suffix case; product.md's CSV line
+matches B2; the two POS order integration tests get a 60 s budget (they
+timed out under emulator load about one run in three).
+
 Open in Tier B: **B8** the forwarding-address inbox for Microsoft 365
 restaurants (an inbound-parse provider, an MX record and a webhook secret
 — deferred on 2026-10-25). Everything else in Tier B is done.

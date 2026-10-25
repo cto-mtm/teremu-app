@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import { parseAmount } from '../lib/csv'
+import { decimalMarkFor, parseAmount } from '../lib/csv'
 import { useAuthStore } from '../stores/auth'
 import { useKitchenStore } from '../stores/kitchen'
 import { priceChanged, useListingStore, type ReviewDish } from '../stores/listing'
@@ -187,7 +187,8 @@ const editingKey = ref<string | null>(null)
 const draftName = ref('')
 const draftPrice = ref('')
 const draftInvalid = ref(false)
-const parseDraft = () => parseAmount(draftPrice.value, locale.value === 'es' ? ',' : '.')
+// A price the owner TYPES follows the UI language (an export would follow the currency).
+const parseDraft = () => parseAmount(draftPrice.value, decimalMarkFor(locale.value))
 
 async function startEdit(d: ReviewDish, field: 'name' | 'price'): Promise<void> {
   if (editingKey.value !== null && editingKey.value !== d.key && !saveEdit()) return

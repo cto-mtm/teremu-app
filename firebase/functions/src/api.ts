@@ -1206,7 +1206,14 @@ async function route(req: Request, res: Response): Promise<unknown> {
   if (head === "orders" && m === "POST" && seg.length === 1) {
     if (!can(member, "pantry", "edit")) return forbidden(res);
     const body = orderSchema.parse(req.body);
-    const contact = await col("vendorContacts").doc(body.vendorKey).get();
+    // Contacts saved before vendor keys dropped legal suffixes (B1) live
+    // under the old normalizeName key ("… sl"); the app folds them on
+    // display, so the order must find them too.
+    let contact = await col("vendorContacts").doc(body.vendorKey).get();
+    if (!contact.exists) {
+      const legacyKey = normalizeName(body.vendorName);
+      if (legacyKey !== body.vendorKey) contact = await col("vendorContacts").doc(legacyKey).get();
+    }
     const email = contact.get("email") as string | null | undefined;
     if (!email) return json(res, 400, { error: "no email on file for this vendor" });
     const quota = await consumeMailQuota(rid, member.uid, email, "supplier-order");

@@ -11,6 +11,7 @@ describe('whatsappNumber (docs/us-market-readiness.md B5)', () => {
     expect(whatsappNumber('+1 312 555 0199', '34')).toBe('13125550199')
     expect(whatsappNumber('+34 612 345 678', '1')).toBe('34612345678')
     expect(whatsappNumber('0034 612 345 678', '1')).toBe('34612345678')
+    expect(whatsappNumber('011 34 612 345 678', '1')).toBe('34612345678') // the US exit code
   })
 
   it('does not double a code the number already carries, and drops a trunk zero', () => {

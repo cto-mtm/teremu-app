@@ -116,6 +116,7 @@ describe("isTwin (possible_duplicate, A8)", () => {
 
   it("matches the same vendor and total within tolerance", () => {
     expect(isTwin(inv, other({}))).toBe(true);
+    expect(isTwin(inv, other({ vendorName: "Sysco Chicago" }))).toBe(true); // the legal form is not part of the vendor (B1)
     expect(isTwin(inv, other({ total: 85 }))).toBe(true); // 2 %
     expect(isTwin(inv, other({ total: 90 }))).toBe(false);
     expect(isTwin(inv, other({ vendorName: "US Foods" }))).toBe(false);

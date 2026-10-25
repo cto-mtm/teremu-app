@@ -53,6 +53,11 @@ describe("vendorKey (docs/us-market-readiness.md B1)", () => {
     expect(vendorKey("Huerta La Vega")).toBe("huerta la vega");
   });
 
+  it("takes the connector with the suffixes but never a 'de' that is part of the name", () => {
+    expect(vendorKey("Distribuidora Norte S.A. de C.V.")).toBe("distribuidora norte");
+    expect(vendorKey("Casa de Comidas")).toBe("casa de comidas");
+  });
+
   it("keeps a suffix that is inside the name or is the whole name", () => {
     expect(vendorKey("Inc Produce")).toBe("inc produce");
     expect(vendorKey("Co")).toBe("co");

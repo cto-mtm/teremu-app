@@ -31,7 +31,17 @@ const LEGAL_SUFFIXES = new Set([
  */
 export function vendorKey(name: string): string {
   const tokens = normalizeName(name).split(" ").filter(Boolean);
-  while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();
+  let popped = 0;
+  for (;;) {
+    const last = tokens[tokens.length - 1];
+    if (tokens.length <= 1 || last === undefined) break;
+    // "S.A. de C.V." → "sa de cv": the connector goes only once a suffix
+    // after it has gone, so "Casa de Comidas" keeps its "de".
+    const connector = popped > 0 && (last === "de" || last === "y" || last === "and");
+    if (!LEGAL_SUFFIXES.has(last) && !connector) break;
+    tokens.pop();
+    popped += 1;
+  }
   return tokens.join(" ");
 }
 

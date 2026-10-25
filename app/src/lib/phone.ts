@@ -11,9 +11,10 @@ export function whatsappNumber(raw: string, dialCode: string | null | undefined)
   const trimmed = raw.trim()
   const digits = trimmed.replace(/\D/g, '')
   if (!digits) return ''
-  // Already international: "+1 …" or the "00" trunk prefix.
+  // Already international: "+1 …", the "00" exit prefix, or the US "011".
   if (trimmed.startsWith('+')) return digits
   if (digits.startsWith('00')) return digits.slice(2)
+  if (digits.startsWith('011') && digits.length > 11) return digits.slice(3)
   if (!dialCode) return digits
   // A local number: drop a leading trunk zero ("0612…" in some countries)
   // and prefix the restaurant's country code. A number that already starts

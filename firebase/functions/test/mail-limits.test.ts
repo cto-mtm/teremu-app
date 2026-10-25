@@ -36,6 +36,19 @@ beforeEach(async () => {
   await clearFirestore();
 });
 
+describe("supplier orders find contacts saved before vendor keys dropped legal suffixes (B1)", () => {
+  it("resolves a contact stored under the old suffixed key when the new key has no doc", async () => {
+    const o = await newOwner();
+    // Saved by the pre-B1 app: normalizeName("Acme Foods S.L.").
+    await col(o.rid, "vendorContacts").doc("acme foods sl").set({ name: "Acme Foods S.L.", email: `supplier-${uniqueId()}@example.com`, phone: null });
+    const res = await post("/orders", o.token, { vendorKey: "acme foods", vendorName: "Acme Foods S.L.", lines: [{ name: "Flour", qty: 2, unit: "kg" }] }, o.rid);
+    expect(res.status).toBe(201);
+    // And a vendor with no contact at all is still a clean 400.
+    const none = await post("/orders", o.token, { vendorKey: "nobody", vendorName: "Nobody Inc.", lines: [{ name: "Flour", qty: 2, unit: "kg" }] }, o.rid);
+    expect(none.status).toBe(400);
+  });
+});
+
 describe("email abuse caps", () => {
   it("caps orders per (restaurant, supplier) without blocking other restaurants", async () => {
     const supplier = `supplier-${uniqueId()}@example.com`;

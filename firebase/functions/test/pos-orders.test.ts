@@ -211,7 +211,8 @@ beforeEach(async () => {
 });
 
 describe("POS orders → revenue entries", () => {
-  it("binding imports sales and projects one entry per business day, depleting the pantry", async () => {
+  // Two bind + project round trips through the emulator: slow under load, so a wider budget than the 20 s default.
+  it("binding imports sales and projects one entry per business day, depleting the pantry", { timeout: 60_000 }, async () => {
     const { owner, mix, dish } = await setup();
     const list = await entries(owner);
     expect(list).toHaveLength(3);
@@ -229,7 +230,8 @@ describe("POS orders → revenue entries", () => {
     expect(await stock(owner.rid, mix.id)).toBeCloseTo(99.4, 6);
   });
 
-  it("a mapping made later re-attributes history, moving the pantry by the delta only", async () => {
+  // Two bind + project round trips through the emulator: slow under load, so a wider budget than the 20 s default.
+  it("a mapping made later re-attributes history, moving the pantry by the delta only", { timeout: 60_000 }, async () => {
     const { owner, mix } = await setup();
     const eggs = await seedIngredient(owner.rid, { name: "Huevos", unit: "each", theoreticalQty: 100 });
     // Creating the dish auto-links the POS "Tortilla española" → days go stale.
