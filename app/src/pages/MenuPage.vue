@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAssistant } from '@mtmcya/assistant/vue'
 import { armHero, heroStyle } from '../composables/useHero'
+import { useQueryAction } from '../composables/useQueryAction'
 import { currencySymbol } from '../i18n'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
@@ -42,6 +43,12 @@ const needRecipes = computed(() =>
 // /menu?tab=preps opens the second one (the prep detail page links back).
 const assistant = useAssistant()
 const tab = ref<'dishes' | 'preps'>(route.query.tab === 'preps' ? 'preps' : 'dishes')
+watch(
+  () => route.query.tab,
+  (v) => {
+    if (v === 'preps' || v === 'dishes') tab.value = v
+  },
+)
 const recipeSeed = ref<{ key: string; name: string; price: number | null; menuItemId: string }[] | undefined>()
 function estimateImported(): void {
   recipeSeed.value = needRecipes.value.map((m) => ({ key: m.id, name: m.name, price: m.price, menuItemId: m.id }))
@@ -126,6 +133,21 @@ watch(
   },
   { immediate: true },
 )
+
+// Deep links (the assistant's openScreen handoff): /menu?sheet=menu-scan
+// opens the photo wizard, new-dish / new-prep the editor on that tab.
+const newItem = (kind: 'dishes' | 'preps') => () => {
+  if (!auth.can('menu', 'edit')) return
+  tab.value = kind
+  openEditor('new')
+}
+useQueryAction('sheet', {
+  'menu-scan': () => {
+    if (auth.can('menu', 'edit')) wizardOpen.value = true
+  },
+  'new-dish': newItem('dishes'),
+  'new-prep': newItem('preps'),
+})
 
 function closeEditor(): void {
   editing.value = null

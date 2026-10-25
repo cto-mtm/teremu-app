@@ -1,5 +1,5 @@
 import { onRequest, type Request } from "firebase-functions/v2/https";
-import { DEFAULT_TIMEZONE, todayIn } from "@teremu/shared";
+import { DEFAULT_TIMEZONE, todayIn, type TaxSetting } from "@teremu/shared";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
 import { createHash } from "node:crypto";
@@ -229,6 +229,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
     localeSchema.catch(DEFAULT_LOCALE).parse((await db.doc(`users/${member.uid}`).get()).get("locale"));
   // Freemium gates: one plan read per request, enforced server-side.
   const planInfo = (rid === headerRid && (await speculativePlan)) || (await getPlanInfo(rid));
+  // The menu-price tax setting, resolved ONCE (countries/index.ts
+  // taxSettingFor): GET /me ships it and the assistant's fact names it.
+  const tax = taxSettingFor(planInfo.country, planInfo);
   // The tier a paywalled action would need — null when already on the
   // top plan, so the client can turn "limit reached" into a real upgrade
   // CTA instead of a dead-end message (and never nag a max user to upgrade).
@@ -295,7 +298,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       salesTaxRate: planInfo.salesTaxRate,
       // Resolved once, server-side (countries/index.ts taxSettingFor): the
       // margin math in the app and the assistant read the same value.
-      tax: taxSettingFor(planInfo.country, planInfo),
+      tax,
       // "Find your restaurant" first-run step (docs/restaurant-listing.md):
       // the app sends an owner of a `pending` location to /setup/restaurant.
       setupListing: planInfo.setupListing,
@@ -1304,6 +1307,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
       countryLabel: planInfo.country ?? "not set",
       // Rating / open-now come live via getRestaurantListing; review text never (prompt.md).
       googleLabel: planInfo.placeLinked ? "linked (rating via getRestaurantListing; review text not available)" : "not linked",
+      taxLabel: taxLabelFor(tax),
     };
     await toNodeHandler(assistant.fetch, () => principal)(req, res);
     return;
@@ -1481,6 +1485,13 @@ async function route(req: Request, res: Response): Promise<unknown> {
   }
 
   return json(res, 404, { error: `no route for ${m} ${req.path}` });
+}
+
+/** The "Menu prices include tax" fact (≤ 80 chars): what dish margins net out. */
+function taxLabelFor(tax: TaxSetting): string {
+  return tax.pricesIncludeTax
+    ? `yes, ${Number((tax.rate * 100).toFixed(2))} % — dish margins are net of it`
+    : "no — prices are pre-tax, margins use them as is";
 }
 
 export const api = onRequest(

@@ -346,6 +346,34 @@ describe("assistant", () => {
     expect(rows.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("acts as support: a grocery-list question gets the steps AND opens the sheet", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const t = await turn(owner.token, owner.rid, "¿Cómo hago la lista de la compra?");
+    expect(t.status).toBe(200);
+    expect(t.errors).toEqual([]);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["getAppHelp", "openScreen"]);
+    // The help row carries the steps and the exact handoff the model copied.
+    const rows = t.toolOutputs[0] as Array<{ topic: string; actions: string | null; open: string | null }>;
+    expect(rows[0]?.topic).toMatch(/Grocery list/);
+    expect(rows[0]?.actions).toContain("Order by email");
+    expect(rows[0]?.open).toBe('openScreen {"screen":"pantry","sheet":"grocery"}');
+    expect(t.toolCalls[1]?.input).toEqual({ screen: "pantry", sheet: "grocery" });
+  });
+
+  it("answers a tax question from the help, not from memory, with the restaurant's own setting as a fact", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await setPlan(owner.rid, "pro");
+    const t = await turn(owner.token, owner.rid, "¿Cómo lleva la app los impuestos?");
+    expect(t.status).toBe(200);
+    expect(t.errors).toEqual([]);
+    expect(t.toolCalls.map((c) => c.toolName)).toEqual(["getAppHelp"]);
+    const rows = t.toolOutputs[0] as Array<{ topic: string; does: string; open: string | null }>;
+    expect(rows.map((r) => r.topic)).toEqual(["Taxes"]);
+    expect(rows[0]?.does).toContain("no tax advice");
+    expect(rows[0]?.open).toBe('openScreen {"screen":"settings","card":"tax"}');
+  });
+
   it("answers from the owner's own notes — this restaurant's only — and treats them as data", async () => {
     const seedNotes = async (rid: string, texts: string[]) => {
       const batch = getFirestore().batch();

@@ -3,6 +3,8 @@
 const es = {
   title: 'Asistente',
   open: 'Abrir asistente',
+  // The assistant tried to open a screen or sheet this member's permissions do not cover
+  noAccess: 'Tu cuenta no tiene acceso a esa parte de la app. Pídele permiso al propietario.',
   // Confirmation card for a dish / prep the assistant drafted
   proposal: {
     dish: 'Plato',
@@ -19,6 +21,7 @@ const es = {
 const en: typeof es = {
   title: 'Assistant',
   open: 'Open assistant',
+  noAccess: 'Your account has no access to that part of the app. Ask the owner for permission.',
   proposal: {
     dish: 'Dish',
     prep: 'Prep',

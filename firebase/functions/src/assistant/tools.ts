@@ -102,11 +102,14 @@ export const CountsRow = z.object({
 });
 export type CountsRowT = z.infer<typeof CountsRow>;
 
-/** One product-help topic (getAppHelp): what a screen/feature does and where. */
+/** One product-help topic (getAppHelp): what a screen/feature does, the
+ *  steps to do it, where it is, and the handoff that opens it (code/appHelp.ts). */
 export const AppHelpRow = z.object({
   topic: z.string().meta(card({ label: { es: "Función", en: "Feature" } })),
   does: z.string().meta(card({ label: { es: "Qué hace", en: "What it does" } })),
+  actions: z.string().nullable().meta(card({ label: { es: "Cómo", en: "How" } })),
   where: z.string().meta(card({ label: { es: "Dónde", en: "Where" }, format: "badge" })),
+  open: z.string().nullable().meta(card({ hidden: true })),
 });
 export type AppHelpRowT = z.infer<typeof AppHelpRow>;
 
@@ -329,7 +332,7 @@ export const tools: ToolRow[] = [
       "How Teremu itself works: what a screen or feature does and where to find it. Use for 'what can you do', 'how does X work', 'where do I …', and plan/billing/account questions. Static product help, not restaurant data.",
     permission: "app:read",
     input: z.object({
-      topic: z.string().min(2).max(60).optional().describe("A screen or feature name (e.g. 'triage', 'plan'); omit for an overview"),
+      topic: z.string().min(2).max(60).optional().describe("A screen or feature (e.g. 'grocery list', 'tax', 'team'); omit for an overview"),
     }),
     output: z.array(AppHelpRow),
     execute: getAppHelp,
@@ -483,5 +486,24 @@ export const tools: ToolRow[] = [
     permission: "vendors:read",
     input: z.object({ id: z.string().describe("Vendor key from getVendors") }),
     to: "vendor",
+  },
+  {
+    // One row for every screen, sheet, tab and Settings card, so support
+    // answers can END in the app at the right spot without a handoff row
+    // per feature (the prompt prefix has a budget). The pages read
+    // `?sheet=` / `?tab=` / `?card=` and open the sheet or scroll to the
+    // card; getAppHelp's `open` field tells the model the exact call.
+    kind: "handoff",
+    name: "openScreen",
+    label: { es: "Abrir en la app", en: "Open in the app" },
+    description: "Open an app screen — optionally a sheet, tab or Settings card on it. getAppHelp's `open` gives the exact call.",
+    permission: "app:read",
+    input: z.object({
+      screen: z.enum(["pulse", "scan", "triage", "menu", "pantry", "vendors", "settings", "pricing", "setup"]),
+      sheet: z.enum(["grocery", "plan", "add-ingredient", "revenue", "expense", "menu-scan", "new-dish", "new-prep"]).optional(),
+      tab: z.enum(["categories", "providers", "preps"]).optional(),
+      card: z.enum(["plan", "location", "listing", "language", "units", "region", "currency", "tax", "labor", "integrations", "email", "team"]).optional(),
+    }),
+    to: "screen",
   },
 ];

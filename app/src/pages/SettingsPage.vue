@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
 import { currencyOptionLabel, currencySymbol, type SupportedLocale } from '../i18n'
@@ -19,6 +19,7 @@ import IntegrationsCard from '../components/IntegrationsCard.vue'
 import EmailCard from '../components/EmailCard.vue'
 import ListingCard from '../components/ListingCard.vue'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
+import { useQueryAction } from '../composables/useQueryAction'
 
 // Settings. The health check proves the app → Cloud Function wiring end
 // to end (against the emulator in local dev). Custom per-page transition
@@ -42,6 +43,26 @@ onMounted(() => {
     void router.replace({ query: {} })
   }
 })
+
+// Deep link (the assistant's openScreen handoff): /settings?card=tax scrolls
+// to that card and rings it for a moment. The guard has the profile before
+// this page mounts, so the cards are there after one render; owner-only
+// ones are absent for a member (main.ts tells them before navigating).
+const focusedCard = ref<string | null>(null)
+const CARDS = ['plan', 'location', 'listing', 'language', 'units', 'region', 'currency', 'tax', 'labor', 'integrations', 'email', 'team']
+async function focusCard(name: string): Promise<void> {
+  // After the render AND the router's own scroll reset (a frame after the
+  // route commits), or the reset would undo the scroll.
+  await nextTick()
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  const el = document.getElementById(`card-${name}`)
+  if (!el) return
+  el.scrollIntoView({ block: 'center' })
+  focusedCard.value = name
+  window.setTimeout(() => (focusedCard.value = null), 2500)
+}
+useQueryAction('card', Object.fromEntries(CARDS.map((name) => [name, () => focusCard(name)])))
+const cardClass = (name: string) => (focusedCard.value === name ? 'ring-2 ring-ember-700/40' : '')
 
 // ── Plan & billing ──────────────────────────────────────────────
 const isDev = import.meta.env.DEV
@@ -307,7 +328,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     <h1 class="text-xl font-bold">{{ t('settings.title') }}</h1>
 
     <!-- Plan & usage -->
-    <div v-if="auth.profile" class="card space-y-3">
+    <div v-if="auth.profile" id="card-plan" class="card space-y-3" :class="cardClass('plan')">
       <div class="flex items-center justify-between">
         <div class="text-sm font-semibold">{{ t('settings.plan.title') }}</div>
         <span :class="auth.profile.plan !== 'free' ? 'chip-down' : 'chip-up'">
@@ -350,7 +371,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- Location name (owner only) -->
-    <div v-if="isOwner" class="card space-y-3">
+    <div v-if="isOwner" id="card-location" class="card space-y-3" :class="cardClass('location')">
       <div class="text-sm font-semibold">{{ t('settings.location.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.location.desc') }}</p>
       <div class="flex flex-wrap items-center gap-2">
@@ -369,15 +390,17 @@ async function cancelInvite(emailKey: string): Promise<void> {
       </div>
     </div>
 
-    <ListingCard v-if="isOwner" :key="auth.profile?.restaurantId" />
+    <div v-if="isOwner" id="card-listing" class="rounded-2xl" :class="cardClass('listing')">
+      <ListingCard :key="auth.profile?.restaurantId" />
+    </div>
 
-    <div class="card space-y-3">
+    <div id="card-language" class="card space-y-3" :class="cardClass('language')">
       <div class="text-sm font-semibold">{{ t('settings.language') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.languageDesc') }}</p>
       <LocaleSwitcher />
     </div>
 
-    <div class="card space-y-3">
+    <div id="card-units" class="card space-y-3" :class="cardClass('units')">
       <div class="text-sm font-semibold">{{ t('settings.units') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.unitsDesc') }}</p>
       <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-semibold">
@@ -394,7 +417,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- Country & timezone (owner only) — device-region defaults, editable -->
-    <div v-if="isOwner" class="card space-y-3">
+    <div v-if="isOwner" id="card-region" class="card space-y-3" :class="cardClass('region')">
       <div class="text-sm font-semibold">{{ t('settings.region.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.region.desc') }}</p>
       <div class="flex flex-wrap items-end gap-2">
@@ -421,7 +444,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- Base currency of every aggregated amount (owner only; locks once used) -->
-    <div v-if="isOwner" class="card space-y-3">
+    <div v-if="isOwner" id="card-currency" class="card space-y-3" :class="cardClass('currency')">
       <div class="text-sm font-semibold">{{ t('settings.currency.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.currency.desc') }}</p>
       <div class="flex flex-wrap items-center gap-2">
@@ -441,7 +464,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- Menu-price tax → margins on the net price (owner only; A6) -->
-    <div v-if="isOwner" class="card space-y-3">
+    <div v-if="isOwner" id="card-tax" class="card space-y-3" :class="cardClass('tax')">
       <div class="text-sm font-semibold">{{ t('settings.tax.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.tax.desc') }}</p>
       <div class="space-y-2 text-sm">
@@ -471,7 +494,7 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- Kitchen labor rate → prep-time plate costing (owner only) -->
-    <div v-if="isOwner" class="card space-y-3">
+    <div v-if="isOwner" id="card-labor" class="card space-y-3" :class="cardClass('labor')">
       <div class="text-sm font-semibold">{{ t('settings.labor.title') }}</div>
       <p class="text-xs text-smoke">{{ t('settings.labor.desc') }}</p>
       <div class="flex flex-wrap items-center gap-2">
@@ -496,15 +519,19 @@ async function cancelInvite(emailKey: string): Promise<void> {
     </div>
 
     <!-- POS connections (integrations area; owners always) -->
-    <IntegrationsCard v-if="auth.can('integrations')" />
+    <div v-if="auth.can('integrations')" id="card-integrations" class="rounded-2xl" :class="cardClass('integrations')">
+      <IntegrationsCard />
+    </div>
 
     <!-- Email inboxes (same integrations area). Keyed on the location like
          ListingCard: a switch remounts it, which also stops a check still
          running for the previous location's inbox. -->
-    <EmailCard v-if="auth.can('integrations')" :key="auth.profile?.restaurantId" />
+    <div v-if="auth.can('integrations')" id="card-email" class="rounded-2xl" :class="cardClass('email')">
+      <EmailCard :key="auth.profile?.restaurantId" />
+    </div>
 
     <!-- Team & granular permissions (owner only) -->
-    <div v-if="isOwner" class="card space-y-4">
+    <div v-if="isOwner" id="card-team" class="card space-y-4" :class="cardClass('team')">
       <div>
         <div class="text-sm font-semibold">{{ t('settings.members.title') }}</div>
         <p class="mt-0.5 text-xs text-smoke">{{ t('settings.members.desc') }}</p>

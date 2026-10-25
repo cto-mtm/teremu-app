@@ -8,6 +8,7 @@ import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { todayFor } from '../lib/dates'
+import { useQueryAction } from '../composables/useQueryAction'
 import {
   actualMarginPct,
   foodCostSeries,
@@ -52,6 +53,14 @@ const tabs = computed<Tab[]>(() =>
 )
 const initialTab = route.query.tab as Tab
 const tab = ref<Tab>(tabs.value.includes(initialTab) ? initialTab : 'overview')
+// A tab arriving by query while mounted (the assistant's openScreen handoff
+// from Pulse to Pulse) switches too; the watcher below mirrors it back.
+watch(
+  () => route.query.tab,
+  (v) => {
+    if (typeof v === 'string' && tabs.value.includes(v as Tab)) tab.value = v as Tab
+  },
+)
 // Panels lazy-mount on first visit and stay alive (v-show) afterwards,
 // so the drill position and computed caches survive tab switches.
 const seen = ref<Record<Tab, boolean>>({ overview: true, categories: false, providers: false })
@@ -374,6 +383,17 @@ async function importCsv(event: Event): Promise<void> {
     csvBusy.value = false
   }
 }
+
+// Deep links (the assistant's openScreen handoff): /?sheet=revenue|expense
+// opens the entry sheet for members who may log (the tab param stays).
+useQueryAction('sheet', {
+  revenue: () => {
+    if (canEdit.value) openNewRevenue()
+  },
+  expense: () => {
+    if (canEdit.value) openNewExpense()
+  },
+})
 
 // Fresh forms for "+" buttons; closing a sheet drops any edit context.
 function openNewRevenue(): void {

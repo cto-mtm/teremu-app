@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { armHero, heroStyle } from '../composables/useHero'
+import { useQueryAction } from '../composables/useQueryAction'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
@@ -116,6 +117,19 @@ const planToBuy = computed(() => plan.value.filter((r) => r.toBuy > 0))
 const COVER_DAYS = 7
 const showGrocery = ref(false)
 const copied = ref(false)
+
+// Deep links (the assistant's openScreen handoff): /pantry?sheet=…
+useQueryAction('sheet', {
+  grocery: () => {
+    showGrocery.value = true
+  },
+  plan: () => {
+    showPlan.value = true
+  },
+  'add-ingredient': () => {
+    if (canEdit.value) showAdd.value = true
+  },
+})
 
 const grocery = computed(() =>
   // All ingredients, archived too: the list only holds what sales use, and

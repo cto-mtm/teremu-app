@@ -11,6 +11,8 @@ import MenuItemProposalCard from './components/MenuItemProposalCard.vue'
 import { API_BASE_URL } from './lib/api'
 import { idToken } from './lib/firebase'
 import { getActiveRid } from './lib/activeLocation'
+import { screenDenied } from './lib/assistantAccess'
+import { useAuthStore } from './stores/auth'
 import './assets/css/main.css'
 import './assistant/theme.css'
 
@@ -34,6 +36,17 @@ app.use(assistant, {
   title: 'Teremu',
   // A drafted dish/prep shows its recipe by name, not as JSON.
   cards: { proposeMenuItem: MenuItemProposalCard },
+  // The openScreen handoff is one row for every screen (gated by app:read
+  // only), so the app checks the member's own permissions before going:
+  // otherwise the router would bounce them to another screen while the
+  // chat says "opening your grocery list". lib/assistantAccess.ts is pure.
+  navigate: (target) => {
+    if (target.name !== 'screen') return
+    const auth = useAuthStore()
+    if (!screenDenied(target.params, { can: auth.can, role: auth.profile?.role })) return
+    alert(i18n.global.t('assistant.noAccess'))
+    return true
+  },
   examples: {
     es: ['¿Qué platos tienen menos margen?', '¿A cuánto está el tomate?', 'Últimas facturas', 'Ventas de los últimos 30 días'],
     en: ['Which dishes have the lowest margin?', 'Latest invoices', 'Sales in the last 30 days'],

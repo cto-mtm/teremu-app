@@ -39,6 +39,8 @@ export interface AssistantPrincipal {
   websiteLabel: string;
   countryLabel: string;
   googleLabel: string;
+  /** The menu-price tax setting (docs/us-market-readiness.md A6), so "why is my margin X" has its answer. */
+  taxLabel: string;
 }
 
 export const manifest = {
@@ -62,6 +64,7 @@ export const manifest = {
     "Website": "principal.websiteLabel",
     "Country": "principal.countryLabel",
     "Google listing": "principal.googleLabel",
+    "Menu prices include tax": "principal.taxLabel",
   },
   conversation: { path: "restaurants/{tenant}/assistantConversations", ttlDays: 7, window: 30 },
   // Monthly turn counter on the restaurant doc, next to plan/scanCount.
@@ -90,6 +93,10 @@ export const manifest = {
     vendor: "/vendors/{id}",
     scanner: "/scan",
     triage: "/triage",
+    // openScreen: the pages read these query params (`/pulse` and `/setup`
+    // are router redirects to `/` and `/setup/restaurant`). fillPath drops
+    // the empty ones, so `{screen:"pantry"}` is just `/pantry`.
+    screen: "/{screen}?sheet={sheet}&tab={tab}&card={card}",
   },
   // Keyed by destination name; the placeholder comes from its path.
   pageContext: {
@@ -100,8 +107,12 @@ export const manifest = {
   },
   // getRecentInvoices: equality on status + order by createdAt.
   indexes: [{ collectionGroup: "invoices", fields: [{ fieldPath: "status" }, { fieldPath: "createdAt", order: "DESCENDING" }] }],
-  // Revenue/expense rows return up to 90 days.
-  limits: { maxQueryLimit: 90 },
+  // Revenue/expense rows return up to 90 days. The prompt prefix carries
+  // five handoffs plus the openScreen enums (every screen, sheet, tab and
+  // Settings card the support answers can open); the package default of
+  // 16k is sized for a smaller tool set, so the budget is raised here and
+  // still asserted at startup.
+  limits: { maxQueryLimit: 90, maxPromptPrefixChars: 18_000 },
   tools,
 } satisfies Manifest;
 

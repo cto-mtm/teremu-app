@@ -30,6 +30,10 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'pulse', component: page(() => import('../pages/PulsePage.vue')) },
+    // The assistant's openScreen handoff builds `/{screen}` from one
+    // placeholder; these two screens live elsewhere. Query params survive.
+    { path: '/pulse', redirect: (to) => ({ path: '/', query: to.query }) },
+    { path: '/setup', redirect: (to) => ({ path: '/setup/restaurant', query: to.query }) },
     { path: '/login', name: 'login', component: page(() => import('../pages/LoginPage.vue')) },
     { path: '/scan', name: 'scan', component: page(() => import('../pages/ScanPage.vue')) },
     { path: '/triage', name: 'triage', component: page(() => import('../pages/TriagePage.vue')) },
@@ -55,7 +59,9 @@ const router = createRouter({
     // to index.html — without this, typos render an empty RouterView.
     { path: '/:pathMatch(.*)*', name: 'not-found', component: page(() => import('../pages/NotFoundPage.vue')) },
   ],
-  scrollBehavior: () => ({ top: 0 }),
+  // A new page starts at the top; a same-path navigation (a query cleared
+  // after a deep link, a tab mirrored into the URL) keeps the position.
+  scrollBehavior: (to, from) => (to.path === from.path ? false : { top: 0 }),
 })
 
 // ── AUTH + PERMISSION GUARD ─────────────────────────────────────
