@@ -8,6 +8,8 @@
 
 Mexico and Spain together have close to **a million food-service establishments**, and the vast majority are independents with no back office. Filtering to the ones that buy enough food to feel price creep leaves **~120–160k restaurants**, a **~$55–75M/yr** serviceable market at our price. Teremu needs **~1% of that (1,200–1,600 locations)** to reach **~$560–750k ARR** at ~90% gross margin. Haddock, a YC-backed competitor, already charges 3–6× our price in the same markets, which tells us restaurants pay for this.
 
+**The US is a target market as well (decided 2026-10-24).** It is roughly another **~1M food-service locations**, around **two thirds independent**, at full USD pricing with no localization discount — on its own larger than Mexico and Spain combined in dollar terms (§1b). The product already runs in English, USD and imperial units; US-only tooling (Gemini and Meta Muse connectors, Toast) is worth supporting even where Spain cannot use it yet.
+
 ## 1. The count
 
 | Segment | Establishments | Confidence | Verify against |
@@ -24,6 +26,16 @@ Mexico and Spain together have close to **a million food-service establishments*
 
 Chains are excluded on purpose. They have procurement departments and are Haddock's natural market (their "Group from 700€" tier).
 
+### 1b. United States (added 2026-10-24)
+
+| Segment | Establishments | Confidence | Verify against |
+|---|---|---|---|
+| US, food-service locations | ~1M | medium | National Restaurant Association *State of the Industry*; Census CBP NAICS 722 |
+| US, share independent (not chain-owned) | ~60–70% | low | NRA; Technomic / Datassential independent-operator counts |
+| US, full-service independents buying ≥ $5k/mo of food | ~150–250k | low | derive from the above once checked |
+
+At **$39/mo** with no localized discount that is a **SAM of ~$70–115M/yr** on its own — the same order as Mexico and Spain together, in one language and one currency. The buyer profile is the same (owner-operator, no back office); the competitive set is different (MarginEdge, xtraCHEF by Toast, Restaurant365's invoice module), and all of them price well above us. **Treat every US figure as unverified until the NRA and Census numbers are pulled.**
+
 ## 2. TAM / SAM / SOM
 
 Price basis: Pro **$39/mo ≈ $468/yr** per location (`docs/business-model.md` §3). Mexico will likely launch at a localized price (e.g. MX$499 ≈ $27), which lowers Mexican values by ~30%. SAM is shown as a range to absorb that.
@@ -33,8 +45,9 @@ Price basis: Pro **$39/mo ≈ $468/yr** per location (`docs/business-model.md` �
 | **TAM** | Every food-service establishment, Mexico + Spain | ~950k | **~$440M/yr** (ceiling; includes micros) |
 | **SAM** | Independents with meaningful vendor purchasing | ~120–160k | **~$55–75M/yr** |
 | **SOM** | ~1% of SAM in 3–5 years | ~1,200–1,600 paying | **~$560–750k ARR** |
+| **+ US TAM / SAM** (§1b, unverified) | Every US food-service location / independents with real purchasing | ~1M / ~150–250k | **~$470M/yr** / **~$70–115M/yr** |
 
-**Next SAM:** Colombia, Chile, Peru and Argentina add hundreds of thousands more establishments with the same profile. The product is already Spanish-first.
+**Next SAM:** Colombia, Chile, Peru and Argentina add hundreds of thousands more establishments with the same profile. The product is authored in Spanish with English as a full peer, so both the US and LATAM are reachable without a localization project.
 
 **Sanity check against the business model:** solo break-even is **~275 total restaurants at 5% conversion** (§9), i.e. ~14 paying. That is **0.01% of SAM**. The model survives even if the market is much smaller than estimated.
 
@@ -54,3 +67,4 @@ Pitch line: *"Teremu costs less than half a cover a month and tells you when the
 2. The Spain restaurant and bar split from Hostelería de España.
 3. The "fits" filter (10–15% in Mexico). Beta telemetry on invoice volume per restaurant will calibrate it.
 4. The recovered-margin claim. Collect 3–5 real beta case studies ("Teremu caught $X in price increases").
+5. The US counts in §1b (NRA location total, independent share, Census CBP NAICS 722) and the US competitor price points (MarginEdge, xtraCHEF, Restaurant365).

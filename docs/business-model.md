@@ -2,7 +2,7 @@
 
 **Model:** Freemium subscription (SaaS), priced per restaurant location.
 **Customer:** Independent restaurant owner-operators and executive chefs — people who feel every point of food cost personally but have no back office.
-**Status:** Draft for discussion. Prices are placeholders calibrated for a LATAM/Spain launch; validate against 15–20 customer conversations before committing.
+**Status:** Draft for discussion. Prices are placeholders calibrated for a Spain / LATAM launch; the **US is a target market in its own right** (decided 2026-10-24), and the same $-denominated ladder is the starting point there — validate against 15–20 customer conversations per market before committing.
 
 ---
 
@@ -250,6 +250,10 @@ Haddock is the closest direct competitor — same core loop (photograph invoice 
 5. **HR/scheduling module** — their bundling play. *Deliberately skip*: it dilutes the food-cost wedge and drags us into a different competitive set.
 
 **Positioning line this suggests:** Haddock is becoming the expensive, sales-led operations suite for groups; Teremu is the self-serve food-cost tool an independent can adopt on a Tuesday for the price of two covers.
+
+### US competitive set (added 2026-10-24, prices unverified)
+
+Haddock is not who a US owner compares us to. The US set for the same loop (invoice capture → price alerts → recipe costing → margin) is **MarginEdge** (invoice processing + recipe costing, historically ~$300+/mo per location, sales-led), **xtraCHEF by Toast** (bundled into the Toast POS ecosystem, priced per location on top of Toast), and **Restaurant365** (full back office, well above $400/mo, aimed at groups). All three are priced an order of magnitude above our Pro, all are sales-assisted, and none has a genuine free tier — the same shape as the Haddock comparison, with a bigger gap. Verify current list prices before quoting; add them to `market-sizing.md` §4 once checked. The "adopt on a Tuesday" positioning carries over unchanged; the US-specific wedge is that none of them talks to the owner's own AI assistant (`docs/mcp.md`).
 
 ---
 

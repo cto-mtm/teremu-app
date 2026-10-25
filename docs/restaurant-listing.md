@@ -256,7 +256,7 @@ One Firestore batch: create/update `menuItems` (`origin: "listing"`, `recipe: []
 
 ## Money: the IVA question
 
-`menuItems.price` today is the menu price as printed — IVA-inclusive in Spain — for manual entry, the menu-scan wizard and POS matching (`pos.md`). The import writes the same thing, so it is consistent with the status quo. The open problem is pre-existing and bigger than this feature: `pos.md` flags that margin revenue should be IVA-exclusive and plate costs base imponible. When that is resolved (a `taxInclusive` flag or a rate on the country pack), imported prices follow the same rule as every other dish. **Don't solve it inside this feature.**
+`menuItems.price` today is the menu price as printed — IVA-inclusive in Spain — for manual entry, the menu-scan wizard and POS matching (`pos.md`). The import writes the same thing, so it is consistent with the status quo. The open problem is pre-existing and bigger than this feature: `pos.md` flags that margin revenue should be IVA-exclusive and plate costs base imponible. When that is resolved (a `taxInclusive` flag or a rate on the country pack), imported prices follow the same rule as every other dish. **Don't solve it inside this feature.** Since 2026-10-24 the US is a target market and US menu prices are pre-tax, so the flag is no longer optional: see `pos.md` §Money & tax — it lands with the US country pack.
 
 ## Cost & abuse
 

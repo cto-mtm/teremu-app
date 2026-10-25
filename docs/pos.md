@@ -1,6 +1,6 @@
 # POS integrations (Square first)
 
-Status: **Phases 1–3 implemented (Foundation 2026-10-05, Catalog + marriage 2026-10-10, Ingestion + projection 2026-10-15; webhooks replaced by a smart poll 2026-10-17); Phases 4–5 are design.** As of 2026-10-15 the whole tree typechecks and `npm run test` passes (20 files / 220 tests), including `test/pos.test.ts`, `test/pos-catalog.test.ts`, `test/pos-orders.test.ts`, `test/pos-ingest.test.ts` and `test/pos-adapter.test.ts`. The 2026-10-17 poll switch (webhooks removed, tests rewritten onto "sync now") typechecks, and `npm run test` passes again on 2026-10-17 (20 files / 210 tests). Everything is verified against the deterministic mock provider only: nothing has run against a live Square account yet (see §Verify against live Square docs for what the docs settled and what still needs a Spanish sandbox). See §Built so far and §Phase 3. First market: **Spain** (Square operates there; prices are IVA-inclusive). First provider: **Square**. The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` anticipated "POS integration (Square/Toast webhook → `POST /revenue`)"; this doc is how that lands without wiring Square-isms into the core — and without webhooks (§Order ingestion).
+Status: **Phases 1–3 implemented (Foundation 2026-10-05, Catalog + marriage 2026-10-10, Ingestion + projection 2026-10-15; webhooks replaced by a smart poll 2026-10-17); Phases 4–5 are design.** As of 2026-10-15 the whole tree typechecks and `npm run test` passes (20 files / 220 tests), including `test/pos.test.ts`, `test/pos-catalog.test.ts`, `test/pos-orders.test.ts`, `test/pos-ingest.test.ts` and `test/pos-adapter.test.ts`. The 2026-10-17 poll switch (webhooks removed, tests rewritten onto "sync now") typechecks, and `npm run test` passes again on 2026-10-17 (20 files / 210 tests). Everything is verified against the deterministic mock provider only: nothing has run against a live Square account yet (see §Verify against live Square docs for what the docs settled and what still needs a Spanish sandbox). See §Built so far and §Phase 3. Markets: **Spain and the US** (both targets since 2026-10-24; Square operates in both — IVA-inclusive prices in Spain, additive sales tax in the US, which the net-money rule already handles). First provider: **Square**; Toast is the natural second adapter for the US (§Toast). The design is provider-agnostic: Square is the first *adapter*, not the architecture — `architecture.md` anticipated "POS integration (Square/Toast webhook → `POST /revenue`)"; this doc is how that lands without wiring Square-isms into the core — and without webhooks (§Order ingestion).
 
 Read this before touching any POS/integration code. Companion docs: `architecture.md` (tenancy: restaurant = location, per-location billing), `multi-location-plan.md`, `llm.md` (the matcher's LLM assist goes through `llm.ts` like everything else).
 
@@ -113,7 +113,7 @@ This maps onto the contract as a second `connect.kind`, e.g. `{ kind: "credentia
 
 Order revisions differ from Square, which is why `revision` is adapter-defined. Ingestion is a poll for every provider, so whether Toast's Standard API credentials can receive webhooks no longer matters.
 
-**Market caveat:** as far as we know, Toast operates in the US, Canada, the UK and Ireland, not Spain. Toast therefore follows Square, which stays first for the Spanish launch.
+**Market note:** as far as we know, Toast operates in the US, Canada, the UK and Ireland, not Spain. With the US a target market (2026-10-24) Toast is no longer a someday item: it is the second adapter, sequenced after Square has run against live merchants in both countries, because Square covers both markets with one integration and Toast only adds US reach.
 
 ## Identity & connections (merchant ≠ restaurant)
 
@@ -185,6 +185,7 @@ Triage-pattern UI: confirm suggestion / pick another dish / **import as new dish
 
 - Per line: `netMinor = grossMinor − discountMinor − taxMinor`. Order-level discounts must arrive prorated per line from the adapter (Square provides per-line totals; verify semantics — see checklist). Tips never enter any number.
 - Margin revenue is **IVA-exclusive**. Consistency follow-up (pre-existing, exposed by this work): plate costs from scanned invoices should also be IVA-exclusive (base imponible) since hostelería reclaims input IVA — audit what OCR currently stores and reconcile, or dish margins mix inclusive costs with exclusive revenue.
+- **The US turns that follow-up into a launch requirement (2026-10-24).** US menu prices are quoted pre-tax (sales tax is added at the till) and restaurant food purchases are usually tax-exempt under a resale certificate, so the "menu price is tax-inclusive, invoice cost includes IVA" assumptions are wrong in the opposite direction there. The fix is the one `restaurant-listing.md` already names: a **`taxInclusive` flag (and rate) on the country pack** (`countries/`, `docs/multi-currency.md` Principle 5) that `menuItems.price`, the POS matcher's price tiebreaker and the margin math all read. There is no US pack yet — the default pack only maps US → USD — so the US pack is created with that flag as its first field.
 - The float-euro conversion happens exactly once, in the projector, when writing the `revenueEntry`.
 
 ## Projection → revenue entries (and the pantry)
@@ -280,7 +281,7 @@ Known limits / Later: `usageFor` reads the whole catalog per rebuilt day (fine f
 
 | Gap (from design review) | Resolution |
 |---|---|
-| Market availability | Spain confirmed as first market; Square operates in Spain (re-verify country list + ES feature parity in the checklist) |
+| Market availability | Spain and the US are both target markets; Square operates in both (re-verify the ES country list + feature parity in the checklist; US Orders API is documented) |
 | No declared source of truth | Raw normalized `posOrders` + deterministic dirty-day projection (Principles §3, Projection) |
 | Refunds/voids/late updates | Version-guarded upsert; a refund is a new version → day rebuilds |
 | Discounts/comps | Per-line `discountMinor` incl. prorated order-level; net-based revenue |
@@ -340,7 +341,7 @@ Still needs a live Spanish sandbox: **(1)** the `Square-Version` to pin (current
 The access model in §Toast was checked against Toast's public docs on 2026-10-14. Everything below was not, and each item is a decision input, not just a detail.
 
 1. **Terms first.** Do Toast's terms allow a restaurant to give Standard API credentials to a third-party SaaS vendor, or are they for the restaurant's own use only (with vendors required to go through the partner program)? Read the Standard API access FAQs and the developer terms. If vendors may not use them, path 1 is out and the partner application becomes the critical path.
-2. **Markets.** Confirm Toast's country list (believed to be US / CA / UK / IE, not Spain) and currency handling per location.
+2. **Markets.** Confirm Toast's country list (believed to be US / CA / UK / IE, not Spain — fine, it is the US adapter) and currency handling per location.
 3. **Auth.** The token endpoint and body for Standard API credentials (client-credentials flow with `userAccessType`?), token lifetime, and the scopes a Standard API credential carries. Whether scopes are fixed or chosen at creation (the docs mention fixing scope errors by editing the client's scopes).
 4. **Locations.** How a Standard API credential lists the restaurants it covers (an endpoint, or must the owner also paste restaurant GUIDs?). The location's timezone, currency and closeout hour.
 5. **Catalog.** The menus API shape: item/variation grain vs our `PosCatalogItem`, stable GUIDs across menu edits, sizes, modifiers.

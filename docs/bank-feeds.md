@@ -1,6 +1,6 @@
 # Bank transaction feeds (Tink + Plaid)
 
-Status: **design record — not yet implemented.** First market: **Spain**. First provider: **Tink**; Plaid is the second adapter, not an alternative architecture. Sequenced **after email ingestion ships (~Oct 2026)** — see Phased delivery.
+Status: **design record — not yet implemented.** Markets: **Spain and the US** (both targets, 2026-10-24). First provider: **Tink** (Spain, PSD2); **Plaid** is the US adapter and ships second — a second adapter, not an alternative architecture. Sequenced **after email ingestion ships (~Oct 2026)** — see Phased delivery.
 
 Purpose (founder framing): **bookkeeping consolidation**. Money leaves the restaurant's bank account; Teremu knows whether a registered invoice or expense explains it. Whatever is unexplained gets flagged — *"gasto sin registrar"* — and the owner resolves it in seconds. This is the inverse of scanning: scanning captures what the vendor handed you; the bank feed catches what nobody handed you (the SaaS charge, the direct-debited utility, the supplier you paid but whose factura never got photographed).
 
