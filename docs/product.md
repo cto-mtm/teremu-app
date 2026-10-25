@@ -100,4 +100,4 @@ See `docs/architecture.md` for the full technical picture and `docs/business-mod
 
 ## Deliberately not (yet) in the product
 
-POS integration (CSV import is the bridge; auto-import is the roadmap headline) · multi-location consolidation · long-range analytics beyond the query windows (needs monthly rollups) · ingredient merge tool for pre-existing duplicates · per-ingredient case-size defaults when the pack isn't printed · HR/scheduling (deliberately never — it dilutes the food-cost wedge).
+POS integration (CSV import is the bridge; auto-import is the roadmap headline) · multi-location consolidation · long-range analytics beyond the query windows (needs monthly rollups) · per-ingredient case-size defaults when the pack isn't printed · HR/scheduling (deliberately never — it dilutes the food-cost wedge).

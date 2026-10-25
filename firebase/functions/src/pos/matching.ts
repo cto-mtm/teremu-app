@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { logger } from "firebase-functions/v2";
 import { chatCompletion, llmEnabled, parseModelJson } from "../llm.js";
-import { normalizeName } from "../models.js";
+import { bigrams, dice, tokenCounts, tokens } from "@teremu/shared";
 
 /**
  * POS catalog item ↔ Teremu dish matching (docs/pos.md §Matcher). Pure
@@ -37,40 +37,15 @@ export interface Candidate {
 
 export type MatchOutcome = { kind: "auto"; menuItemId: string } | { kind: "suggest"; candidates: Candidate[] };
 
-const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las", "con", "y", "al", "a", "en", "the", "and", "with", "of"]);
 const SUGGEST_FLOOR = 0.55;
 const MAX_CANDIDATES = 3;
 
-/** Accent-folded, stopword-free, sorted token set. Folds diacritics
- * BEFORE normalizeName, which would otherwise drop "ó" from "jamón". */
-export function tokens(name: string): string[] {
-  const folded = name.normalize("NFKD").replace(/\p{M}/gu, "");
-  return [...new Set(normalizeName(folded).split(" ").filter((t) => t && !STOPWORDS.has(t)))].sort();
-}
+// tokens / bigrams / dice live in @teremu/shared (similarity.ts) so the app
+// scores pantry duplicates the same way; re-exported for listing/merge.ts.
+export { tokens };
 
 const keyOf = (t: string[]): string => t.join(" ");
-
-function bigrams(s: string): Map<string, number> {
-  const out = new Map<string, number>();
-  for (let i = 0; i < s.length - 1; i += 1) {
-    const g = s.slice(i, i + 2);
-    out.set(g, (out.get(g) ?? 0) + 1);
-  }
-  return out;
-}
-
-function dice<T>(a: Map<T, number>, b: Map<T, number>): number {
-  let overlap = 0;
-  let total = 0;
-  for (const [k, n] of a) {
-    overlap += Math.min(n, b.get(k) ?? 0);
-    total += n;
-  }
-  for (const n of b.values()) total += n;
-  return total === 0 ? 0 : (2 * overlap) / total;
-}
-
-const counts = <T>(xs: T[]): Map<T, number> => new Map(xs.map((x) => [x, 1]));
+const counts = tokenCounts;
 
 interface Prepared extends MatchDish {
   tokens: string[];

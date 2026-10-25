@@ -240,3 +240,159 @@ describe("pantry & revenue", () => {
     expect(body.lastCountAt).not.toBeNull();
   });
 });
+
+describe("ingredient merge & aliases (docs/architecture.md §Ingredient identity)", () => {
+  const readerPerms = { triage: "none", menu: "edit", pantry: "read", finance: "none", vendors: "none", integrations: "none", scan: false } as const;
+
+  it("POST /ingredients/:id/merge guards: 401, 403, 404, 400, 409", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const other = await makeOwner({ uid: `other-${uniqueId()}`, email: `other-${uniqueId()}@example.com` });
+    const a = await seedIngredient(owner.rid, { name: "Huevos", unit: "each" });
+    const b = await seedIngredient(owner.rid, { name: "Huevo", unit: "kg" });
+    const path = `/ingredients/${a.id}/merge`;
+
+    expect((await post(path, undefined, { into: b.id })).status).toBe(401);
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, readerPerms);
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await post(path, reader, { into: b.id }, owner.rid)).status).toBe(403);
+    expect((await post(path, other.token, { into: b.id })).status).toBe(404);
+    expect((await post(path, owner.token, { into: "nope" })).status).toBe(404);
+    expect((await post(path, owner.token, { into: a.id })).body).toEqual({ error: "same_ingredient" });
+    expect((await post(path, owner.token, {})).status).toBe(400);
+    const clash = await post(path, owner.token, { into: b.id });
+    expect(clash).toMatchObject({ status: 409, body: { error: "unit_mismatch" } });
+    // Nothing moved.
+    expect((await col(owner.rid, "ingredients").get()).size).toBe(2);
+  });
+
+  it("merges stock, price, aliases and every reference into the survivor, then deletes the loser", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const survivor = await seedIngredient(owner.rid, {
+      name: "Pork chop",
+      unit: "kg",
+      theoreticalQty: 3,
+      lastUnitPrice: 8,
+      lastPriceAt: 1_000,
+      archived: true,
+      aliases: ["chuleta cerdo"],
+    });
+    // In grams, bought more recently: price re-bases ×1000 to €/kg.
+    const loser = await seedIngredient(owner.rid, {
+      name: "PORK CHP",
+      unit: "g",
+      theoreticalQty: 500,
+      lastUnitPrice: 0.009,
+      prevUnitPrice: 0.008,
+      lastPriceAt: 2_000,
+      lastVendorName: "Carnes Sur",
+      lastCountQty: 400,
+      lastCountAt: 1_500,
+      aliases: ["prk chop", "pork chop"],
+    });
+    const onlyLoser = await seedMenuItem(owner.rid, { name: "Chop plate", recipe: [{ ingredientId: loser.id, qty: 250 }] });
+    const both = await seedMenuItem(owner.rid, {
+      name: "Mixed grill",
+      recipe: [
+        { ingredientId: survivor.id, qty: 0.2 },
+        { ingredientId: loser.id, qty: 0.1, unit: "kg" },
+        { ingredientId: loser.id, qty: 50, unit: "g" },
+      ],
+    });
+    const invoice = await seedInvoice(owner.rid, {
+      status: "approved",
+      lineItems: [{ name: "PORK CHP", qty: 500, unit: "g", unitPrice: 0.009, total: 4.5, ingredientId: loser.id }],
+    });
+    const day = col(owner.rid, "posDays").doc("square_2026-10-20");
+    await day.set({ provider: "square", date: "2026-10-20", applied: { [loser.id]: 100, [survivor.id]: 0.5 } });
+
+    const res = await post(`/ingredients/${loser.id}/merge`, owner.token, { into: survivor.id });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(survivor.id);
+
+    expect((await col(owner.rid, "ingredients").doc(loser.id).get()).exists).toBe(false);
+    const merged = await ing(owner.rid, survivor.id);
+    expect(merged.theoreticalQty).toBeCloseTo(3.5, 6);
+    expect(merged.archived).toBe(false);
+    expect(merged.lastUnitPrice).toBeCloseTo(9, 4);
+    expect(merged.prevUnitPrice).toBeCloseTo(8, 4);
+    expect(merged.lastPriceAt).toBe(2_000);
+    expect(merged.lastVendorName).toBe("Carnes Sur");
+    expect(merged.lastCountQty).toBeCloseTo(0.4, 6);
+    expect(merged.aliases).toEqual(expect.arrayContaining(["chuleta cerdo", "pork chp", "prk chop"]));
+    // The survivor's own key is never an alias of itself.
+    expect(merged.aliases).not.toContain("pork chop");
+    expect(res.body).toMatchObject({ theoreticalQty: merged.theoreticalQty, aliases: merged.aliases });
+
+    // A unit-less loser line meant grams: it is stamped so it stays grams.
+    const plate = (await col(owner.rid, "menuItems").doc(onlyLoser.id).get()).get("recipe");
+    expect(plate).toEqual([{ ingredientId: survivor.id, qty: 250, unit: "g" }]);
+    // Same effective unit → one line (0.2 kg + 0.1 kg); grams stay apart.
+    const grill = (await col(owner.rid, "menuItems").doc(both.id).get()).get("recipe");
+    expect(grill).toEqual([
+      { ingredientId: survivor.id, qty: 0.3 },
+      { ingredientId: survivor.id, qty: 50, unit: "g" },
+    ]);
+
+    const line = (await col(owner.rid, "invoices").doc(invoice.id).get()).get("lineItems")[0];
+    expect(line).toMatchObject({ ingredientId: survivor.id, name: "PORK CHP" });
+
+    const applied = (await day.get()).get("applied");
+    expect(Object.keys(applied)).toEqual([survivor.id]);
+    expect(applied[survivor.id]).toBeCloseTo(0.6, 6);
+  });
+
+  it("repoints a recipe even when another of its lines is malformed", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const survivor = await seedIngredient(owner.rid, { name: "Harina" });
+    const loser = await seedIngredient(owner.rid, { name: "HARINA TRIGO" });
+    const dish = await seedMenuItem(owner.rid, { name: "Pan", recipe: [{ ingredientId: loser.id, qty: 1 }] });
+    // A legacy line the recipe schema would reject (qty 0).
+    await col(owner.rid, "menuItems").doc(dish.id).update({ recipe: [{ ingredientId: "legacy", qty: 0 }, { ingredientId: loser.id, qty: 1 }] });
+    expect((await post(`/ingredients/${loser.id}/merge`, owner.token, { into: survivor.id })).status).toBe(200);
+    const recipe = (await col(owner.rid, "menuItems").doc(dish.id).get()).get("recipe");
+    expect(recipe).toEqual([{ ingredientId: "legacy", qty: 0 }, { ingredientId: survivor.id, qty: 1 }]);
+  });
+
+  it("never gives the survivor an alias another ingredient answers to", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await seedIngredient(owner.rid, { name: "Jamon" });
+    const survivor = await seedIngredient(owner.rid, { name: "Jamón ibérico" });
+    // Folds to "jamon" — the other ingredient's exact key.
+    const loser = await seedIngredient(owner.rid, { name: "Jamón", aliases: ["jamon bellota"] });
+    await post(`/ingredients/${loser.id}/merge`, owner.token, { into: survivor.id });
+    const merged = await ing(owner.rid, survivor.id);
+    expect(merged.aliases).toEqual(expect.arrayContaining(["jamn", "jamon bellota"]));
+    expect(merged.aliases).not.toContain("jamon");
+  });
+
+  it("keeps the survivor's newer price and count", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const survivor = await seedIngredient(owner.rid, { name: "Tomate", lastUnitPrice: 2, lastPriceAt: 5_000, lastCountQty: 1, lastCountAt: 5_000 });
+    const loser = await seedIngredient(owner.rid, { name: "Tomates", lastUnitPrice: 3, lastPriceAt: 1_000, lastCountQty: 9, lastCountAt: 1_000 });
+    await post(`/ingredients/${loser.id}/merge`, owner.token, { into: survivor.id });
+    const merged = await ing(owner.rid, survivor.id);
+    expect(merged).toMatchObject({ lastUnitPrice: 2, lastPriceAt: 5_000, lastCountQty: 1 });
+  });
+
+  it("PUT /ingredients/:id/aliases replaces them folded, deduped and without the ingredient's own keys", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const other = await makeOwner({ uid: `other-${uniqueId()}`, email: `other-${uniqueId()}@example.com` });
+    const jamon = await seedIngredient(owner.rid, { name: "Jamón", aliases: ["jamon serrano"] });
+    const path = `/ingredients/${jamon.id}/aliases`;
+
+    expect((await put(path, undefined, { aliases: [] })).status).toBe(401);
+    const uid = `reader-${uniqueId()}`;
+    await seedMember(owner.rid, uid, readerPerms);
+    const reader = await makeUserToken({ uid, email: `${uid}@test.local` });
+    expect((await put(path, reader, { aliases: [] }, owner.rid)).status).toBe(403);
+    expect((await put(path, other.token, { aliases: [] })).status).toBe(404);
+    expect((await put("/ingredients/nope/aliases", owner.token, { aliases: [] })).status).toBe(404);
+    expect((await put(path, owner.token, { aliases: "x" })).status).toBe(400);
+
+    await seedIngredient(owner.rid, { name: "Jamón serrano" });
+    const res = await put(path, owner.token, { aliases: ["Jamón Bellota", "JAMON BELLOTA", "jamon", "jamn", "", "jamon serrano"] });
+    expect(res).toMatchObject({ status: 200, body: { id: jamon.id, aliases: ["jamon bellota"] } });
+    expect((await ing(owner.rid, jamon.id)).aliases).toEqual(["jamon bellota"]);
+  });
+});

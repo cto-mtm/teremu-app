@@ -5,7 +5,11 @@ import type { Category, ExpenseEntry, Ingredient, Invoice, MenuItem, RecipeLine,
 import { convertQty } from './units'
 import {
   expandUsage,
+  foldName,
+  IngredientIndex,
+  ingredientKeys,
   isDish,
+  nameSimilarity,
   normalizeName,
   pairSubcategory,
   plateCost,
@@ -15,7 +19,7 @@ import {
   SUBCATEGORIES,
 } from '@teremu/shared'
 
-export { normalizeName }
+export { foldName, ingredientKeys, normalizeName }
 
 /** Milliseconds in one day — shared constant for all time math below. */
 const DAY_MS = 86_400_000
@@ -356,7 +360,7 @@ export function vendorSuppliedLines(vendorInvoices: Invoice[]): SuppliedLine[] {
   const map = new Map<string, SuppliedLine>()
   for (const inv of vendorInvoices) {
     for (const line of inv.lineItems) {
-      const key = line.ingredientId ?? normalizeName(line.name)
+      const key = line.ingredientId ?? foldName(line.name)
       const date = inv.invoiceDate ?? ''
       const existing = map.get(key)
       if (!existing || date > existing.date) {
@@ -384,19 +388,72 @@ export interface ReceiptLine {
   total: number
 }
 
+// ── Ingredient identity (docs/architecture.md §Ingredient identity) ──
+
+/** Name → the pantry ingredient approval would put it on, through the
+ * same tiered lookup (shared/src/identity.ts). Build once per list. */
+export function ingredientResolver(ingredients: Ingredient[]): (name: string) => Ingredient | null {
+  const byId = new Map(ingredients.map((i) => [i.id, i]))
+  const index = new IngredientIndex(ingredients.map((i) => [i.id, i] as const))
+  return (name) => byId.get(index.resolve(name) ?? '') ?? null
+}
+
+/** Best non-archived candidates for an unmatched invoice line, by name
+ * similarity against every key; same category first. */
+export function suggestIngredients(
+  name: string,
+  category: Category | null | undefined,
+  ingredients: Ingredient[],
+  floor = 0.55,
+  top = 3,
+): { ingredient: Ingredient; score: number }[] {
+  return ingredients
+    .filter((i) => !i.archived)
+    .map((i) => ({
+      ingredient: i,
+      score: Math.max(nameSimilarity(name, i.name), ...(i.aliases ?? []).map((a) => nameSimilarity(name, a))),
+    }))
+    .filter((s) => s.score >= floor)
+    .sort((a, b) => {
+      const ca = category && a.ingredient.category === category ? 0 : 1
+      const cb = category && b.ingredient.category === category ? 0 : 1
+      return ca - cb || b.score - a.score
+    })
+    .slice(0, top)
+}
+
+/** Likely duplicate pairs in the pantry: live, same category, names at
+ * least 0.8 alike (the listing importer's bar). Each pair once, closest
+ * first; `a` sorts before `b` by name. */
+export function possibleDuplicates(ingredients: Ingredient[]): { a: Ingredient; b: Ingredient; score: number }[] {
+  const live = ingredients.filter((i) => !i.archived).sort((x, y) => x.name.localeCompare(y.name))
+  const out: { a: Ingredient; b: Ingredient; score: number }[] = []
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const a = live[i]!
+      const b = live[j]!
+      if (a.category !== b.category) continue
+      const score = nameSimilarity(a.name, b.name)
+      if (score >= 0.8) out.push({ a, b, score })
+    }
+  }
+  return out.sort((x, y) => y.score - x.score)
+}
+
 /**
  * Every approved purchase of one ingredient, newest first. Matches by
- * the resolved ingredientId; falls back to normalized-name matching for
- * invoices approved before ids were stored.
+ * the resolved ingredientId; falls back to name matching (nameKey, folded
+ * name, aliases) for invoices approved before ids were stored.
  */
 export function receiptsForIngredient(invoices: Invoice[], ing: Ingredient): ReceiptLine[] {
   const rows: ReceiptLine[] = []
+  const keys = ingredientKeys(ing)
   for (const inv of invoices) {
     if (!isFoodInvoice(inv)) continue
     for (const line of inv.lineItems) {
       const match = line.ingredientId
         ? line.ingredientId === ing.id
-        : normalizeName(line.name) === ing.nameKey
+        : normalizeName(line.name) === ing.nameKey || keys.includes(foldName(line.name))
       if (match) {
         rows.push({
           invoiceId: inv.id,
@@ -613,7 +670,7 @@ export function ingredientSpend(
   for (const inv of invoices) {
     if (!isFoodInvoice(inv)) continue
     for (const line of inv.lineItems) {
-      const key = line.ingredientId ?? normalizeName(line.name)
+      const key = line.ingredientId ?? foldName(line.name)
       const row = map.get(key) ?? { ingredientId: line.ingredientId ?? null, name: line.name, total: 0 }
       row.total += line.total
       map.set(key, row)
@@ -801,7 +858,7 @@ export function spendTree(
       const ing = line.ingredientId ? ingredientsById.get(line.ingredientId) : undefined
       const cat = ing?.category ?? line.category ?? 'other'
       const sub = pairSubcategory(cat, ing?.subcategory ?? line.subcategory) ?? ''
-      const ingKey = line.ingredientId ?? normalizeName(line.name)
+      const ingKey = line.ingredientId ?? foldName(line.name)
 
       let subs = cats.get(cat)
       if (!subs) cats.set(cat, (subs = new Map()))

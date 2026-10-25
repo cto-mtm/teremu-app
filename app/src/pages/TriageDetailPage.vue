@@ -13,6 +13,8 @@ import { previewBase } from '../lib/money'
 import { CURRENCIES, DEFAULT_CURRENCY, invoiceTextSchema } from '../lib/schemas'
 import type { ApprovalMoney, Currency, FxDecision, LineItem, Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
+import LinkToIngredientSheet from '../components/LinkToIngredientSheet.vue'
+import { ingredientResolver, suggestIngredients } from '../lib/domain'
 
 /**
  * Side-by-side review: the receipt image next to the AI transcription.
@@ -144,6 +146,55 @@ async function confirmAsExpense(): Promise<void> {
   } else {
     alert(t('triage.detail.asExpenseFailed'))
   }
+}
+
+// ── Ingredient identity: lines that would become a NEW ingredient ──
+// (docs/architecture.md §Ingredient identity). The catalog is loaded for
+// triage members too (AppShell); this covers a deep link landing first.
+onMounted(() => {
+  if (!kitchen.ingredients.length && !kitchen.loading) void kitchen.refresh({ ingredients: true }, ['ingredients'])
+})
+/** The ingredient a line is explicitly linked to (a stale id shows nothing:
+ * the server falls back to name matching). */
+const linkedTo = (line: LineItem) => (line.ingredientId ? kitchen.ingredientMap.get(line.ingredientId) : undefined)
+// Badge state per line, recomputed only when a line's name, link or
+// category changes (not on qty/price keystrokes), with the similarity
+// scan cached per name for the current pantry.
+const resolveIngredient = computed(() => ingredientResolver(kitchen.ingredients))
+const suggestionCache = computed(() => {
+  void kitchen.pantry // a new pantry snapshot starts a fresh cache
+  return new Map<string, boolean>()
+})
+function hasSuggestion(line: LineItem): boolean {
+  const key = `${line.category ?? ''}|${line.name}`
+  const cache = suggestionCache.value
+  let hit = cache.get(key)
+  if (hit === undefined) {
+    hit = suggestIngredients(line.name, line.category, kitchen.pantry, 0.55, 1).length > 0
+    cache.set(key, hit)
+  }
+  return hit
+}
+/** null = matched or linked; otherwise whether a solid badge (a plausible
+ * existing match) or a quiet one — a first invoice shouldn't be a wall
+ * of warnings. */
+const badges = computed(() =>
+  lines.value.map((line) =>
+    !line.name.trim() || linkedTo(line) || resolveIngredient.value(line.name) ? null : { strong: hasSuggestion(line) },
+  ),
+)
+const linkIndex = ref<number | null>(null)
+const linkOpen = computed({
+  get: () => linkIndex.value !== null,
+  set: (v) => {
+    if (!v) linkIndex.value = null
+  },
+})
+const linkLine = computed(() => (linkIndex.value !== null ? lines.value[linkIndex.value] : undefined))
+function onLinked(ing: { id: string }): void {
+  const line = linkLine.value
+  if (line) line.ingredientId = ing.id
+  linkIndex.value = null
 }
 
 // The image endpoint requires the auth header, which <img> can't send —
@@ -638,17 +689,41 @@ async function approve(): Promise<void> {
           :class="line.flagged ? 'border-coral-100 ring-1 ring-coral-100' : ''"
         >
           <div class="flex items-center gap-2">
+            <!-- A renamed line is a different product: the link goes with
+                 the old name, or approval would teach the wrong alias. -->
             <input
               v-model="line.name"
               class="input font-medium"
               :placeholder="t('triage.detail.itemName')"
+              @input="line.ingredientId = null"
             />
+            <button
+              v-if="canEdit && badges[i]"
+              class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+              :class="badges[i]?.strong ? 'bg-ember text-white' : 'border border-gray-200 text-smoke hover:text-ink'"
+              :title="t('triage.detail.link.newHint')"
+              :aria-label="t('triage.detail.link.newHint')"
+              @click="linkIndex = i"
+            >
+              {{ t('triage.detail.link.newBadge') }}
+            </button>
             <button
               class="shrink-0 text-smoke hover:text-coral"
               :aria-label="t('triage.detail.removeLine')"
               @click="lines.splice(i, 1)"
             >
               ✕
+            </button>
+          </div>
+          <div v-if="linkedTo(line)" class="flex items-center gap-1 text-xs">
+            <span class="chip-down">{{ t('triage.detail.link.linked', { name: linkedTo(line)!.name }) }}</span>
+            <button
+              v-if="canEdit"
+              class="px-1 text-smoke hover:text-coral"
+              :aria-label="t('triage.detail.link.unlink')"
+              @click="line.ingredientId = null"
+            >
+              ×
             </button>
           </div>
           <div class="grid grid-cols-4 gap-2">
@@ -735,6 +810,14 @@ async function approve(): Promise<void> {
       </BaseButton>
     </div>
 
+    <LinkToIngredientSheet
+      v-model="linkOpen"
+      :name="linkLine?.name ?? ''"
+      :category="linkLine?.category"
+      :unit="linkLine?.unit"
+      :pack-unit="linkLine?.packUnit"
+      @picked="onLinked"
+    />
     <CurrencyConfirmSheet v-model="currencyOpen" @proceed="onCurrencyProceed" @changed="onCurrencyChanged" />
   </div>
 </template>

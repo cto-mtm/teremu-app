@@ -10,6 +10,8 @@ import { packFor } from "./countries/index.js";
 import {
   currencySchema,
   DEFAULT_CURRENCY,
+  foldName,
+  IngredientIndex,
   ingredientDocSchema,
   menuItemDocSchema,
   normalizeName,
@@ -34,7 +36,7 @@ export class RequestError extends Error {
 }
 
 // All data is namespaced per restaurant workspace: restaurants/{rid}/….
-const restCol = (rid: string, name: string) =>
+export const restCol = (rid: string, name: string) =>
   getFirestore().collection("restaurants").doc(rid).collection(name);
 
 const CONTAINERS = new Set(["case", "box", "bunch"]);
@@ -226,8 +228,27 @@ async function extractionContext(rid: string): Promise<ExtractionContext> {
     restCol(rid, "ingredients").limit(300).get(),
     getFirestore().collection("restaurants").doc(rid).get(),
   ]);
+  // Archived ingredients are out of the hint list (merged ones are gone);
+  // each alias rides along as an extra string and maps back to its name.
+  // An alias rides along only while it is the strongest owner of its key
+  // (never shadowing another ingredient's name).
+  const live = catalogSnap.docs
+    .map((d) => ({ id: d.id, ing: ingredientDocSchema.safeParse(d.data()) }))
+    .flatMap(({ id, ing }) => (ing.success && ing.data.name && !ing.data.archived ? [{ id, ing: ing.data }] : []));
+  const index = new IngredientIndex(live.map(({ id, ing }) => [id, ing] as const));
+  const known: string[] = [];
+  const aliasNames: Record<string, string> = {};
+  for (const { id, ing } of live) {
+    known.push(ing.name);
+    for (const a of ing.aliases ?? []) {
+      if (!a || aliasNames[a] || index.ownerOf(a) !== id) continue;
+      aliasNames[a] = ing.name;
+      known.push(a);
+    }
+  }
   return {
-    knownIngredients: catalogSnap.docs.map((d) => (d.data() as IngredientDoc).name).filter(Boolean),
+    knownIngredients: known,
+    ...(Object.keys(aliasNames).length ? { aliasNames } : {}),
     restaurantName: (restaurantSnap.get("name") as string | undefined) ?? null,
     baseCurrency: currencySchema.catch(DEFAULT_CURRENCY).parse(restaurantSnap.get("currency")),
     pack: packFor((restaurantSnap.get("country") as string | undefined) ?? null),
@@ -412,11 +433,17 @@ export async function approveInvoice(
   const currency = money.currency ?? money.base;
 
   const ingredientsSnap = await ingredients.get();
-  const byKey = new Map<string, { id: string; data: IngredientDoc }>();
+  // Tiered lookup — nameKey, then folded name, then learned alias
+  // (docs/architecture.md §Ingredient identity, shared/src/identity.ts).
+  type Known = { id: string; data: IngredientDoc };
+  const byId = new Map<string, Known>();
+  const index = new IngredientIndex();
   ingredientsSnap.forEach((d) => {
     // Validated read: a malformed doc is skipped, not propagated.
     const parsed = ingredientDocSchema.safeParse(d.data());
-    if (parsed.success) byKey.set(parsed.data.nameKey, { id: d.id, data: parsed.data });
+    if (!parsed.success) return;
+    byId.set(d.id, { id: d.id, data: parsed.data });
+    index.add(d.id, parsed.data);
   });
 
   const batch = db.batch();
@@ -438,11 +465,35 @@ export async function approveInvoice(
       subcategory: pairSubcategory(raw.category ?? "other", raw.subcategory),
     };
     const key = normalizeName(li.name);
-    if (!key) {
+    const fold = foldName(li.name);
+    // 1. The reviewer linked this line to an ingredient in triage: honor
+    //    it and remember the vendor's spelling as an alias (the line keeps
+    //    its printed name). 2. Name lookup. 3. Create.
+    let existing: Known | undefined;
+    let learnAlias: string | null = null;
+    if (li.ingredientId) {
+      existing = byId.get(li.ingredientId);
+      if (!existing) {
+        logger.warn("approve: unknown ingredientId, matching by name", { rid, invoiceId, ingredientId: li.ingredientId });
+      } else if (fold) {
+        const owner = index.ownerOf(fold);
+        if (!owner) learnAlias = fold;
+        else if (owner !== existing.id) {
+          // The spelling already names another ingredient: link this
+          // line, but never let one key point at two ingredients.
+          logger.info("approve: alias belongs to another ingredient", { rid, invoiceId, alias: fold, owner });
+        }
+      }
+    }
+    if (!existing) {
+      const id = index.resolve(li.name);
+      existing = id ? byId.get(id) : undefined;
+    }
+    if (!existing && !key) {
       resolved.push({ ...li, ingredientId: null });
       continue;
     }
-    const existing = byKey.get(key);
+    if (learnAlias && existing) index.learn(existing.id, learnAlias);
     // Container lines with known pack contents convert to their contents
     // first (case → kg); then re-base to the stock unit if it differs.
     // Stock math runs on BASE money: for a foreign document that is the
@@ -450,7 +501,11 @@ export async function approveInvoice(
     const terms = contentTerms(fx ? { ...li, unitPrice: li.baseUnitPrice ?? li.unitPrice } : li);
     if (existing) {
       resolved.push({ ...li, ingredientId: existing.id });
-      if (!applyEffects) continue;
+      if (!applyEffects) {
+        // A delivery note writes no stock, but the link is still a fact.
+        if (learnAlias) batch.update(ingredients.doc(existing.id), { aliases: FieldValue.arrayUnion(learnAlias) });
+        continue;
+      }
       // "25 lb" onto kg stock must add 11.34 kg, and the rolling price
       // must be re-based to $/stock-unit — otherwise both the pantry and
       // every margin quietly go wrong.
@@ -477,6 +532,7 @@ export async function approveInvoice(
         ...(subFill ? { subcategory: subFill } : {}),
         // Bought again → back in use: an archived ingredient reappears.
         ...(existing.data.archived ? { archived: false } : {}),
+        ...(learnAlias ? { aliases: FieldValue.arrayUnion(learnAlias) } : {}),
       });
     } else {
       if (!applyEffects) {
@@ -500,7 +556,8 @@ export async function approveInvoice(
         lastCountAt: null,
       };
       batch.set(ref, fresh);
-      byKey.set(key, { id: ref.id, data: fresh });
+      byId.set(ref.id, { id: ref.id, data: fresh });
+      index.add(ref.id, fresh);
       resolved.push({ ...li, ingredientId: ref.id });
     }
   }

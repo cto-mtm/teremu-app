@@ -137,7 +137,7 @@ watch(
       void invoicesStore.refresh()
     }
     void kitchenStore.refresh({
-      ingredients: authStore.can('pantry') || authStore.can('menu'),
+      ingredients: authStore.can('pantry') || authStore.can('menu') || authStore.can('triage'),
       menu: authStore.can('menu') || authStore.can('finance') || authStore.can('pantry'),
       revenue: authStore.can('finance'),
       expenses: authStore.can('finance') || authStore.can('vendors'),

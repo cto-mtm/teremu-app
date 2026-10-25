@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertQty, normalizeName } from "./utils.js";
+import { convertQty, foldName, normalizeName } from "./utils.js";
 
 describe("normalizeName", () => {
   it("lowercases, drops punctuation and collapses whitespace", () => {
@@ -8,6 +8,19 @@ describe("normalizeName", () => {
 
   it("matches the same vendor written two ways", () => {
     expect(normalizeName("ACME-Produce")).toBe(normalizeName("acmeproduce"));
+  });
+});
+
+describe("foldName", () => {
+  it("folds accents instead of dropping the letter", () => {
+    expect(foldName("Jamón Ibérico")).toBe("jamon iberico");
+    expect(normalizeName("Jamón")).toBe("jamn");
+  });
+
+  it("equals normalizeName for ASCII input", () => {
+    for (const s of ["  Sysco   Foods, Inc. ", "PORK CHOP 10/LB", "acme-produce"]) {
+      expect(foldName(s)).toBe(normalizeName(s));
+    }
   });
 });
 

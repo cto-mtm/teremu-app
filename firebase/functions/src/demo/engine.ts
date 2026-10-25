@@ -18,6 +18,7 @@
  */
 import {
   convertQty,
+  IngredientIndex,
   normalizeName,
   plateCost,
   type Category,
@@ -704,13 +705,14 @@ export function buildProfile(spec: ProfileSpec, opts: BuildOptions): BuiltProfil
   };
 
   // Approval price roll, as pipeline.approveInvoice does it: lines match
-  // the catalog by NAME KEY (not id); the rolling price is re-based to
-  // the stock unit; unknown lines become new ingredients (no alert).
+  // the catalog by key (nameKey → folded name → alias, not id); the
+  // rolling price is re-based to the stock unit; unknown lines become new
+  // ingredients (no alert).
   const afterApproval = (doc: InvoiceDoc): Map<string, IngredientDoc> => {
     const next = new Map([...ingredients].map(([id, i]) => [id, { ...i }]));
-    const byKey = new Map([...next].map(([id, i]) => [i.nameKey, id]));
+    const index = new IngredientIndex(next);
     for (const li of doc.lineItems) {
-      const id = byKey.get(normalizeName(li.name));
+      const id = index.resolve(li.name);
       if (!id) continue;
       const i = next.get(id)!;
       const ratio = li.unit === i.unit ? 1 : convertQty(1, li.unit, i.unit);

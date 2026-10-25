@@ -51,6 +51,13 @@ model change, re-run the live eval — `LLM_MODEL=… npm run real:eval`
 records into that model's own set, so models never mix. A replay miss is a
 hard failure, never a silent fallback.
 
+Text-path cassettes are the exception: they hash every message, prompt
+included. The KNOWN INGREDIENTS list now also carries each ingredient's
+learned aliases and leaves archived ingredients out
+(docs/architecture.md §Ingredient identity), so a text-path recording only
+changes for a restaurant that has aliases or archived ingredients — none in
+the fixtures. Re-record if a fixture gains either.
+
 **What the suite pins** (`firebase/functions/test/real/`, own vitest config,
 never in the deploy gate): terminal state for every document, idempotent
 re-upload, byte-identical repeated pages rejected (the corpus has a PDF

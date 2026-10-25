@@ -12,6 +12,8 @@ import {
   put,
   seedIngredient,
   seedInvoice,
+  seedMember,
+  makeUserToken,
   uniqueId,
   uniqueJpeg,
   upload,
@@ -348,5 +350,92 @@ describe("invoice lifecycle", () => {
     expect(status).toBe(200);
     expect(body.status).toBe("needs_review"); // mock OCR always succeeds — recovered
     expect(body.error).toBeNull();
+  });
+});
+
+describe("ingredient identity at approval (docs/architecture.md §Ingredient identity)", () => {
+  const approve = (token: string, id: string, lineItems: unknown[]) =>
+    put<{ id: string } & InvoiceDoc>(`/invoices/${id}/approve`, token, {
+      vendorName: "Charcutería Sur",
+      invoiceDate: "2026-10-20",
+      lineItems,
+    });
+  const line = (name: string, extra: Record<string, unknown> = {}) => ({ name, qty: 1, unit: "kg", unitPrice: 20, total: 20, ...extra });
+  const read = async (rid: string, id: string) => (await col(rid, "ingredients").doc(id).get()).data() as IngredientDoc;
+
+  it("matches an accented pantry name by its folded key", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    // nameKey is normalizeName's "jamn ibrico" — the invoice says JAMON.
+    const jamon = await seedIngredient(owner.rid, { name: "Jamón ibérico" });
+    const { status, body } = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("JAMON IBERICO")]);
+    expect(status).toBe(200);
+    expect(body.lineItems[0].ingredientId).toBe(jamon.id);
+    expect((await col(owner.rid, "ingredients").get()).size).toBe(1);
+  });
+
+  it("matches by a learned alias", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const pork = await seedIngredient(owner.rid, { name: "Pork chop", aliases: ["prk chop"] });
+    const { body } = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("PRK. CHOP")]);
+    expect(body.lineItems[0].ingredientId).toBe(pork.id);
+  });
+
+  it("honors a triage link, learns the spelling once, and matches it silently next time", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const pork = await seedIngredient(owner.rid, { name: "Pork chop", theoreticalQty: 2 });
+
+    const first = await approve(owner.token, (await seedInvoice(owner.rid)).id, [
+      line("PORK CHP 10/LB", { ingredientId: pork.id }),
+      line("Pork chp 10/lb", { ingredientId: pork.id }),
+    ]);
+    expect(first.status).toBe(200);
+    expect(first.body.lineItems[0]).toMatchObject({ ingredientId: pork.id, name: "PORK CHP 10/LB" });
+    const learned = await read(owner.rid, pork.id);
+    expect(learned.aliases).toEqual(["pork chp 10lb"]);
+    expect(learned.theoreticalQty).toBeCloseTo(4, 5);
+
+    const second = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("Pork Chp 10/lb")]);
+    expect(second.body.lineItems[0].ingredientId).toBe(pork.id);
+    expect((await read(owner.rid, pork.id)).aliases).toEqual(["pork chp 10lb"]);
+    expect((await col(owner.rid, "ingredients").get()).size).toBe(1);
+  });
+
+  it("never learns an alias that is another ingredient's key", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const loin = await seedIngredient(owner.rid, { name: "Pork loin" });
+    await seedIngredient(owner.rid, { name: "Pork chop" });
+    const { body } = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("PORK CHOP", { ingredientId: loin.id })]);
+    // The explicit link wins for this line …
+    expect(body.lineItems[0].ingredientId).toBe(loin.id);
+    // … but "pork chop" keeps naming the other ingredient only.
+    expect((await read(owner.rid, loin.id)).aliases).toBeUndefined();
+  });
+
+  it("an exact name always beats another ingredient's alias, whatever the read order", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    // Before tiering, whichever doc was read first won the key.
+    await seedIngredient(owner.rid, { name: "Lomo", aliases: ["pork chop"] });
+    const pork = await seedIngredient(owner.rid, { name: "Pork chop" });
+    const { body } = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("PORK CHOP")]);
+    expect(body.lineItems[0].ingredientId).toBe(pork.id);
+  });
+
+  it("an unknown ingredientId falls back to name matching instead of failing", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    const pork = await seedIngredient(owner.rid, { name: "Pork chop" });
+    const { status, body } = await approve(owner.token, (await seedInvoice(owner.rid)).id, [line("Pork chop", { ingredientId: "gone" })]);
+    expect(status).toBe(200);
+    expect(body.lineItems[0].ingredientId).toBe(pork.id);
+  });
+
+  it("a triage-only member may read the ingredient catalog (the link picker needs it)", async () => {
+    const owner = await makeOwner({ uid: `owner-${uniqueId()}`, email: `owner-${uniqueId()}@example.com` });
+    await seedIngredient(owner.rid, { name: "Pork chop" });
+    const uid = `triage-${uniqueId()}`;
+    await seedMember(owner.rid, uid, { triage: "edit", menu: "none", pantry: "none", finance: "none", vendors: "none", integrations: "none", scan: true });
+    const token = await makeUserToken({ uid, email: `${uid}@test.local` });
+    const res = await get<unknown[]>("/ingredients", token, owner.rid);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
   });
 });

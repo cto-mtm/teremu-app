@@ -115,6 +115,19 @@ const es = {
       delivery_note: 'Albarán',
     },
     docTypeHint: 'Los albaranes se aprueban solo para conciliación: no tocan despensa, precios ni gastos.',
+    link: {
+      newBadge: 'Nuevo',
+      newHint: 'Al aprobar se creará un ingrediente nuevo. Toca para vincularlo a uno que ya tienes.',
+      title: 'Vincular «{name}» a un ingrediente',
+      intro: 'Teremu recordará esta forma de escribirlo para las próximas facturas.',
+      search: 'Busca en tu despensa',
+      suggestions: 'Sugerencias',
+      all: 'Todos',
+      none: 'Ningún ingrediente coincide.',
+      linked: 'Vinculado a {name}',
+      unlink: 'Desvincular',
+      unitWarn: 'Se guarda en {unit} y esta línea viene en {lineUnit}: no se pueden convertir. Toca otra vez para vincular igualmente.',
+    },
   },
 }
 
@@ -234,6 +247,19 @@ const en: typeof es = {
       delivery_note: 'Delivery note',
     },
     docTypeHint: "Delivery notes approve for reconciliation only: they don't touch pantry, prices, or spend.",
+    link: {
+      newBadge: 'New',
+      newHint: 'Approving creates a new ingredient. Tap to link it to one you already have.',
+      title: 'Link “{name}” to an ingredient',
+      intro: 'Teremu will remember this spelling for future invoices.',
+      search: 'Search your pantry',
+      suggestions: 'Suggestions',
+      all: 'All',
+      none: 'No ingredient matches.',
+      linked: 'Linked to {name}',
+      unlink: 'Unlink',
+      unitWarn: "Stocked in {unit} and this line is in {lineUnit}: they don't convert. Tap again to link anyway.",
+    },
   },
 }
 

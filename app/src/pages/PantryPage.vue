@@ -6,7 +6,7 @@ import { armHero, heroStyle } from '../composables/useHero'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
-import { groceryList, normalizeName, productionPlan, type GroceryRow } from '../lib/domain'
+import { groceryList, normalizeName, possibleDuplicates, productionPlan, type GroceryRow } from '../lib/domain'
 import { CATEGORIES, type Category, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
 import PageLoader from '../components/PageLoader.vue'
@@ -64,6 +64,17 @@ const sortBy = ref<'name' | 'stock' | 'value'>('name')
 const unusedIds = computed(() => new Set(kitchen.unused.map((i) => i.id)))
 const onlyUnused = ref(false)
 const showArchived = ref(false)
+
+// Possible duplicates: an O(n²) name comparison, so it only runs once the
+// section is opened, and is cached per pantry snapshot.
+const showDupes = ref(false)
+let dupesCache: { src: unknown; out: ReturnType<typeof possibleDuplicates> } | null = null
+const dupes = computed(() => {
+  if (!showDupes.value) return []
+  const src = kitchen.pantry
+  if (dupesCache?.src !== src) dupesCache = { src, out: possibleDuplicates(src) }
+  return dupesCache.out
+})
 
 const filtered = computed(() => {
   const q = normalizeName(search.value)
@@ -404,6 +415,33 @@ async function commit(id: string): Promise<void> {
     <p v-if="kitchen.pantry.length > 0" class="px-1 text-xs text-smoke">
       {{ t('pantry.tip') }}
     </p>
+
+    <!-- Possible duplicates: rows open the merge sheet on the detail page
+         (no view-transition-name here — names stay unique per page) -->
+    <div v-if="canEdit && kitchen.pantry.length > 1" class="space-y-2">
+      <button
+        class="px-1 text-xs font-semibold text-smoke hover:text-ink"
+        :aria-expanded="showDupes"
+        @click="showDupes = !showDupes"
+      >
+        {{ showDupes ? t('pantry.merge.dupesTitle', { n: dupes.length }) : t('pantry.merge.dupesToggle') }}
+        {{ showDupes ? '↑' : '↓' }}
+      </button>
+      <template v-if="showDupes">
+        <p class="px-1 text-xs text-smoke">
+          {{ dupes.length ? t('pantry.merge.dupesIntro') : t('pantry.merge.dupesNone') }}
+        </p>
+        <RouterLink
+          v-for="p in dupes"
+          :key="p.a.id + ':' + p.b.id"
+          :to="`/pantry/${p.b.id}?merge=${p.a.id}`"
+          class="card flex w-full items-center justify-between gap-3 text-left text-sm hover:border-ember/40"
+        >
+          <span class="min-w-0 truncate">{{ p.a.name }} · {{ p.b.name }}</span>
+          <span class="shrink-0 text-xs font-semibold text-ember-700">{{ t('pantry.merge.cta') }} →</span>
+        </RouterLink>
+      </template>
+    </div>
 
     <!-- Archived ingredients: out of the way, one tap to see -->
     <div v-if="kitchen.archivedIngredients.length" class="space-y-2">

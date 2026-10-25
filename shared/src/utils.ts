@@ -8,6 +8,13 @@ import type { Unit } from "./vocab.js";
 export const normalizeName = (s: string): string =>
   s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 
+/**
+ * normalizeName with diacritics folded first, so "Jamón" and "JAMON" share
+ * a key. Used for ingredient aliases and lookups only — stored `nameKey`s
+ * stay on normalizeName (docs/architecture.md §Ingredient identity).
+ */
+export const foldName = (s: string): string => normalizeName(s.normalize("NFKD").replace(/\p{M}/gu, ""));
+
 // ── Unit conversion ─────────────────────────────────────────────────
 // Mass and volume convert within their dimension; each↔dozen converts;
 // containers (case/box/bunch) are vendor-specific sizes and only match

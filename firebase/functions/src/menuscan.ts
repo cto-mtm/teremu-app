@@ -1,7 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
 import { chatCompletion, llmApiKey, llmEnabled, parseModelJson } from "./llm.js";
-import { categorySchema, unitSchema, type Category, type Unit } from "./models.js";
+import { categorySchema, IngredientIndex, normalizeName, unitSchema, type Category, type Unit } from "./models.js";
 
 /**
  * Menu setup AI — the "photo of the printed menu → costed dishes"
@@ -217,6 +217,20 @@ export interface CatalogEntry {
   id: string;
   name: string;
   unit: Unit;
+  /** Learned spellings (foldName keys) — a draft never recreates one. */
+  aliases?: string[];
+}
+
+/** Name → catalog entry, through the same tiered identity lookup as
+ * approval (nameKey, folded name, alias) — a draft never recreates an
+ * ingredient the pantry already knows under another spelling. */
+export function catalogLookup(catalog: CatalogEntry[]): (name: string) => CatalogEntry | undefined {
+  const byId = new Map(catalog.map((c) => [c.id, c]));
+  const index = new IngredientIndex(catalog.map((c) => [c.id, { ...c, nameKey: normalizeName(c.name) }] as const));
+  return (name) => {
+    const id = index.resolve(name);
+    return id ? byId.get(id) : undefined;
+  };
 }
 
 export interface DraftLine {
@@ -251,7 +265,7 @@ export async function draftRecipes(
   // prompt used to ask for — accept both shapes.
   const value = parseModelJson(raw);
   const parsed = draftsResponseSchema.parse(Array.isArray(value) ? { drafts: value } : value);
-  const byName = new Map(catalog.map((c) => [c.name.toLowerCase().trim(), c]));
+  const lookup = catalogLookup(catalog);
   const byDish = new Map(
     parsed.drafts.map((d) => [d.dish.toLowerCase().trim(), d.lines] as const),
   );
@@ -261,7 +275,7 @@ export async function draftRecipes(
     lines: (byDish.get(dish.toLowerCase().trim()) ?? [])
       .filter((l) => l.qty > 0 && (l.match ?? l.name).trim().length > 0)
       .map((l) => {
-        const hit = l.match ? byName.get(l.match.toLowerCase().trim()) : undefined;
+        const hit = l.match ? lookup(l.match) : undefined;
         return {
           ingredientId: hit?.id ?? null,
           name: hit?.name ?? l.name.trim(),

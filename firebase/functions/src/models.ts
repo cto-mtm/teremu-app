@@ -193,6 +193,12 @@ export const ingredientDocSchema = z.object({
   // approved by mistake). Never deleted: past invoices and costs still
   // point at it. A new invoice for it un-archives it. Absent = false.
   archived: z.boolean().optional(),
+  // Other spellings of this ingredient, as foldName keys (language-free,
+  // never shown as labels). Learned when a reviewer links an invoice line
+  // to it in triage and when another ingredient is merged into it;
+  // approval matches on them (docs/architecture.md §Ingredient identity).
+  // .catch: approval and usage safeParse-skip malformed docs.
+  aliases: z.array(z.string()).optional().catch(undefined),
 });
 export type IngredientDoc = z.infer<typeof ingredientDocSchema>;
 
@@ -267,6 +273,21 @@ export const rerateSchema = z.object({
 export const archiveSchema = z.object({
   archived: z.boolean(),
 });
+
+/** POST /ingredients/:id/merge — fold this ingredient into `into`. */
+export const mergeIngredientSchema = z
+  .object({
+    into: z.string().min(1),
+  })
+  .strict();
+
+/** PUT /ingredients/:id/aliases — the owner's edit of the learned
+ * spellings (the only way to undo a wrong triage link). */
+export const aliasesSchema = z
+  .object({
+    aliases: z.array(z.string().max(120)).max(100),
+  })
+  .strict();
 
 /** PUT /ingredients/:id/count — monthly physical-count true-up. */
 export const countSchema = z.object({

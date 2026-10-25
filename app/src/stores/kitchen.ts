@@ -372,6 +372,45 @@ export const useKitchenStore = defineStore('kitchen', () => {
     return res.ok
   }
 
+  /** Fold a duplicate into the ingredient it should have been: the
+   * server repoints recipes, invoice lines and POS days, then deletes
+   * the loser. Recipes changed, so the menu reloads too. */
+  async function mergeIngredient(loserId: string, survivorId: string): Promise<Ingredient | null> {
+    const gen = generation
+    const res = await apiFetch<Ingredient>(
+      `/ingredients/${loserId}/merge`,
+      { method: 'POST', body: JSON.stringify({ into: survivorId }) },
+      ingredientSchema,
+    )
+    if (gen !== generation) return null
+    if (!res.ok) {
+      error.value = res.error
+      return null
+    }
+    ingredients.value = replaceById(
+      ingredients.value.filter((i) => i.id !== loserId),
+      survivorId,
+      res.data,
+    )
+    void refresh(undefined, ['ingredients', 'menu'])
+    return res.data
+  }
+
+  /** Replace the learned spellings (undo a wrong triage link). */
+  async function setAliases(ingredientId: string, aliases: string[]): Promise<boolean> {
+    const res = await apiFetch<Ingredient>(
+      `/ingredients/${ingredientId}/aliases`,
+      { method: 'PUT', body: JSON.stringify({ aliases }) },
+      ingredientSchema,
+    )
+    if (res.ok) {
+      ingredients.value = replaceById(ingredients.value, ingredientId, res.data)
+    } else {
+      error.value = res.error
+    }
+    return res.ok
+  }
+
   /** Archive (or restore) a dish or prep: `active` off, everything else kept. */
   async function setMenuItemActive(id: string, active: boolean): Promise<boolean> {
     const item = menuItems.value.find((m) => m.id === id)
@@ -443,6 +482,8 @@ export const useKitchenStore = defineStore('kitchen', () => {
     setCategory,
     setNotInRecipes,
     setIngredientArchived,
+    mergeIngredient,
+    setAliases,
     setMenuItemActive,
     trueUp,
   }

@@ -6,6 +6,7 @@ import {
   currencySchema,
   DEFAULT_CURRENCY,
   docTypeSchema,
+  foldName,
   normalizeName,
   pairSubcategory,
   SUBCATEGORIES,
@@ -78,7 +79,12 @@ export interface OcrResult {
 
 /** Everything about the restaurant the extraction is allowed to know. */
 export interface ExtractionContext {
+  /** Catalog names, plus each ingredient's alias keys as extra strings
+   * (same flat list — the prompt format never changes). */
   knownIngredients?: string[];
+  /** Alias key → canonical ingredient name, so a `match` on an alias
+   * renames the line to the ingredient it belongs to. */
+  aliasNames?: Record<string, string>;
   restaurantName?: string | null;
   /** The restaurant's base currency — a hint line, never an override. */
   baseCurrency?: Currency;
@@ -167,6 +173,7 @@ function sanitize(
   knownIngredients: string[],
   restaurantName: string | null,
   notVendorNames: string[] = [],
+  aliasNames: Record<string, string> = {},
 ): OcrResult {
   // Deterministic backstop for the prompt's buyer/seller rule: when the
   // model still hands back the restaurant's own name as the vendor
@@ -180,12 +187,18 @@ function sanitize(
   // AI catalog matching: when the model recognized an existing product,
   // adopt the canonical name so approval merges instead of duplicating
   // ("TOMATE ROMA 25#" lands on "Roma Tomatoes", not a new ingredient).
-  const canonical = new Map(knownIngredients.map((n) => [n.toLowerCase().trim(), n]));
+  // Real names first; an alias never overrides one (the hint list carries
+  // alias strings too — they map back to their ingredient's name).
+  const aliases = new Map(Object.entries(aliasNames));
+  const canonical = new Map(knownIngredients.filter((n) => !aliases.has(n)).map((n) => [n.toLowerCase().trim(), n]));
+  for (const [alias, name] of aliases) if (!canonical.has(alias)) canonical.set(alias, name);
+  const canonicalOf = (match: string): string | undefined =>
+    canonical.get(match.toLowerCase().trim()) ?? aliases.get(foldName(match));
   const items: LineItem[] = parsed.lineItems
     .filter((l) => l.name.trim().length > 0)
     .map(({ match, ...l }) => ({
       ...l,
-      name: (match && canonical.get(match.toLowerCase().trim())) || l.name.trim(),
+      name: (match && canonicalOf(match)) || l.name.trim(),
       // A crossed pair (meat + "fruit") degrades to null, never an error.
       subcategory: pairSubcategory(l.category, l.subcategory),
       // business fallback: derive a missing line total from qty × price
@@ -286,7 +299,13 @@ export function toResult(raw: string, context: ExtractionContext): OcrResult {
   // Stage 1 verdict: not a purchase document (or the model is guessing).
   if (parsed.kind === "other" || parsed.confidence < 0.3)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: parsed.confidence, printedFxRate: null, notDocument: true };
-  return sanitize(parsed, context.knownIngredients ?? [], context.restaurantName ?? null, context.pack?.notVendorNames);
+  return sanitize(
+    parsed,
+    context.knownIngredients ?? [],
+    context.restaurantName ?? null,
+    context.pack?.notVendorNames,
+    context.aliasNames,
+  );
 }
 
 /**

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
@@ -18,6 +18,7 @@ import Sparkline from '../components/Sparkline.vue'
 import MiniBars from '../components/MiniBars.vue'
 import BaseButton from '../components/BaseButton.vue'
 import LinkToRecipeSheet from '../components/LinkToRecipeSheet.vue'
+import MergeIngredientSheet from '../components/MergeIngredientSheet.vue'
 
 /**
  * One ingredient end to end: theoretical stock, price trend, the recipes
@@ -68,6 +69,46 @@ async function setArchived(archived: boolean): Promise<void> {
   if (!ok) alert(t('pantry.archive.failed'))
   else if (archived) void router.push('/pantry')
 }
+// ── Identity: merge a duplicate away, and the spellings it answers to ──
+const mergeOpen = ref(false)
+const mergePreselect = ref<string | null>(null)
+// /pantry/:id?merge=<other> (the pantry's duplicates list) opens the
+// sheet with the other ingredient picked as the survivor.
+watch(
+  () => [route.query.merge, ingredient.value?.id] as const,
+  ([merge, id]) => {
+    if (typeof merge !== 'string' || !id || !canDismiss.value || ingredient.value?.archived) return
+    mergePreselect.value = merge
+    mergeOpen.value = true
+  },
+  { immediate: true },
+)
+function openMerge(): void {
+  mergePreselect.value = null
+  mergeOpen.value = true
+}
+const mergeBusy = ref(false)
+async function merge(survivor: { id: string }): Promise<void> {
+  const loser = ingredient.value
+  if (!loser) return
+  mergeBusy.value = true
+  const merged = await kitchen.mergeIngredient(loser.id, survivor.id)
+  mergeBusy.value = false
+  if (!merged) return alert(t('pantry.merge.failed'))
+  mergeOpen.value = false
+  void invoicesStore.refresh() // invoice lines were repointed
+  void router.replace('/pantry/' + survivor.id)
+}
+const aliasBusy = ref(false)
+async function removeAlias(alias: string): Promise<void> {
+  const ing = ingredient.value
+  if (!ing) return
+  aliasBusy.value = true
+  const ok = await kitchen.setAliases(ing.id, (ing.aliases ?? []).filter((a) => a !== alias))
+  aliasBusy.value = false
+  if (!ok) alert(t('pantry.aliases.failed'))
+}
+
 const history = computed(() =>
   ingredient.value ? priceHistory(invoicesStore.invoices, ingredient.value) : [],
 )
@@ -279,6 +320,31 @@ const suppliers = computed(() => {
       </div>
     </div>
 
+    <div class="card space-y-2">
+      <div class="text-sm font-semibold">{{ t('pantry.aliases.title') }}</div>
+      <p class="text-xs text-smoke">
+        {{ ingredient.aliases?.length ? t('pantry.aliases.intro') : t('pantry.aliases.empty') }}
+      </p>
+      <div v-if="ingredient.aliases?.length" class="flex flex-wrap gap-1.5">
+        <span
+          v-for="a in ingredient.aliases"
+          :key="a"
+          class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-xs"
+        >
+          <span>{{ a }}</span>
+          <button
+            v-if="canDismiss"
+            class="text-smoke hover:text-coral disabled:opacity-50"
+            :disabled="aliasBusy"
+            :aria-label="t('pantry.aliases.remove', { alias: a })"
+            @click="removeAlias(a)"
+          >
+            ×
+          </button>
+        </span>
+      </div>
+    </div>
+
     <div v-if="ingredient.archived" class="card space-y-2" role="status">
       <p class="text-sm font-semibold">{{ t('pantry.archive.badge') }}</p>
       <p class="text-xs text-smoke">{{ t('pantry.archive.intro') }}</p>
@@ -295,5 +361,15 @@ const suppliers = computed(() => {
     >
       {{ t('pantry.archive.action') }}
     </BaseButton>
+    <BaseButton v-if="canDismiss && !ingredient.archived" variant="ghost" class="w-full" @click="openMerge">
+      {{ t('pantry.merge.action') }}
+    </BaseButton>
+    <MergeIngredientSheet
+      v-model="mergeOpen"
+      :ingredient="ingredient"
+      :preselect="mergePreselect"
+      :busy="mergeBusy"
+      @confirm="merge"
+    />
   </div>
 </template>

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ingredientSpend,
   isFoodInvoice,
+  ingredientResolver,
+  possibleDuplicates,
   pantryValue,
   priceChangePct,
   realtimeSpend,
   recipesUsing,
+  receiptsForIngredient,
   reconcileDeliveryNotes,
+  suggestIngredients,
   unusedIngredients,
 } from './domain'
 import type { Ingredient, Invoice, MenuItem } from './types'
@@ -158,5 +163,103 @@ describe('unusedIngredients', () => {
   it('leaves out cleaning supplies and what the owner marked "not in recipes"', () => {
     const ings = [ing('bleach', { category: 'cleaning' }), ing('bags', { notInRecipes: true }), ing('salt')]
     expect(unusedIngredients(ings, []).map((i) => i.id)).toEqual(['salt'])
+  })
+})
+
+// ── Ingredient identity (docs/architecture.md §Ingredient identity) ──
+
+const pantryIng = (id: string, name: string, over: Partial<Ingredient> = {}): Ingredient =>
+  ing({ id, name, nameKey: name.toLowerCase().replace(/[^a-z0-9 ]/g, ''), category: 'meat', ...over })
+
+describe('receiptsForIngredient (alias-aware)', () => {
+  const jamon = pantryIng('jam', 'Jamón ibérico', { nameKey: 'jamn ibrico', aliases: ['jamon bellota'] })
+
+  it('matches id-less lines by folded name and by alias', () => {
+    const rows = receiptsForIngredient(
+      [inv({ lineItems: [line('JAMON IBERICO', 30), line('Jamon bellota', 40), line('Chorizo', 5)] })],
+      jamon,
+    )
+    expect(rows.map((r) => r.unitPrice)).toEqual([30, 40])
+  })
+
+  it('never claims a line resolved to a different ingredient', () => {
+    const rows = receiptsForIngredient([inv({ lineItems: [{ ...line('Jamón ibérico', 30), ingredientId: 'other' }] })], jamon)
+    expect(rows).toHaveLength(0)
+  })
+})
+
+describe('ingredientSpend', () => {
+  it('groups id-less "Jamón" and "JAMON" into one row', () => {
+    const rows = ingredientSpend([inv({ lineItems: [line('Jamón', 10), line('JAMON', 15)] })])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].total).toBe(25)
+  })
+})
+
+describe('ingredientResolver', () => {
+  const matchIngredientByName = (name: string, all: Ingredient[]) => ingredientResolver(all)(name)
+  const pork = pantryIng('pork', 'Pork chop', { aliases: ['prk chop'] })
+  const jamon = pantryIng('jam', 'Jamón', { nameKey: 'jamn' })
+  const oldBeef = pantryIng('beef-old', 'Beef', { archived: true })
+  const beef = pantryIng('beef', 'Beef')
+
+  it('matches by nameKey, folded name and alias', () => {
+    const all = [pork, jamon]
+    expect(matchIngredientByName('PORK CHOP', all)?.id).toBe('pork')
+    expect(matchIngredientByName('JAMON', all)?.id).toBe('jam')
+    expect(matchIngredientByName('Prk. Chop', all)?.id).toBe('pork')
+  })
+
+  it('prefers a live ingredient over an archived one', () => {
+    expect(matchIngredientByName('beef', [oldBeef, beef])?.id).toBe('beef')
+  })
+
+  it("never lets another ingredient's alias shadow an exact name", () => {
+    const thief = pantryIng('thief', 'Lomo', { aliases: ['pork chop'] })
+    expect(matchIngredientByName('PORK CHOP', [thief, pork])?.id).toBe('pork')
+  })
+
+  it('misses an unknown name', () => {
+    expect(matchIngredientByName('Salmon', [pork, jamon])).toBeNull()
+    expect(matchIngredientByName('  ', [pork])).toBeNull()
+  })
+})
+
+describe('suggestIngredients', () => {
+  const pantry = [
+    pantryIng('a', 'Pork chop'), // 0.62
+    pantryIng('b', 'Pork chops', { category: 'produce' }), // 0.55
+    pantryIng('c', 'Pork chp'), // 1
+    pantryIng('d', 'PORK CHP (fresh)'),
+    pantryIng('e', 'Pork chp', { archived: true }),
+    pantryIng('f', 'Olive oil'),
+  ]
+
+  it('keeps candidates above the floor, same category first, top 3, no archived', () => {
+    const got = suggestIngredients('PORK CHP', 'produce', pantry).map((s) => s.ingredient.id)
+    expect(got[0]).toBe('b')
+    expect(got).toHaveLength(3)
+    expect(got).not.toContain('e')
+    expect(got).not.toContain('f')
+  })
+
+  it('returns nothing below the floor', () => {
+    expect(suggestIngredients('Salmon fillet', 'meat', pantry)).toEqual([])
+  })
+})
+
+describe('possibleDuplicates', () => {
+  it('lists each close pair once, same category only, archived excluded, closest first', () => {
+    const pantry = [
+      pantryIng('1', 'Chuleta de cerdo'),
+      pantryIng('2', 'CHULETA CERDO 1KG'),
+      pantryIng('3', 'Chuleta de cerdo', { category: 'produce' }),
+      pantryIng('4', 'Croquetas de jamón'),
+      pantryIng('5', 'CROQUETAS JAMON'),
+      pantryIng('6', 'Croquetas jamón', { archived: true }),
+      pantryIng('7', 'Olive oil'),
+    ]
+    const pairs = possibleDuplicates(pantry).map((p) => [p.a.id, p.b.id].sort().join('-'))
+    expect(pairs).toEqual(['4-5', '1-2'])
   })
 })

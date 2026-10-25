@@ -80,6 +80,11 @@ export const SCAN_SAMPLES = {
     chromium: path.join(SAMPLES, 'receipt-beverage.jpg'),
     mobile: path.join(SAMPLES, 'receipt-spanish-factura.jpg'),
   },
+  /** triage/link-ingredient.spec.ts */
+  link: {
+    chromium: path.join(SAMPLES, 'receipt-glare-shadow.jpg'),
+    mobile: path.join(SAMPLES, 'receipt-handwritten.jpg'),
+  },
   /** vendors/vendor-detail.spec.ts */
   vendor: {
     chromium: path.join(SAMPLES, 'receipt-demo-taqueria-produce.jpg'),

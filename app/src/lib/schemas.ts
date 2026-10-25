@@ -137,6 +137,8 @@ export const ingredientSchema = z.object({
   notInRecipes: z.boolean().optional().catch(undefined),
   // Hidden from the pantry and recipe pickers; kept for history.
   archived: z.boolean().optional().catch(undefined),
+  // Other spellings it answers to (foldName keys, never shown as names).
+  aliases: z.array(z.string()).optional().catch(undefined),
 })
 
 export const recipeLineSchema = z.object({

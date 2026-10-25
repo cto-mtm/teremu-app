@@ -3,3 +3,5 @@
 export * from "./vocab.js";
 export * from "./utils.js";
 export * from "./cost.js";
+export * from "./similarity.js";
+export * from "./identity.js";

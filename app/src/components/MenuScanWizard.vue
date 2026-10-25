@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { currencySymbol } from '../i18n'
 import { apiFetch, apiUpload } from '../lib/api'
 import { compressReceipt } from '../lib/compress'
-import { normalizeName } from '../lib/domain'
+import { foldName, ingredientKeys, normalizeName } from '../lib/domain'
 import { convertQty } from '../lib/units'
 import { menuScanResponseSchema, recipeDraftsResponseSchema } from '../lib/schemas'
 import { useKitchenStore } from '../stores/kitchen'
@@ -207,9 +207,11 @@ async function saveAll(withRecipes: boolean): Promise<void> {
   errorMsg.value = ''
   saveProgress.value = 0
   // New-ingredient cache: the same proposed ingredient across several
-  // dishes ("Olive Oil") must be created exactly once.
+  // dishes ("Olive Oil") must be created exactly once. Keyed by every
+  // key an ingredient answers to (folded name + aliases), so a draft
+  // never recreates an aliased ingredient.
   const created = new Map<string, string>(
-    kitchen.ingredients.map((i) => [normalizeName(i.name), i.id]),
+    kitchen.ingredients.flatMap((i) => ingredientKeys(i).map((k) => [k, i.id] as const)),
   )
   let ok = 0
   const createdFromSeed: { key: string; menuItemId: string }[] = []
@@ -219,8 +221,8 @@ async function saveAll(withRecipes: boolean): Promise<void> {
       for (const line of dish.lines) {
         let ingredientId = line.ingredientId
         if (!ingredientId) {
-          const key = normalizeName(line.name)
-          ingredientId = created.get(key) ?? null
+          const key = foldName(line.name)
+          ingredientId = created.get(key) ?? created.get(normalizeName(line.name)) ?? null
           if (!ingredientId) {
             const ing = await kitchen.addIngredient(line.name, stockUnitFor(line.unit), line.category)
             if (!ing) continue // duplicate race or failure — skip the line, keep the dish

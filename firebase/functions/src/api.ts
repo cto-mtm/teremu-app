@@ -15,7 +15,9 @@ import {
   completePosOAuthSchema,
   countSchema,
   recipeUseSchema,
+  aliasesSchema,
   archiveSchema,
+  mergeIngredientSchema,
   rerateSchema,
   createIngredientSchema,
   DEFAULT_LOCALE,
@@ -59,6 +61,7 @@ import {
 import { toNodeHandler } from "@mtmcya/assistant/node";
 import { assistant, type AssistantPrincipal } from "./assistant/manifest.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
+import { mergeIngredients, setAliases } from "./merge.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
 import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, monthKey, PLAN_LIMITS, planOf, refundScan } from "./plan.js";
 import {
@@ -670,7 +673,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
   // ── ingredients ───────────────────────────────────────────────
   if (head === "ingredients") {
     if (m === "GET" && seg.length === 1) {
-      if (!can(member, "pantry") && !can(member, "menu")) return forbidden(res);
+      // Triage too: linking an invoice line to an existing ingredient
+      // needs the catalog (names, units, stock) for the picker.
+      if (!can(member, "pantry") && !can(member, "menu") && !can(member, "triage")) return forbidden(res);
       const snap = await col("ingredients").orderBy("name").get();
       return json(res, 200, snap.docs.map(withId));
     }
@@ -729,6 +734,19 @@ async function route(req: Request, res: Response): Promise<unknown> {
       await ref.update({ archived });
       const snap = await ref.get();
       return json(res, 200, { id, ...snap.data() });
+    }
+    if (m === "POST" && id && action === "merge") {
+      if (!can(member, "pantry", "edit")) return forbidden(res);
+      const { into } = mergeIngredientSchema.parse(req.body);
+      if (into === id) return json(res, 400, { error: "same_ingredient" });
+      const merged = await mergeIngredients(rid, id, into);
+      return json(res, 200, { id: into, ...merged });
+    }
+    if (m === "PUT" && id && action === "aliases") {
+      if (!can(member, "pantry", "edit")) return forbidden(res);
+      const { aliases } = aliasesSchema.parse(req.body);
+      const updated = await setAliases(rid, id, aliases);
+      return json(res, 200, { id, ...updated });
     }
     if (m === "PUT" && id && action === "count") {
       if (!can(member, "pantry", "edit")) return forbidden(res);
@@ -812,6 +830,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         id: d.id,
         name: d.get("name") as string,
         unit: d.get("unit") as CatalogEntry["unit"],
+        ...(Array.isArray(d.get("aliases")) ? { aliases: d.get("aliases") as string[] } : {}),
       }));
       const drafts = await draftRecipes(dishes, catalog);
       return json(res, 200, { drafts });
