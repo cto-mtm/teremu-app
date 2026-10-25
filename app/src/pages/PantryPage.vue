@@ -6,6 +6,7 @@ import { armHero, heroStyle } from '../composables/useHero'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
+import { whatsappLink } from '../lib/phone'
 import { groceryList, normalizeName, possibleDuplicates, productionPlan, vendorKey, type GroceryRow } from '../lib/domain'
 import { CATEGORIES, type Category, type Unit } from '../lib/types'
 import BaseButton from '../components/BaseButton.vue'
@@ -157,13 +158,31 @@ async function emailOrder(vendorName: string, rows: GroceryRow[]): Promise<void>
   }
 }
 
-function whatsappUrl(vendorName: string, rows: GroceryRow[]): string {
-  const phone = contactFor(vendorName)?.phone?.replace(/[^\d]/g, '') ?? ''
-  const text = [
+/** The order as text — what WhatsApp opens with and what "copy order" copies. */
+function orderText(vendorName: string, rows: GroceryRow[]): string {
+  return [
     `${t('pantry.grocery.title')} — ${vendorName}:`,
     ...orderLines(rows).map((l) => `• ${l.name}: ${l.qty} ${t('common.unit.' + l.unit)}`),
   ].join('\n')
-  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
+}
+
+// A phone typed without a country code gets the restaurant's (B5).
+const dialCode = computed(() => auth.profile?.countryProfile?.dialCode ?? null)
+function whatsappUrl(vendorName: string, rows: GroceryRow[]): string {
+  return whatsappLink(contactFor(vendorName)?.phone ?? '', dialCode.value, orderText(vendorName, rows))
+}
+
+// Vendors with neither email nor WhatsApp (most US distributors take orders
+// on their own portal): the order text goes on the clipboard instead.
+const copiedVendor = ref<string | null>(null)
+async function copyOrder(vendorName: string, rows: GroceryRow[]): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(orderText(vendorName, rows))
+    copiedVendor.value = vendorName
+    setTimeout(() => (copiedVendor.value = null), 2500)
+  } catch {
+    alert(t('pantry.grocery.copyFailed'))
+  }
 }
 
 async function copyList(): Promise<void> {
@@ -499,7 +518,7 @@ async function commit(id: string): Promise<void> {
                   {{ sentVendor === group.vendor ? t('pantry.grocery.orderSent') : t('pantry.grocery.sendEmail') }}
                 </button>
                 <a
-                  v-if="contactFor(group.vendor)?.phone"
+                  v-if="whatsappUrl(group.vendor, group.rows)"
                   :href="whatsappUrl(group.vendor, group.rows)"
                   target="_blank"
                   rel="noopener"
@@ -507,6 +526,12 @@ async function commit(id: string): Promise<void> {
                 >
                   WhatsApp
                 </a>
+                <button
+                  class="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-smoke hover:bg-gray-200"
+                  @click="copyOrder(group.vendor, group.rows)"
+                >
+                  {{ copiedVendor === group.vendor ? t('pantry.grocery.orderCopied') : t('pantry.grocery.copyOrder') }}
+                </button>
               </div>
             </div>
             <p

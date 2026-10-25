@@ -29,7 +29,7 @@ const SANS = "Arial, Helvetica, sans-serif";
 const MONO = "Consolas, 'Courier New', monospace";
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
-const UNIT_PRINT: Record<string, string> = { each: "ea", dozen: "doz", bunch: "bunch", case: "case", box: "box" };
+const UNIT_PRINT: Record<string, string> = { each: "ea", dozen: "doz", bunch: "bunch", case: "case", box: "box", lb: "lb", oz: "oz", gal: "gal", floz: "fl oz" };
 const printDate = (iso: string): string =>
   new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(
     new Date(`${iso}T12:00:00Z`),
@@ -75,8 +75,18 @@ function render(spec: ProfileSpec, p: PendingSpec): Buffer {
   const R = PAPER.x + PAPER.w - 52;
   let y = PAPER.y + 96;
 
-  // Header
-  text(ctx, vendor.name.toUpperCase(), L, y, `bold 40px ${SANS}`);
+  // Header. The vendor name shrinks when it would run into the document
+  // title on the right ("CREDIT MEMO" is wider than "INVOICE").
+  const title = p.docType === "credit_memo" ? "CREDIT MEMO" : "INVOICE";
+  ctx.font = `bold 22px ${SANS}`;
+  const titleLeft = R - ctx.measureText(title).width - 36;
+  let nameSize = 40;
+  for (;;) {
+    ctx.font = `bold ${nameSize}px ${SANS}`;
+    if (L + ctx.measureText(vendor.name.toUpperCase()).width <= titleLeft || nameSize <= 24) break;
+    nameSize -= 2;
+  }
+  text(ctx, vendor.name.toUpperCase(), L, y, `bold ${nameSize}px ${SANS}`);
   y += 30;
   if (print.tagline) {
     text(ctx, print.tagline, L, y, `italic 19px ${SANS}`, "left", "#57534e");
@@ -90,7 +100,7 @@ function render(spec: ProfileSpec, p: PendingSpec): Buffer {
 
   // Invoice block (right)
   let hy = PAPER.y + 90;
-  text(ctx, "INVOICE", R, hy, `bold 22px ${SANS}`, "right");
+  text(ctx, title, R, hy, `bold 22px ${SANS}`, "right");
   hy += 30;
   for (const [k, v] of [
     ["No.", print.invoiceNo],
@@ -142,7 +152,7 @@ function render(spec: ProfileSpec, p: PendingSpec): Buffer {
   }
   rule(ctx, tl, R, y - 18, 1.5);
   y += 10;
-  text(ctx, "TOTAL", tl, y, `bold 24px ${SANS}`);
+  text(ctx, p.docType === "credit_memo" ? "TOTAL CREDIT" : "TOTAL", tl, y, `bold 24px ${SANS}`);
   text(ctx, money(subtotal + tax), R, y, `bold 26px ${MONO}`, "right");
   rule(ctx, tl, R, y + 14, 2.5);
   rule(ctx, tl, R, y + 20, 1);

@@ -117,6 +117,8 @@ export interface PendingSpec {
   vendor: string;
   /** The date PRINTED on the photo — the review screen must match it. */
   docDate: string;
+  /** A credit memo (returned goods) instead of an invoice; default invoice. */
+  docType?: "invoice" | "credit_memo";
   /** Printed header bits for the renderer (ignored for real photos). */
   print?: {
     invoiceNo: string;
@@ -626,7 +628,7 @@ export function buildProfile(spec: ProfileSpec, opts: BuildOptions): BuiltProfil
       photo: p.photo,
       doc: {
         status: "needs_review",
-        docType: "invoice",
+        docType: p.docType ?? "invoice",
         vendorName: vendor(p.vendor).name,
         invoiceDate: p.docDate,
         imagePath,

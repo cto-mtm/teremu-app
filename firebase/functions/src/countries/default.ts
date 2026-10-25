@@ -19,6 +19,7 @@ export const DEFAULT_PACK: CountryPack = {
   pricesIncludeTax: false,
   unitSystem: "metric",
   dateOrder: "DMY",
+  weekStartsOn: 1,
 };
 
 /**

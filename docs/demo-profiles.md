@@ -9,13 +9,13 @@ re-implementing the data model. Read this before touching anything under
 Each profile is **one restaurant/location**: its vendors, ingredients, a menu
 with recipes and sub-recipes, 8 weeks of approved invoices with price
 history, daily sales with `itemsSold`, tagged expenses, vendor contacts, a
-pantry, and 1–2 scans waiting in Triage with a real printed-receipt photo.
+pantry, and 1–3 documents waiting in Triage with a real printed-receipt photo (the taqueria's third is a credit memo).
 Every profile is English-locale, USD, plan Pro (full history window).
 
 | Profile | Business | Hero dish | The story on Pulse |
 |---|---|---|---|
 | `harbor-bistro` | **The Harbor Bistro** — a seafood bistro | Seared Salmon $27 | Olive oil +12.0% (seeded). Approving the Ocean Blue receipt in Triage rolls salmon $21.40 → $23.08 (+7.9%) and the salmon slips to 71.5% vs its 72% target. Food cost (week) 29.9%. |
-| `taqueria` | **Baja Norte Taquería** — Baja fish & shrimp tacos, lunch-heavy | Grilled Shrimp Taco $5.75 | Seeded creep: Gulf shrimp +9.1% and Hass avocados +7.4% (both alerts); the shrimp taco sits at 65.1% vs 66%. The pending receipts carry no new moves, so approving them leaves the alerts standing. |
+| `taqueria` | **Baja Norte Taquería** — Baja fish & shrimp tacos, lunch-heavy; **US units** (lb / oz / gal) and a vendor with a legal suffix | Grilled Shrimp Taco $5.75 | Seeded creep: Gulf shrimp +9.1% ($/lb) and Hass avocados +7.4% (both alerts); the shrimp taco sits just under its 66% target. Two pending invoices carry no new moves, so approving them leaves the alerts standing; a third pending document is a **credit memo** for returned scallops (docs/us-market-readiness.md B6). |
 | `pastry-stall` | **Sunrise Lane Pastry** — weekend-market baker | Pain au Chocolat $4.25 | Seeded: strawberries +7.4%, Fruit Tart under target. The pending dairy receipt (a real thermal-paper photo) carries the butter hike $8.20 → $8.90: approving it raises the alert (+8.5%) and tips the pain au chocolat to 81.8% vs 82%. Grocery list and production plan have rows. |
 
 The Harbor Bistro is a port of the marketing repo's original

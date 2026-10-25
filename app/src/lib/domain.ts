@@ -229,17 +229,32 @@ export function priceChangePct(ing: Ingredient): number | null {
 }
 
 export interface WeekPoint {
-  weekStart: string // YYYY-MM-DD (Monday)
+  weekStart: string // YYYY-MM-DD (the restaurant's first day of the week)
   expenses: number
   revenue: number
 }
 
-function startOfWeek(d: Date): Date {
+// ── Week start (docs/us-market-readiness.md B7) ─────────────────────
+// A US week runs Sunday to Saturday; most of the world's Monday to
+// Sunday. The country pack says which (`countryProfile.weekStartsOn`);
+// the auth store applies it once per profile load, the way the base
+// currency is applied, so every weekly series buckets the same way.
+export type WeekStart = 0 | 1
+let WEEK_STARTS_ON: WeekStart = 1
+
+export function setWeekStart(day: WeekStart): void {
+  WEEK_STARTS_ON = day
+}
+
+/** Midnight of the week containing `d`, for a given first weekday. */
+export function startOfWeekFor(d: Date, weekStartsOn: WeekStart): Date {
   const x = new Date(d)
   x.setHours(0, 0, 0, 0)
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)) // Monday
+  x.setDate(x.getDate() - ((x.getDay() - weekStartsOn + 7) % 7))
   return x
 }
+
+const startOfWeek = (d: Date): Date => startOfWeekFor(d, WEEK_STARTS_ON)
 
 /**
  * What a food invoice spent on FOOD: the sum of its lines, which is what

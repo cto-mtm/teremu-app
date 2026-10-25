@@ -8,6 +8,7 @@ import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
 import { detectRegion } from '../lib/regions'
 import { currentLocale, setCurrency, setLocale, type SupportedLocale } from '../i18n'
 import { NO_TAX, type TaxSetting } from '@teremu/shared'
+import { setWeekStart } from '../lib/domain'
 import type { Me, PermArea, PermLevel } from '../lib/types'
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 }
@@ -78,6 +79,8 @@ export const useAuthStore = defineStore('auth', () => {
       // next request carries the right header.
       setActiveRid(res.data.restaurantId)
       syncLocale(res.data)
+      // Weekly charts bucket by the restaurant's first weekday (B7).
+      setWeekStart(res.data.countryProfile?.weekStartsOn ?? 1)
       void prefillRegion(res.data)
     } else {
       error.value = res.error

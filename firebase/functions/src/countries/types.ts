@@ -45,6 +45,11 @@ export interface CountryPack {
   /** How a numeric date is written on paper and in exports: 03/04 is 3 April
    * (DMY) or March 4 (MDY). Drives the CSV import and the OCR date hint (B2). */
   dateOrder: "DMY" | "MDY";
+  /** International dialling code ("34", "1") — a vendor phone typed without
+   * one gets the restaurant's for WhatsApp links (B5). Omit when unknown. */
+  dialCode?: string;
+  /** First day of the week on charts: 0 = Sunday (US), 1 = Monday (B7). */
+  weekStartsOn: 0 | 1;
 }
 
 export interface PulseCardSpec {
@@ -71,4 +76,6 @@ export interface CountryProfile {
   salesTaxRate: number | null;
   unitSystem: "metric" | "imperial";
   dateOrder: "DMY" | "MDY";
+  dialCode: string | null;
+  weekStartsOn: 0 | 1;
 }

@@ -14,6 +14,8 @@ describe("Spain pack", () => {
     expect(pack.pricesIncludeTax).toBe(true);
     expect(pack.salesTaxRate).toBe(0.1);
     expect(pack.unitSystem).toBe("metric");
+    expect(pack.dateOrder).toBe("DMY");
+    expect(pack.dialCode).toBe("34");
   });
 
   it("folds IVA and shipping lines into the total", () => {

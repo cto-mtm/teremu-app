@@ -4,6 +4,7 @@ import {
   foodSpend,
   ingredientSpend,
   reconciliationCandidates,
+  startOfWeekFor,
   isFoodInvoice,
   ingredientResolver,
   possibleDuplicates,
@@ -311,5 +312,22 @@ describe('delivery notes and credit memos (A8)', () => {
     expect(row?.match?.id).toBe('bill')
     expect(reconciliationCandidates([note, credit, bill], note).map((i) => i.id)).toEqual(['bill'])
     expect(reconcileDeliveryNotes([note, credit])[0]?.match).toBeFalsy()
+  })
+})
+
+describe('startOfWeekFor (docs/us-market-readiness.md B7)', () => {
+  // Wednesday 2026-10-28.
+  const wed = new Date(2026, 9, 28, 15, 30)
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  it('starts a US week on Sunday and everyone else\'s on Monday', () => {
+    expect(iso(startOfWeekFor(wed, 0))).toBe('2026-10-25')
+    expect(iso(startOfWeekFor(wed, 1))).toBe('2026-10-26')
+  })
+
+  it('keeps a Sunday in the Sunday-start week and sends it back a week on Monday-start', () => {
+    const sun = new Date(2026, 9, 25, 9)
+    expect(iso(startOfWeekFor(sun, 0))).toBe('2026-10-25')
+    expect(iso(startOfWeekFor(sun, 1))).toBe('2026-10-19')
   })
 })

@@ -119,7 +119,10 @@ const es = {
     orderSent: 'Enviado ✓',
     orderFailed: 'No se pudo enviar el pedido.',
     orderLimit: 'Has alcanzado el límite diario de correos. Inténtalo mañana o envía el pedido por WhatsApp.',
-    noContact: 'Añade correo o WhatsApp en la página del proveedor para pedir directo.',
+    noContact: 'Añade correo o WhatsApp en la página del proveedor para pedir directo, o copia el pedido y pégalo donde pidas.',
+    copyOrder: 'Copiar pedido',
+    orderCopied: 'Copiado ✓',
+    copyFailed: 'No se pudo copiar. Selecciona el texto y cópialo a mano.',
   },
 }
 
@@ -245,7 +248,10 @@ const en: typeof es = {
     orderSent: 'Sent ✓',
     orderFailed: 'Could not send the order.',
     orderLimit: "You've hit today's email limit. Try again tomorrow or send the order by WhatsApp.",
-    noContact: 'Add an email or WhatsApp on the vendor page to order directly.',
+    noContact: 'Add an email or WhatsApp on the vendor page to order directly, or copy the order and paste it wherever you order.',
+    copyOrder: 'Copy order',
+    orderCopied: 'Copied ✓',
+    copyFailed: 'Could not copy. Select the text and copy it by hand.',
   },
 }
 

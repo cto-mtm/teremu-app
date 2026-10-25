@@ -30,6 +30,9 @@ describe("United States pack", () => {
     expect(pack.pricesIncludeTax).toBe(false);
     expect(pack.salesTaxRate).toBeUndefined();
     expect(pack.unitSystem).toBe("imperial");
+    expect(pack.dateOrder).toBe("MDY");
+    expect(pack.dialCode).toBe("1");
+    expect(pack.weekStartsOn).toBe(0);
   });
 
   it("tells the model about MM/DD dates, can sizes, pack sizes and catch weight", () => {

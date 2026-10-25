@@ -387,6 +387,8 @@ export const countryProfileSchema = z.object({
   salesTaxRate: z.number().nullable().optional().catch(null),
   unitSystem: z.enum(['metric', 'imperial']).optional().catch('metric'),
   dateOrder: z.enum(['DMY', 'MDY']).optional().catch('DMY'),
+  dialCode: z.string().nullable().optional().catch(null),
+  weekStartsOn: z.union([z.literal(0), z.literal(1)]).optional().catch(1),
 })
 
 /** GET /me — resolves (and on first sign-in bootstraps) membership for

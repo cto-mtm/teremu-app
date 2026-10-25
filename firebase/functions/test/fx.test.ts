@@ -135,6 +135,8 @@ describe("countries — the default pack", () => {
       salesTaxRate: null,
       unitSystem: "metric",
       dateOrder: "DMY",
+      dialCode: null,
+      weekStartsOn: 1,
     });
     // Nothing in the profile is a function or a provider — it is JSON.
     expect(JSON.parse(JSON.stringify(profile))).toEqual(profile);

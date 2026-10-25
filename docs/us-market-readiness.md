@@ -160,10 +160,33 @@ loosening the manifest href check to Vite's normalised path.
   is sent with `unsubscribeTopic` so the shared mailer adds one-click
   unsubscribe and honours the opt-out.
 
-Open in Tier B: **B5** supplier ordering (+1 / E.164 and an email
-alternative to WhatsApp), **B6** Harbor Bistro in imperial units with a
-rendered Sysco-style receipt, **B7** Sunday week start for `en-US`,
-**B8** the forwarding-address inbox for Microsoft 365 restaurants.
+- **B5** `dialCode` on the country packs and `countryProfile`;
+  `src/lib/phone.ts` turns a vendor phone typed without a country code
+  into an international WhatsApp number using the restaurant's code
+  (unit-tested), in the grocery list and the providers panel. Each
+  vendor's order has a **copy order** button next to email and WhatsApp,
+  for distributors that take orders on their own portal; the no-contact
+  hint says so. No SMS: that would need a provider and a per-message cost.
+
+- **B6** on the **taqueria** profile, not Harbor Bistro (its numbers are
+  pinned to published videos): stock in lb / gal with recipes in oz /
+  fl oz (prices converted with one rounding rule, so the +9.1 % / +7.4 %
+  story holds), the produce house is "Valle Verde Produce, Inc." (the B1
+  key still groups it), and a third pending document is a rendered
+  **credit memo** for returned scallops (`docType` on `PendingSpec`, the
+  renderer prints CREDIT MEMO / TOTAL CREDIT). No sales-tax line: US food
+  for resale carries none, which the produce receipt says in a comment.
+  Timezone is a seed-time flag (`npm run seed -- --tz America/Los_Angeles`),
+  not profile data.
+
+- **B7** `weekStartsOn` on the country packs (US Sunday, else Monday)
+  and `countryProfile`; `domain.ts startOfWeekFor()` buckets every weekly
+  series by it, applied once per profile load (`setWeekStart`, like the
+  base currency). Unit-tested.
+
+Open in Tier B: **B8** the forwarding-address inbox for Microsoft 365
+restaurants (an inbound-parse provider, an MX record and a webhook secret
+— deferred on 2026-10-25). Everything else in Tier B is done.
 
 Four
 read-only audits (tax & money, document pipeline, locale & defaults,

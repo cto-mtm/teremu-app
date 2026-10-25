@@ -210,6 +210,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const shrimpUnit = (m: DemoManifest): string | undefined => m.alerts.price.find((a) => a.ingredientKey === "shrimp")?.unit;
+
 describe("demo profiles", () => {
   for (const profile of DEMO_PROFILE_NAMES) {
     it(`${profile}: the manifest is what the app derives, and the business is on-camera ready`, async () => {
@@ -244,7 +246,7 @@ describe("demo profiles", () => {
         expect(w.pct!).toBeLessThanOrEqual(37);
       }
       expect(manifest.pending.length).toBeGreaterThanOrEqual(1);
-      expect(manifest.pending.length).toBeLessThanOrEqual(2);
+      expect(manifest.pending.length).toBeLessThanOrEqual(3); // the taqueria also holds a credit memo (B6)
       for (const p of manifest.pending) {
         const [exists] = await getStorage().bucket().file(p.imagePath).exists();
         expect(exists, `${p.imagePath} uploaded`).toBe(true);
@@ -306,7 +308,10 @@ describe("demo profiles", () => {
     expect(manifest.restaurant.name).toBe("Baja Norte Taquería");
     const texts = manifest.alerts.price.map((a) => a.text);
     expect(texts).toContain("Pacific Catch Seafood raised Gulf Shrimp (21/25) by 9.1%");
-    expect(texts).toContain("Valle Verde Produce raised Hass Avocados by 7.4%");
+    expect(texts).toContain("Valle Verde Produce, Inc. raised Hass Avocados by 7.4%");
+    // US units (B6): the shrimp is stocked by the pound and the credit memo waits in Triage.
+    expect(shrimpUnit(manifest)).toBe("lb");
+    expect(manifest.pending.map((p) => p.id)).toContain("pending_credit");
     const shrimp = manifest.alerts.price.find((a) => a.ingredientKey === "shrimp");
     expect(shrimp?.changePct).toBeGreaterThanOrEqual(8);
     expect(shrimp?.changePct).toBeLessThanOrEqual(10);

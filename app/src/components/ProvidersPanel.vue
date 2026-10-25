@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { armHero, heroStyle } from '../composables/useHero'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
+import { useAuthStore } from '../stores/auth'
+import { whatsappLink } from '../lib/phone'
 import {
   normalizeName,
   vendorExpensesFor,
@@ -65,8 +67,10 @@ const vendorExpenses = computed(() =>
 )
 const supplied = computed(() => vendorSuppliedLines(vendorInvoices.value))
 
-/** wa.me link: digits only, per WhatsApp's URL scheme. */
-const waLink = (phone: string): string => 'https://wa.me/' + phone.replace(/[^0-9]/g, '')
+// wa.me needs an international number: a phone typed without a country
+// code gets the restaurant's (src/lib/phone.ts, B5).
+const auth = useAuthStore()
+const waLink = (phone: string): string => whatsappLink(phone, auth.profile?.countryProfile?.dialCode ?? null)
 </script>
 
 <template>

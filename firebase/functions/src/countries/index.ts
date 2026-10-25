@@ -59,5 +59,7 @@ export function profileOf(pack: CountryPack): CountryProfile {
     salesTaxRate: pack.salesTaxRate ?? null,
     unitSystem: pack.unitSystem,
     dateOrder: pack.dateOrder,
+    dialCode: pack.dialCode ?? null,
+    weekStartsOn: pack.weekStartsOn,
   };
 }

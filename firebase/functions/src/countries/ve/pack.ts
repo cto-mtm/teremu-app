@@ -16,6 +16,8 @@ export const VE_PACK: CountryPack = {
   salesTaxRate: 0.16,
   unitSystem: "metric",
   dateOrder: "DMY",
+  dialCode: "58",
+  weekStartsOn: 1,
   ocrHints: [
     "VENEZUELAN DOCUMENTS:",
     '- Bolívar amounts are written "Bs.", "Bs", "Bs.S", "Bs.D" or "BsF" — report the currency as "VES". Numbers use "." for thousands and "," for decimals ("Bs. 9.312,50" = 9312.50).',
