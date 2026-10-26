@@ -215,10 +215,12 @@ describe('realtimeSpend', () => {
     } as Partial<Invoice>)
     const rt = realtimeSpend([bill, pending, diverted], new Map())
     expect(rt.pendingCount).toBe(1)
-    expect(rt.noteCount).toBe(1)
     expect(rt.pendingTotal).toBe(40)
     expect(rt.oldestPending).toBe(pending.invoiceDate)
-    expect(food(rt.docs)).toBeCloseTo(food([bill]) + rt.pendingTotal, 2)
+    expect(food(rt.seriesDocs)).toBeCloseTo(food([bill]) + rt.pendingTotal, 2)
+    // The breakdowns see the same money, with the pending note's lines.
+    expect(food(rt.breakdownDocs)).toBeCloseTo(food(rt.seriesDocs), 2)
+    expect(ingredientSpend(rt.breakdownDocs).map((r) => r.name)).toEqual(['Leek'])
   })
 
   it('keeps a covered note at its delivery date and leaves the factura only the remainder', () => {
@@ -227,10 +229,34 @@ describe('realtimeSpend', () => {
     const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('Leek', 75), line('Delivery', 3)], total: 94 })
     const rt = realtimeSpend([bill, a, b], new Map())
     expect(rt.pendingCount).toBe(0)
-    expect(rt.noteCount).toBe(2)
-    expect(food(rt.docs)).toBeCloseTo(food([bill]), 2)
-    const byDate = Object.fromEntries(rt.docs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
+    expect(food(rt.seriesDocs)).toBeCloseTo(food([bill]), 2)
+    const byDate = Object.fromEntries(rt.seriesDocs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
     expect(byDate).toEqual({ '2026-10-02': 40, '2026-10-16': 35, '2026-10-31': 3 })
+    // …while the breakdowns keep the factura's lines whole and leave the
+    // covered notes out: no ingredient is lost to the re-dating.
+    expect(rt.breakdownDocs.map((d) => d.id)).toEqual([bill.id])
+    expect(ingredientSpend(rt.breakdownDocs)).toEqual([
+      { ingredientId: null, name: 'Leek', total: 75 },
+      { ingredientId: null, name: 'Delivery', total: 3 },
+    ])
+  })
+
+  it('lets the notes itemize a covered factura approved without lines', () => {
+    // A monthly factura approved from its summary page: 78 billed, no
+    // lines. Its two notes explain 75 of it; the 3 left is a fee.
+    const a = inv({ docType: 'delivery_note', invoiceDate: '2026-10-02', lineItems: [line('Leek', 40)], total: 40 })
+    const b = inv({ docType: 'delivery_note', invoiceDate: '2026-10-16', lineItems: [line('Onion', 35)], total: 35 })
+    const bill = inv({ invoiceDate: '2026-10-31', lineItems: [], total: 78 })
+    const rt = realtimeSpend([bill, a, b], new Map())
+    expect(rt.pendingCount).toBe(0)
+    // Series and breakdowns are the same picture: the notes' goods at
+    // their dates, the factura's unexplained remainder on its own.
+    expect(rt.breakdownDocs).toEqual(rt.seriesDocs)
+    expect(food(rt.breakdownDocs)).toBeCloseTo(78, 2)
+    expect(ingredientSpend(rt.breakdownDocs)).toEqual([
+      { ingredientId: null, name: 'Leek', total: 40 },
+      { ingredientId: null, name: 'Onion', total: 35 },
+    ])
   })
 
   it('never shows more than Billed: notes that over-explain their factura are scaled to it', () => {
@@ -238,19 +264,20 @@ describe('realtimeSpend', () => {
     const b = inv({ docType: 'delivery_note', invoiceDate: '2026-10-16', lineItems: [line('Leek', 55)], total: 55 })
     const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('leek', 100)], total: 100 })
     const rt = realtimeSpend([bill, a, b], new Map())
-    expect(rt.noteCount).toBe(2)
-    expect(food(rt.docs)).toBeCloseTo(100, 1)
-    const byDate = Object.fromEntries(rt.docs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
+    expect(food(rt.seriesDocs)).toBeCloseTo(100, 1)
+    const byDate = Object.fromEntries(rt.seriesDocs.filter(isFoodInvoice).map((d) => [d.invoiceDate, foodSpend(d)]))
     expect(byDate['2026-10-02']).toBeCloseTo(52.17, 1)
     expect(byDate['2026-10-16']).toBeCloseTo(47.83, 1)
     expect(byDate['2026-10-31']).toBeUndefined()
+    // The breakdown still has the factura, whole, and nothing else.
+    expect(rt.breakdownDocs).toEqual([bill])
   })
 
   it('drops a factura its notes fully explain', () => {
     const a = inv({ docType: 'delivery_note', invoiceDate: '2026-10-02', lineItems: [line('Leek', 100)], total: 100 })
     const bill = inv({ invoiceDate: '2026-10-31', lineItems: [line('Leek', 100)], total: 121 })
     const rt = realtimeSpend([bill, a], new Map())
-    expect(rt.docs.filter(isFoodInvoice).map((d) => d.invoiceDate)).toEqual(['2026-10-02'])
+    expect(rt.seriesDocs.filter(isFoodInvoice).map((d) => d.invoiceDate)).toEqual(['2026-10-02'])
   })
 })
 

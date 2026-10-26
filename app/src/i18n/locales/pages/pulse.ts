@@ -18,11 +18,6 @@ const es = {
     noContact: 'Sin contacto guardado — añádelo en la página del proveedor.',
     openPage: 'Ver página completa',
   },
-  view: {
-    label: 'Vista de gasto',
-    billed: 'Facturado',
-    realtime: 'Tiempo real',
-  },
   pendingNotes: 'Recibido sin facturar',
   pendingNotesDetail: '{n} albaranes pendientes de factura',
   pendingOldest: 'el más antiguo del {date}',
@@ -76,14 +71,10 @@ const es = {
   },
   // The ⓘ explainers on each chart.
   info: {
-    view: {
-      p1: 'Facturado: el gasto en la fecha de cada factura. Es lo que dice la contabilidad.',
-      p2: 'Tiempo real: el gasto en la fecha en que llegó la mercancía. Los albaranes que aún no tienen factura se suman, y los que ya la tienen se quedan en su semana de entrega en vez de amontonarse en la de la factura.',
-      p3: 'Las dos vistas suman lo mismo; solo cambia la semana en que cae cada gasto. Los precios de los albaranes son estimaciones hasta que llega la factura.',
-    },
     revenue: {
       p1: 'Compara, semana a semana, lo que vendiste (verde) con lo que gastaste (rojo): compras a proveedores y otros gastos registrados.',
       p2: 'Si la línea roja se acerca a la verde, esa semana casi no queda margen. Es la forma más rápida de ver si el negocio va bien.',
+      p3: 'Las compras cuentan en la semana en que llegó la mercancía, no en la fecha de la factura: un albarán sin factura ya suma (a precio estimado), y una factura mensual se reparte entre sus albaranes.',
     },
     foodCost: {
       p1: 'Qué parte de tus ventas se va en comprar comida: compras ÷ ventas de cada semana.',
@@ -160,11 +151,6 @@ const en: typeof es = {
     noContact: 'No contact saved — add it on the vendor page.',
     openPage: 'Open full page',
   },
-  view: {
-    label: 'Spend view',
-    billed: 'Billed',
-    realtime: 'Real time',
-  },
   pendingNotes: 'Received, not yet billed',
   pendingNotesDetail: '{n} delivery notes awaiting their invoice',
   pendingOldest: 'oldest from {date}',
@@ -216,14 +202,10 @@ const en: typeof es = {
     editDish: 'Edit dish',
   },
   info: {
-    view: {
-      p1: 'Billed: spend on the date of each invoice. This is what the books say.',
-      p2: 'Real time: spend on the day the goods arrived. Delivery notes with no invoice yet are added, and those already invoiced stay in their delivery week instead of piling up in the invoice week.',
-      p3: 'Both views add up to the same total; only the week each expense lands in changes. Delivery-note prices are estimates until the invoice arrives.',
-    },
     revenue: {
       p1: 'Compares, week by week, what you sold (green) with what you spent (red): vendor purchases plus other logged expenses.',
       p2: 'When the red line gets close to the green one, that week left almost no margin. It is the quickest read on how the business is doing.',
+      p3: 'Purchases count in the week the goods arrived, not on the invoice date: a delivery note with no invoice yet already counts (at an estimated price), and a monthly invoice is spread across its delivery notes.',
     },
     foodCost: {
       p1: 'How much of your sales goes to buying food: purchases ÷ sales for each week.',

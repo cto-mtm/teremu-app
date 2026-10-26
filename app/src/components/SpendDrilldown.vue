@@ -2,10 +2,10 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
 import { useAuthStore } from '../stores/auth'
-import { realtimeSpend, spendTree, type SpendNode } from '../lib/domain'
+import { spendTree, type SpendNode } from '../lib/domain'
+import type { Invoice } from '../lib/types'
 import { CHART_COLORS, CHART_REST_COLOR } from '../lib/palette'
 import PieChart, { type PieSlice } from './PieChart.vue'
 
@@ -16,22 +16,17 @@ import PieChart, { type PieSlice } from './PieChart.vue'
  */
 const { t, n } = useI18n()
 const router = useRouter()
-const invoicesStore = useInvoicesStore()
 const kitchen = useKitchenStore()
 const auth = useAuthStore()
 
 const MAX_SLICES = 9
 
-/** realtime: also count approved albaranes no factura covers yet
- * (the dashboard's Facturado / Tiempo real toggle). */
-const props = withDefaults(defineProps<{ realtime?: boolean }>(), { realtime: false })
-
-const docs = computed(() =>
-  props.realtime
-    ? realtimeSpend(invoicesStore.invoices, kitchen.ingredientMap).docs
-    : invoicesStore.invoices,
-)
-const tree = computed(() => spendTree(docs.value, kitchen.expenses, kitchen.ingredientMap))
+/** docs: the dashboard's breakdown set (`realtimeSpend().breakdownDocs`
+ * — every factura with its lines whole, plus the approved albaranes no
+ * factura covers yet). Passed in so reconciliation runs once, in the
+ * page. */
+const props = defineProps<{ docs: Invoice[] }>()
+const tree = computed(() => spendTree(props.docs, kitchen.expenses, kitchen.ingredientMap))
 
 // The drill state is a path of child keys; the trail re-walks the live
 // tree so a data refresh can never leave us pointing at a stale node.

@@ -318,36 +318,53 @@ export function reconciliationCandidates(invoices: Invoice[], note: Invoice, nea
     .slice(0, 20)
 }
 
-// ── Billed vs real-time spend (factura vs albarán consolidation) ────
+// ── Spend by delivery date (factura + albarán consolidation) ────────
 
 export interface RealtimeSpend {
-  /** Food spend by DELIVERY date: invoices with their covered notes
-   * swapped in, plus the pending notes, all shaped as invoices. */
-  docs: Invoice[]
-  /** Value received but not yet billed — the billed↔realtime delta. */
+  /** WHEN: food spend by delivery date, for the time series only —
+   * invoices with their covered notes swapped in (the factura keeps a
+   * line-less remainder), plus the pending notes, all shaped as
+   * invoices. A covered factura has lost its lines here, which is why
+   * the breakdowns have their own set. */
+  seriesDocs: Invoice[]
+  /** WHAT: the documents with their full lines, for Categories and Top
+   * ingredients — every invoice as approved, plus the pending notes
+   * (goods received that no factura itemizes yet). A covered note is
+   * not here: its goods are the factura's lines — unless the factura
+   * was approved without lines, in which case its notes stand in for
+   * it. Dated as the documents are (a factura on its own date), so the
+   * breakdowns' 8-week window is by billing date for billed goods and
+   * by delivery date for pending ones. */
+  breakdownDocs: Invoice[]
+  /** Value received but not yet billed — what the charts count that
+   * the books do not yet. */
   pendingTotal: number
   pendingCount: number
   /** Delivery date of the oldest note still awaiting its factura. */
   oldestPending: string | null
-  /** Approved notes that shape this view at all (pending or covered):
-   * 0 means the two views are the same picture. */
-  noteCount: number
   /** Pending lines nobody could price (no line price, no pantry price). */
   unvaluedLines: number
 }
 
 /**
- * The REAL-TIME view of food spend: money by the day the goods landed.
+ * Food spend as the dashboard needs it: WHEN money was spent (by the
+ * day the goods landed) and WHAT it bought (the lines as approved).
  * Facturas alone are the accounting truth, but a vendor on consolidated
  * billing delivers for weeks on albaranes before the factura lands, and
- * the factura then dates a month of deliveries to one day. So this view
- * (1) adds every approved delivery note no factura covers yet
- * (reconciliation says unmatched, not marked handled) and (2) keeps a
- * covered note at its own date, taking its value off the factura that
- * covers it — the factura keeps only what its notes do not explain
- * (a delivery it billed without a note, a fee). Nothing is counted
- * twice: billed and real time agree on the total and differ on the
- * week it falls in.
+ * the factura then dates a month of deliveries to one day — so a weekly
+ * chart on factura dates shows nothing for three weeks and a spike in
+ * the fourth. The time series therefore (1) add every approved delivery
+ * note no factura covers yet (reconciliation says unmatched, not marked
+ * handled) and (2) keep a covered note at its own date, taking its value
+ * off the factura that covers it — the factura keeps only what its
+ * notes do not explain (a delivery it billed without a note, a fee).
+ * Nothing is counted twice; the total is billed spend plus the pending
+ * notes. The breakdowns keep every factura's lines whole and add only
+ * the pending notes, so re-dating never loses an ingredient or a
+ * category; a factura approved without lines itemizes nothing, so its
+ * notes stand in for it there, exactly as in the series. Vendor pages
+ * stay on facturas: "what did they bill me" is a monthly question, not
+ * a weekly one.
  *
  * Notes are returned as invoice-shaped docs (docType flipped, lines
  * valued by `valueNote`: printed price, else the matched ingredient's
@@ -360,6 +377,10 @@ export function realtimeSpend(
   ingredientsById: Map<string, Ingredient>,
 ): RealtimeSpend {
   const rows = reconcileDeliveryNotes(invoices, ingredientsById).filter((r) => r.note.status === 'approved')
+  // The reconciled notes carry their own goods in `noteDocs` below
+  // (at delivery date, valued). Skip them in the invoice loop so a
+  // covered or pending note is never counted twice.
+  const noteIds = new Set(rows.map((r) => r.note.id))
 
   let pendingTotal = 0
   let pendingCount = 0
@@ -380,17 +401,25 @@ export function realtimeSpend(
     }
   }
 
-  const docs: Invoice[] = []
+  const seriesDocs: Invoice[] = []
+  const breakdownDocs: Invoice[] = []
   // Notes that together say MORE than their factura (estimates drift
   // up, the overlap rule tolerates it) are scaled down to it: the
-  // factura is the accounting truth, so the two views agree on the total.
+  // factura is the accounting truth, so the series total stays billed.
   const scale = new Map<string, number>()
+  // Covered facturas with nothing to itemize: their notes carry the
+  // goods in the breakdowns too.
+  const lineless = new Set<string>()
   for (const inv of invoices) {
+    if (noteIds.has(inv.id)) continue
     const byNotes = covered.get(inv.id)
     if (byNotes == null) {
-      docs.push(inv)
+      seriesDocs.push(inv)
+      breakdownDocs.push(inv)
       continue
     }
+    if (inv.lineItems.length) breakdownDocs.push(inv)
+    else lineless.add(inv.id)
     const billed = Math.abs(foodSpend(inv))
     if (byNotes > billed) {
       scale.set(inv.id, billed / byNotes)
@@ -399,26 +428,31 @@ export function realtimeSpend(
     // The factura keeps only what its notes do not explain. Its lines go
     // with the notes (which carry the same goods, now at delivery date).
     const remainder = +(billed - byNotes).toFixed(2)
-    if (remainder > 0) docs.push({ ...inv, lineItems: [], total: remainder })
+    if (remainder > 0) {
+      const rest = { ...inv, lineItems: [], total: remainder }
+      seriesDocs.push(rest)
+      if (lineless.has(inv.id)) breakdownDocs.push(rest)
+    }
   }
   for (const { doc, matchId } of noteDocs) {
     const k = matchId ? scale.get(matchId) : undefined
-    if (k == null) {
-      docs.push(doc)
-      continue
-    }
-    docs.push({
-      ...doc,
-      lineItems: doc.lineItems.map((l) => ({ ...l, total: +(l.total * k).toFixed(2) })),
-      total: +(doc.total! * k).toFixed(2),
-    })
+    const dated =
+      k == null
+        ? doc
+        : {
+            ...doc,
+            lineItems: doc.lineItems.map((l) => ({ ...l, total: +(l.total * k).toFixed(2) })),
+            total: +(doc.total! * k).toFixed(2),
+          }
+    seriesDocs.push(dated)
+    if (!matchId || lineless.has(matchId)) breakdownDocs.push(dated)
   }
   return {
-    docs,
+    seriesDocs,
+    breakdownDocs,
     pendingTotal: +pendingTotal.toFixed(2),
     pendingCount,
     oldestPending,
-    noteCount: rows.length,
     unvaluedLines,
   }
 }
@@ -887,7 +921,7 @@ export interface VendorWeekSpend {
  * Weekly spend stacked by vendor (top 4 + "other") over the same
  * 8-week window as weeklySeries, on the same food value (`foodSpend`:
  * the lines, not the printed total with tax and delivery) so the bars
- * add up to the expenses line and billed and real-time docs compare.
+ * add up to the expenses line whichever document set is passed in.
  */
 export function vendorWeeklySpend(invoices: Invoice[]): {
   weeks: VendorWeekSpend[]

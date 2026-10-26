@@ -76,21 +76,20 @@ watch(
   { immediate: true },
 )
 
-// ── Billed vs real-time spend (facturado vs recibido) ───────────
-// Real time dates spend by delivery: approved albaranes no factura
-// covers yet are added, and covered ones keep their own date while the
-// factura keeps only what they do not explain. The toggle only appears
-// while an approved note shapes the picture (the views are identical
-// otherwise). Price history & alerts stay billed-only — albarán prices
-// are estimates, not payments.
-const spendMode = ref<'billed' | 'realtime'>('billed')
+// ── Spend by delivery date (facturado + recibido) ─────────────────
+// The weekly charts date food spend by the day the goods landed:
+// approved albaranes no factura covers yet are added, and covered ones
+// keep their own week while the factura keeps only what they do not
+// explain. The breakdowns (Top ingredients, Categories) use the full
+// factura lines plus the pending notes, so no line is ever lost to the
+// re-dating; reconciliation runs once here and the Categories panel is
+// handed its documents. Price history & alerts stay on facturas —
+// albarán prices are estimates, not payments — and so do the vendor
+// pages.
 const realtime = computed(() => realtimeSpend(invoicesStore.invoices, kitchen.ingredientMap))
-const spendDocs = computed(() =>
-  spendMode.value === 'realtime' ? realtime.value.docs : invoicesStore.invoices,
-)
 
 // ── Expenses vs revenue (8 weeks) — includes tagged non-food spend ──
-const series = computed(() => weeklySeries(spendDocs.value, kitchen.revenue, kitchen.expenses))
+const series = computed(() => weeklySeries(realtime.value.seriesDocs, kitchen.revenue, kitchen.expenses))
 const thisWeek = computed(() => series.value[series.value.length - 1])
 
 const W = 640
@@ -109,7 +108,7 @@ function points(key: 'expenses' | 'revenue'): string {
 }
 
 // ── Food-cost % with target band ────────────────────────────────
-const foodCost = computed(() => foodCostSeries(spendDocs.value, kitchen.revenue))
+const foodCost = computed(() => foodCostSeries(realtime.value.seriesDocs, kitchen.revenue))
 const fcThisWeek = computed(() => foodCost.value[foodCost.value.length - 1]?.pct ?? null)
 const FC = { w: 300, h: 150, pad: 8 }
 const fcMax = computed(() => Math.max(50, ...foodCost.value.map((p) => p.pct ?? 0)) * 1.15)
@@ -127,7 +126,7 @@ const weekTicks = computed(() => series.value.filter((_, i) => i % 2 === 0))
 
 // ── Vendor spend, stacked weekly (click a segment → vendor page) ─
 const VENDOR_COLORS = [...CHART_COLORS.slice(0, 4), CHART_REST_COLOR]
-const vendorSpend = computed(() => vendorWeeklySpend(spendDocs.value))
+const vendorSpend = computed(() => vendorWeeklySpend(realtime.value.seriesDocs))
 const vendorLegend = computed(() =>
   vendorSpend.value.vendors.map((v, i) => ({ ...v, color: VENDOR_COLORS[i % VENDOR_COLORS.length] })),
 )
@@ -174,7 +173,7 @@ const priceWatch = computed(() =>
 )
 
 // ── Pareto: top ingredients by spend ────────────────────────────
-const topSpend = computed(() => ingredientSpend(spendDocs.value, 8))
+const topSpend = computed(() => ingredientSpend(realtime.value.breakdownDocs, 8))
 const topSpendMax = computed(() => topSpend.value[0]?.total ?? 1)
 
 // ── Stat cards ──────────────────────────────────────────────────
@@ -452,45 +451,13 @@ watch(showExpense, (open) => {
       </button>
     </div>
 
-    <!-- Billed vs real-time toggle: only while an approved albarán
-         shapes the picture (the two views are identical otherwise) -->
-    <div
-      v-if="tab !== 'providers' && realtime.noteCount > 0"
-      class="flex items-center gap-2"
-      role="group"
-      :aria-label="t('pulse.view.label')"
-    >
-      <span class="text-xs text-smoke">{{ t('pulse.view.label') }}</span>
-      <InfoButton :title="t('pulse.view.label')">
-        <p>{{ t('pulse.info.view.p1') }}</p>
-        <p>{{ t('pulse.info.view.p2') }}</p>
-        <p>{{ t('pulse.info.view.p3') }}</p>
-      </InfoButton>
-      <div class="flex gap-1 rounded-lg bg-gray-100 p-0.5">
-        <button
-          v-for="m in (['billed', 'realtime'] as const)"
-          :key="m"
-          :aria-pressed="spendMode === m"
-          class="rounded-md px-2.5 py-1 text-xs font-medium"
-          :class="spendMode === m ? 'bg-white text-ink shadow-sm' : 'text-smoke hover:text-ink'"
-          @click="spendMode = m"
-        >
-          {{ t('pulse.view.' + m) }}
-        </button>
-      </div>
-    </div>
-
     <!-- Loading skeleton -->
     <PageLoader v-if="kitchen.loading && !kitchen.revenue.length" />
 
     <template v-else>
 
     <!-- Categories: hierarchical spend pie with breadcrumb drill-down -->
-    <SpendDrilldown
-      v-if="seen.categories"
-      v-show="tab === 'categories'"
-      :realtime="spendMode === 'realtime'"
-    />
+    <SpendDrilldown v-if="seen.categories" v-show="tab === 'categories'" :docs="realtime.breakdownDocs" />
 
     <!-- Providers: the whole vendor directory inline -->
     <ProvidersPanel v-if="seen.providers" v-show="tab === 'providers'" />
@@ -523,8 +490,8 @@ watch(showExpense, (open) => {
       </RouterLink>
     </div>
 
-    <!-- Received, not yet billed: the billed↔realtime delta — shown in
-         BOTH views (it's the number the toggle is about) -->
+    <!-- Received, not yet billed: what the charts count that the books
+         do not yet — the one card that says this money is in flight -->
     <RouterLink
       v-if="realtime.pendingCount > 0"
       to="/triage"
@@ -555,6 +522,7 @@ watch(showExpense, (open) => {
           <InfoButton :title="t('pulse.chartTitle')">
             <p>{{ t('pulse.info.revenue.p1') }}</p>
             <p>{{ t('pulse.info.revenue.p2') }}</p>
+            <p>{{ t('pulse.info.revenue.p3') }}</p>
           </InfoButton>
         </span>
         <span class="flex items-center gap-3 text-[11px] text-smoke">
