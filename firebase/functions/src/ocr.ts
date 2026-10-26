@@ -34,7 +34,8 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
 
 {
   "kind": "one of: receipt (a purchase receipt or vendor invoice/delivery note), other (anything that is not a purchase document: people, food photos, menus, screenshots, blank pages)",
-  "docType": "one of: invoice (factura / bill — a PRICED document, even one signed on delivery), delivery_note (albarán / packing slip / nota de entrega — goods received, NO prices or only reference prices), credit_memo (abono / factura rectificativa / credit note / credit memo / return — the vendor crediting money back; report its quantities and amounts as POSITIVE numbers)",
+  "title": "the document's own heading as printed (e.g. FACTURA, Factura simplificada, ALBARÁN, Albarán valorado, Nota de entrega, Invoice, Packing slip, Delivery note, Abono), or null",
+  "docType": "one of: invoice (factura / bill / ticket / receipt — the vendor charging money), delivery_note (albarán / packing slip / nota de entrega / delivery note — goods handed over, to be billed later; an albarán VALORADO shows prices and is STILL a delivery note), credit_memo (abono / factura rectificativa / credit note / credit memo / return — the vendor crediting money back; report its quantities and amounts as POSITIVE numbers)",
   "confidence": 0.9,
   "vendor": "vendor or supplier business name, or null",
   "date": "invoice date as YYYY-MM-DD, or null",
@@ -49,6 +50,7 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
 Rules:
 - If "kind" is "other", set lineItems to [] and everything else to null — do NOT invent data.
 - "confidence" is how sure you are about the classification AND the extraction overall (0 to 1).
+- "docType" follows what the document CALLS itself, not whether it shows prices: a vendor on monthly billing delivers on priced albaranes for weeks and sends one factura at month end, and that factura is the only one that charges. Copy the heading into "title"; still extract every line and price an albarán prints.
 - "vendor" is the SELLER who issued the document — never the buyer/customer it is billed or delivered to. Invoices usually show both parties: the buyer appears in a cliente / bill to / deliver to box. When a BUYER name is provided below, that business (or close variants of it) is the customer, NOT the vendor. If the only business name you can read is the buyer's, set "vendor" to null.
 - Normalize product names (e.g. "TOM RMA 25#" -> "Roma Tomatoes").
 - "match": when a KNOWN INGREDIENTS list is provided below and a line is the same product (any spelling/abbreviation/language), copy that list entry EXACTLY into "match". Otherwise null. Never invent names not on the list.
@@ -206,6 +208,7 @@ function buildSchemas(convention: NumberConvention) {
   const response = z.object({
     error: z.string().optional().catch(undefined),
     kind: z.enum(["receipt", "other"]).catch("receipt"),
+    title: z.string().nullable().optional().catch(null),
     docType: docTypeSchema.catch("invoice"),
     confidence: z.coerce.number().min(0).max(1).catch(0.5),
     vendor: z.string().min(1).nullable().catch(null),
@@ -238,6 +241,29 @@ function applyCurrencyAliases(raw: unknown, aliases: Record<string, Currency> | 
     aliases &&
     Object.entries(aliases).find(([k]) => k.toLowerCase() === trimmed.toLowerCase())?.[1];
   return { ...(raw as object), currency: aliased ?? upper };
+}
+
+// What a document calls itself, in the languages our vendors print.
+// A heading that says "factura" is a bill whatever else it says
+// ("FACTURA — albaranes 12, 13" is the month-end factura listing the
+// notes it covers); one that says "albarán" and not "factura" is a
+// delivery note, priced or not.
+const INVOICE_TITLE = /\b(factura|invoice|bill|ticket|recibo|receipt|fattura|rechnung|facture)\b/i;
+const DELIVERY_TITLE = /\b(albar[aá]n|albaranes|nota de entrega|packing (?:slip|list)|delivery (?:note|slip|docket)|bon de livraison|remisi[oó]n|lieferschein|bolla)\b/i;
+
+/**
+ * Deterministic backstop for the prompt's docType rule: models still
+ * call a priced albarán an invoice (every line has a price, so it looks
+ * like one), and approving it as a factura writes stock and prices that
+ * the month-end factura then writes again. The heading settles it. A
+ * credit memo is never re-typed here (a "factura rectificativa" carries
+ * the word factura).
+ */
+export function docTypeFromTitle(title: string | null | undefined, model: DocType): DocType {
+  if (model === "credit_memo" || !title) return model;
+  if (INVOICE_TITLE.test(title)) return "invoice";
+  if (DELIVERY_TITLE.test(title)) return "delivery_note";
+  return model;
 }
 
 function sanitize(
@@ -283,7 +309,7 @@ function sanitize(
   return {
     vendor,
     date: parsed.date,
-    docType: parsed.docType,
+    docType: docTypeFromTitle(parsed.title, parsed.docType),
     lineItems: items,
     total: parsed.total > 0 ? parsed.total : +items.reduce((s, l) => s + l.total, 0).toFixed(2),
     confidence: parsed.confidence,

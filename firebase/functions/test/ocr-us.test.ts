@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { packFor } from "../src/countries/index";
-import { normalizeUnit, toResult } from "../src/ocr";
+import { docTypeFromTitle, normalizeUnit, toResult } from "../src/ocr";
 
 /**
  * Hermetic: how a US distributor's reply is read (docs/us-market-
@@ -58,6 +58,33 @@ describe("number convention", () => {
   it("reads '1,250' as 1250 for a USD restaurant and as 1.25 for a EUR one", () => {
     expect(toResult(reply({ lineItems: lines, total: "500.00" }), us).lineItems[0].qty).toBe(1250);
     expect(toResult(reply({ lineItems: lines, total: "500.00" }), es).lineItems[0].qty).toBe(1.25);
+  });
+});
+
+describe("document type from the heading (albarán valorado)", () => {
+  const priced = [{ name: "Salmon", qty: 4, unit: "kg", unitPrice: 18.5, total: 74, category: "seafood" }];
+
+  it("keeps a priced albarán a delivery note even when the model calls it an invoice", () => {
+    const r = toResult(reply({ docType: "invoice", title: "ALBARÁN VALORADO", lineItems: priced, total: 74 }), es);
+    expect(r.docType).toBe("delivery_note");
+    expect(r.lineItems[0].unitPrice).toBe(18.5); // the prices still come through for reconciliation
+    expect(r.total).toBe(74);
+  });
+
+  it("keeps a factura a factura, and the month-end one that lists its albaranes", () => {
+    expect(toResult(reply({ docType: "delivery_note", title: "Factura", lineItems: priced, total: 74 }), es).docType).toBe("invoice");
+    expect(docTypeFromTitle("FACTURA — albaranes 12, 13 y 14", "delivery_note")).toBe("invoice");
+    expect(docTypeFromTitle("Factura simplificada", "delivery_note")).toBe("invoice");
+  });
+
+  it("reads the other spellings, leaves credit memos and untitled documents to the model", () => {
+    for (const title of ["Nota de entrega", "Packing Slip", "Delivery note", "Bon de livraison", "Guía de remisión"]) {
+      expect(docTypeFromTitle(title, "invoice"), title).toBe("delivery_note");
+    }
+    expect(docTypeFromTitle("Factura rectificativa", "credit_memo")).toBe("credit_memo");
+    expect(docTypeFromTitle("Abono", "credit_memo")).toBe("credit_memo");
+    expect(docTypeFromTitle(null, "invoice")).toBe("invoice");
+    expect(toResult(reply({ docType: "delivery_note" }), es).docType).toBe("delivery_note");
   });
 });
 
