@@ -173,7 +173,7 @@ export async function approveScan(
   await fillScanHeader(page, opts)
   if (opts.deliveryNote) {
     await page.getByRole('button', { name: 'Albarán', exact: true }).click()
-    await expect(page.getByText('Los albaranes se aprueban solo para conciliación')).toBeVisible()
+    await expect(page.getByText('Los albaranes no tocan despensa ni precios')).toBeVisible()
   }
   await clickApprove(page, page.getByRole('button', { name: /^Aprobar factura/ }))
   await expect(page.getByRole('button', { name: /^Aprobar factura/ })).toBeHidden()

@@ -134,15 +134,15 @@ test.describe('A real month in the UI', () => {
       .sort(byFile)[0]
     test.skip(!note, 'no reviewable delivery note in the recordings')
     await page.goto(`/triage/${note.invoiceId}`)
-    await expect(page.getByText('Los albaranes se aprueban solo para conciliación')).toBeVisible()
+    await expect(page.getByText('Los albaranes no tocan despensa ni precios')).toBeVisible()
     await page.getByRole('button', { name: /^Aprobar factura/ }).click()
     await expect(page).toHaveURL(/\/triage$/)
 
+    // The charts already count it (spend is dated by delivery): the
+    // note's vendor — nothing else of theirs is approved — is in the
+    // vendor stack's legend, and the banner says the money is unbilled.
     await page.goto('/')
-    const toggle = page.getByRole('group', { name: 'Vista de gasto' })
-    await expect(toggle).toBeVisible()
     await expect(page.getByText('Recibido sin facturar')).toBeVisible()
-    await toggle.getByRole('button', { name: 'Tiempo real' }).click()
-    await expect(toggle.getByRole('button', { name: 'Tiempo real' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('link', { name: note.vendorName!, exact: true }).first()).toBeVisible()
   })
 })
