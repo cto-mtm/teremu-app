@@ -4,6 +4,7 @@ import {
   connectAuthEmulator,
   getAuth,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
   type User,
@@ -81,6 +82,18 @@ export async function signInWithGoogle(): Promise<void> {
   // NOTE: popups don't work inside the Capacitor WebView — the native
   // shells need @capacitor-firebase/authentication when you go native.
   await signInWithPopup(auth, new GoogleAuthProvider())
+}
+
+/**
+ * Email + password sign-in — the Firebase "Email/Password" provider,
+ * enabled on the Auth project. There is NO sign-up path in the app:
+ * accounts are created by an admin (Firebase console, or the emulator
+ * seed CLI's `--email/--password`), which is what makes this the right
+ * door for test credentials (store review, QA) and for people without a
+ * Google account. Throws the SDK's FirebaseError; the store maps `code`.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<void> {
+  await signInWithEmailAndPassword(auth, email.trim(), password)
 }
 
 export async function signOut(): Promise<void> {

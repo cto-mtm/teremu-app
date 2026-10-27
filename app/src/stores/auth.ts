@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { User } from 'firebase/auth'
-import { signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
+import { signInWithEmail, signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
 import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
 import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
@@ -198,6 +198,34 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Which login-page message to show for an email/password failure. The
+   * SDK's `code` is the only stable part of a FirebaseError; the message
+   * text is English and not for people. Wrong email OR wrong password is
+   * one bucket on purpose (the SDK collapses them to
+   * `invalid-credential` with email enumeration protection on).
+   */
+  const passwordError = ref<'credentials' | 'tooMany' | 'generic' | null>(null)
+
+  async function signInWithPassword(email: string, password: string): Promise<void> {
+    busy.value = true
+    error.value = null
+    passwordError.value = null
+    try {
+      await signInWithEmail(email, password)
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? ''
+      passwordError.value =
+        /invalid-credential|wrong-password|user-not-found|invalid-email|user-disabled/.test(code)
+          ? 'credentials'
+          : /too-many-requests/.test(code)
+            ? 'tooMany'
+            : 'generic'
+    } finally {
+      busy.value = false
+    }
+  }
+
   async function signOut(): Promise<void> {
     if (import.meta.env.DEV) console.warn('[auth] explicit signOut() called')
     // Before the await: the auth-state callback fires during it.
@@ -229,6 +257,8 @@ export const useAuthStore = defineStore('auth', () => {
     can,
     chooseLocale,
     signIn,
+    signInWithPassword,
+    passwordError,
     signOut,
   }
 })

@@ -11,9 +11,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
  * The owner account auth.setup.ts creates through the Auth emulator's fake
- * Google account picker. Teremu has NO email/password signup — Google is
- * the only provider (app/src/lib/firebase.ts signInWithPopup), so the
- * emulator widget is the only way in.
+ * Google account picker. Teremu has NO sign-up form: Google creates the
+ * account on first sign-in, and the email/password door on /login only
+ * opens admin-created accounts (seed CLI `--email`), so the emulator
+ * widget is the way a brand-new owner gets in.
  */
 export const TEST_OWNER = {
   email: 'e2e-owner@test.teremu',

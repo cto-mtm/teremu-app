@@ -2,8 +2,9 @@
  * Auth flow — signing in through the Firebase Auth emulator's fake Google
  * account picker.
  *
- * Teremu has no email/password path: app/src/lib/firebase.ts only exposes
- * signInWithGoogle() → signInWithPopup. Against the emulator that popup is
+ * Teremu has no sign-up form: the email/password form on /login only signs
+ * in admin-created accounts (signInWithEmail), so a brand-new owner comes
+ * through signInWithGoogle() → signInWithPopup. Against the emulator that popup is
  * firebase-tools' own sign-in widget (/emulator/auth/handler), which lists
  * the accounts it already knows and lets you invent a new one. Driving it
  * is the only way to reach the app the way a real user does.

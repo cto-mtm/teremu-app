@@ -16,6 +16,14 @@
  *   --tz <zone>      the restaurant's timezone (default: this machine's)
  *   --out <dir>      also write each manifest to <dir>/<profile>.json
  *
+ * Test credentials (the login page's email + password form):
+ *   --email <addr> [--password <pw>]   create (or update) that
+ *                    Email/Password account in the Auth emulator and
+ *                    seed it, instead of the users already there. The
+ *                    default password is TEST_PASSWORD below. Combine
+ *                    with --profile / --all for a demo dataset:
+ *                    npm run seed -- --email test@teremu.local --profile harbor-bistro
+ *
  * Without a uid argument it seeds every user currently in the Auth
  * emulator (sign in once in the app first so your user exists).
  * It can never touch production: emulator hosts are forced and the
@@ -67,10 +75,32 @@ const { values: args, positionals } = parseArgs({
     now: { type: "string" },
     tz: { type: "string" },
     out: { type: "string" },
+    email: { type: "string" },
+    password: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
 });
+
+/** Emulator-only default for `--email` without `--password`. Firebase
+ * requires 6+ characters; this is not a secret (the emulator is offline). */
+const TEST_PASSWORD = "teremu-test";
+
+/** The Email/Password account behind `--email`: created if missing,
+ * password reset to the given one if it exists, so a re-run is idempotent
+ * and a forgotten password is one command away. Returns its uid. */
+async function ensureEmailUser(email: string, password: string): Promise<string> {
+  const auth = getAuth();
+  const existing = await auth.getUserByEmail(email).catch(() => null);
+  if (existing) {
+    await auth.updateUser(existing.uid, { password, emailVerified: true });
+    console.log(`Test user ${email} already exists (${existing.uid}); password updated.`);
+    return existing.uid;
+  }
+  const created = await auth.createUser({ email, password, emailVerified: true, displayName: "Test User" });
+  console.log(`Created test user ${email} (${created.uid}).`);
+  return created.uid;
+}
 
 /** The demo's "today": --now, else the latest --today weekday (at this
  * time of day in `timezone`), else now. The weekday is stepped on the
@@ -104,14 +134,22 @@ async function main(): Promise<void> {
   const argUid = positionals[0];
   let uids: string[];
 
-  if (argUid) {
+  if (args.email) {
+    if (argUid) throw new Error("use either --email <addr> or a uid, not both");
+    if (args.password !== undefined && args.password.length < 6) {
+      throw new Error("--password must be at least 6 characters (Firebase Auth minimum)");
+    }
+    const password = args.password ?? TEST_PASSWORD;
+    uids = [await ensureEmailUser(args.email, password)];
+    console.log(`Sign in on /login → "Sign in with email and password": ${args.email} / ${password}`);
+  } else if (argUid) {
     uids = [argUid];
   } else {
     const { users } = await getAuth().listUsers();
     uids = users.map((u) => u.uid);
     if (uids.length === 0) {
       console.error(
-        "No users in the Auth emulator yet. Sign in once in the app (fake Google picker), or pass a uid: npm run seed -- <uid>"
+        "No users in the Auth emulator yet. Sign in once in the app (fake Google picker), pass a uid (npm run seed -- <uid>), or create a test account: npm run seed -- --email test@teremu.local"
       );
       process.exit(1);
     }

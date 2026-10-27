@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../stores/auth'
@@ -15,6 +15,25 @@ const privacyUrl = computed(() => legalUrl('privacy', locale.value as SupportedL
 const termsUrl = computed(() => legalUrl('terms', locale.value as SupportedLocale))
 const router = useRouter()
 const auth = useAuthStore()
+
+// Email + password lives behind a link: Google stays the one big button
+// for everyone, the form is for admin-created accounts (test credentials,
+// store reviewers, people without Google). Accounts are never created
+// here — there is no sign-up form.
+const showEmail = ref(false)
+const email = ref('')
+const password = ref('')
+const canSubmit = computed(() => email.value.trim().length > 3 && password.value.length > 0 && !auth.busy)
+
+function submitEmail(): void {
+  if (!canSubmit.value) return
+  void auth.signInWithPassword(email.value, password.value)
+}
+
+function openEmail(): void {
+  auth.passwordError = null
+  showEmail.value = true
+}
 
 // Once signed in, continue to wherever the guard interrupted.
 watch(
@@ -52,6 +71,53 @@ watch(
       {{ auth.busy ? t('common.loading') : t('auth.google') }}
     </button>
     <p v-if="auth.error" class="text-xs text-coral-600">{{ t('auth.error') }}</p>
+
+    <!-- Email + password: a text link until opened, then a small form. -->
+    <button v-if="!showEmail" type="button" class="text-xs text-smoke underline" data-testid="login-email-toggle" @click="openEmail">
+      {{ t('auth.withEmail') }}
+    </button>
+    <form v-else class="flex w-full max-w-xs flex-col gap-2 text-left" novalidate data-testid="login-email-form" @submit.prevent="submitEmail">
+      <p class="text-center text-xs uppercase tracking-wide text-smoke">{{ t('auth.or') }}</p>
+      <label class="sr-only" for="login-email">{{ t('auth.email') }}</label>
+      <input
+        id="login-email"
+        v-model="email"
+        class="input"
+        type="email"
+        name="email"
+        autocomplete="username"
+        inputmode="email"
+        autocapitalize="none"
+        spellcheck="false"
+        :placeholder="t('auth.email')"
+        :disabled="auth.busy"
+        autofocus
+      />
+      <label class="sr-only" for="login-password">{{ t('auth.password') }}</label>
+      <input
+        id="login-password"
+        v-model="password"
+        class="input"
+        type="password"
+        name="password"
+        autocomplete="current-password"
+        :placeholder="t('auth.password')"
+        :disabled="auth.busy"
+      />
+      <p v-if="auth.passwordError" class="text-xs text-coral-600" role="alert">
+        {{
+          auth.passwordError === 'credentials'
+            ? t('auth.errorCredentials')
+            : auth.passwordError === 'tooMany'
+              ? t('auth.errorTooMany')
+              : t('auth.error')
+        }}
+      </p>
+      <button type="submit" class="btn-primary w-full disabled:pointer-events-none disabled:opacity-40" :disabled="!canSubmit">
+        {{ auth.busy ? t('common.loading') : t('auth.submit') }}
+      </button>
+      <button type="button" class="text-xs text-smoke underline" @click="showEmail = false">{{ t('auth.back') }}</button>
+    </form>
     <!-- Public legal pages (docs/us-market-readiness.md A2). -->
     <i18n-t keypath="legal.acceptNotice" tag="p" class="max-w-xs text-xs text-smoke">
       <template #terms>
