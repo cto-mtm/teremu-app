@@ -56,7 +56,7 @@ const TOPICS: Topic[] = [
   {
     topic: "Pulse",
     does: "The daily dashboard: expenses vs revenue, food cost % (28–35 % band), pantry value, vendor spend, the menu matrix (margin vs popularity), price watch, and alerts for vendor price hikes and margin drops.",
-    actions: "Tabs: Overview, Categories (spend drill-down pie: tap a slice), Vendors (search, weekly bars, contact). '+ Revenue' logs a day's sales (units sold per dish deplete the pantry). '+ Expense' logs a non-food bill with a tag (rent, hosting…). 'Import CSV' loads daily sales totals (date + amount; days already recorded are skipped). Tap an entry to edit or delete it (POS entries are read-only). Alerts link to the vendor, ingredient or dish. 'Billed vs real-time' appears once a delivery note is approved.",
+    actions: "Tabs: Overview, Categories (spend drill-down pie: tap a slice), Vendors (search, weekly bars, contact). '+ Revenue' logs a day's sales (units sold per dish deplete the pantry). '+ Expense' logs a non-food bill with a tag (rent, hosting…). 'Import CSV' loads daily sales totals (date + amount; days already recorded are skipped). Tap an entry to edit or delete it (POS entries are read-only). Alerts link to the vendor, ingredient or dish. The weekly charts date purchases by delivery, so an approved delivery note counts before its invoice arrives; the 'Received, not yet billed' card links to those notes.",
     where: "Pulse (the home screen)",
     open: `${S("pulse")}, ${S("pulse", '"tab":"categories"')}, ${S("pulse", '"tab":"providers"')}`,
     aka: ["ventas", "ingresos", "panel", "dashboard", "alertas", "food cost", "coste de comida", "csv", "importar ventas", "gastos", "expenses", "revenue", "sales", "matriz", "matrix"],
@@ -87,7 +87,7 @@ const TOPICS: Topic[] = [
   },
   {
     topic: "Document types",
-    does: "Invoice (factura): purchases that set prices, stock and spend. Delivery note (albarán): a delivery, counted as spend only in 'real-time' view until its invoice arrives. Credit memo (abono): a refund that subtracts stock and spend without touching prices. Expense: a non-food bill filed under a tag.",
+    does: "Invoice (factura): purchases that set prices, stock and spend. Delivery note (albarán): a delivery, counted as spend on Pulse (at an estimated price) until its invoice arrives, never a price or stock update. Credit memo (abono): a refund that subtracts stock and spend without touching prices. Expense: a non-food bill filed under a tag.",
     actions: "Set the type in Triage before approving; Teremu guesses it from the document. A delivery note later matched to an invoice is reconciled from the Triage reconciliation card. A scan that looks like one already approved is flagged as a possible duplicate.",
     where: "Triage → document type",
     open: S("triage"),

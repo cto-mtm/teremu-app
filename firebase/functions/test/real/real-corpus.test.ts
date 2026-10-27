@@ -226,8 +226,8 @@ describe.skipIf(!present || covered.length === 0)("real corpus (one client month
     const approvedFood = invoices.filter((i) => i.status === "approved" && isFoodInvoice(i));
     const billed = +approvedFood.reduce((s, i) => s + (i.total ?? 0), 0).toFixed(2);
     const rt = realtimeSpend(invoices, new Map(ingredients.map((i) => [i.id, i])));
-    const realtime = +rt.docs.filter((i) => i.status === "approved" && isFoodInvoice(i)).reduce((s, i) => s + (i.total ?? 0), 0).toFixed(2);
-    // Real-time = billed + received-but-unbilled; never double counts.
+    const realtime = +rt.seriesDocs.filter((i) => i.status === "approved" && isFoodInvoice(i)).reduce((s, i) => s + (i.total ?? 0), 0).toFixed(2);
+    // Delivery-dated spend = billed + received-but-unbilled; never double counts.
     expect(realtime).toBeCloseTo(billed + rt.pendingTotal, 2);
     expect(realtime).toBeGreaterThanOrEqual(billed);
 
