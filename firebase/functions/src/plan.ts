@@ -67,6 +67,14 @@ export const MAX_FREE_LOCATIONS_PER_OWNER = 3;
 export const planOf = (value: unknown): Plan =>
   value === "pro" || value === "max" ? value : "free";
 
+const PLAN_RANK: Record<Plan, number> = { free: 0, pro: 1, max: 2 };
+
+/** The next tier up — what a paywall offers; null on the top plan. */
+export const upgradeFrom = (plan: Plan): Plan | null => (plan === "free" ? "pro" : plan === "pro" ? "max" : null);
+
+/** Whether a plan change made the limits grow (free→pro/max, pro→max). */
+export const planRose = (from: Plan, to: Plan): boolean => PLAN_RANK[to] > PLAN_RANK[from];
+
 /**
  * The month the meters are on, in the restaurant's zone (docs/us-market-
  * readiness.md A4): a US location's count must not roll over the evening
@@ -104,13 +112,21 @@ export interface PlanInfo {
   /** Owner overrides of the pack's menu-price tax setting (A6); null = pack. */
   pricesIncludeTax: boolean | null;
   salesTaxRate: number | null;
+  /** Emailed invoices held by the meter this month (`emailQuota`, written
+   * by email/ingest.ts on every refused scan) — same read. 0 otherwise. */
+  emailQuotaWaiting: number;
+  /** Stripe's subscription status as the webhook last saw it (billing.ts):
+   * "past_due" keeps the plan while Stripe retries — same read. */
+  subscriptionStatus: string | null;
 }
 
 /** Current plan + this month's scan usage (one doc read). */
 export async function getPlanInfo(rid: string): Promise<PlanInfo> {
   const snap = await getFirestore().collection("restaurants").doc(rid).get();
   const plan = planOf(snap.get("plan"));
-  const scanCount = snap.get("scanPeriod") === monthKey(snap.get("timezone")) ? ((snap.get("scanCount") as number) ?? 0) : 0;
+  const period = monthKey(snap.get("timezone"));
+  const scanCount = snap.get("scanPeriod") === period ? ((snap.get("scanCount") as number) ?? 0) : 0;
+  const emailQuota = snap.get("emailQuota") as { period?: string; waiting?: number } | undefined;
   const rate = snap.get("laborRatePerHour");
   return {
     plan,
@@ -131,6 +147,8 @@ export async function getPlanInfo(rid: string): Promise<PlanInfo> {
     placeLinked: Boolean(snap.get("listing.placeId")),
     pricesIncludeTax: typeof snap.get("pricesIncludeTax") === "boolean" ? (snap.get("pricesIncludeTax") as boolean) : null,
     salesTaxRate: typeof snap.get("salesTaxRate") === "number" ? (snap.get("salesTaxRate") as number) : null,
+    emailQuotaWaiting: emailQuota?.period === period ? (emailQuota.waiting ?? 0) : 0,
+    subscriptionStatus: (snap.get("subscriptionStatus") as string | undefined) ?? null,
   };
 }
 

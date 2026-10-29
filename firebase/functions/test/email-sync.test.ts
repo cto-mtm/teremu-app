@@ -109,7 +109,7 @@ describe("email sync: backfill + funnel", () => {
     await connect(o);
     const res = await syncNow(o);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ listed: 14, waiting: 0, classified: 11, accepted: 7, ingested: 3, backfillDone: true });
+    expect(res.body).toEqual({ listed: 14, waiting: 0, classified: 11, accepted: 7, ingested: 3, backfillDone: true, paused: false, expired: 0 });
 
     expect(await verdicts(o.rid)).toEqual(ALL);
     expect((await ingest(o.rid, "001").get()).exists).toBe(false); // 40 days old

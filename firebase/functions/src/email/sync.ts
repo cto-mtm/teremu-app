@@ -132,6 +132,10 @@ export interface SyncResult {
   /** Invoices created this run. */
   ingested: number;
   backfillDone: boolean;
+  /** The scan meter holds this inbox's invoices after this run. */
+  paused: boolean;
+  /** Held messages let go this run (they waited past 31 days). */
+  expired: number;
 }
 
 /** Take the inbox for one sync, or refuse (409) if another holds it.
@@ -221,7 +225,7 @@ async function runSync(
 ): Promise<SyncResult> {
   const rid = conn.rid!;
   const epoch = conn.epoch;
-  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, ingested: 0, backfillDone: false };
+  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, ingested: 0, backfillDone: false, paused: false, expired: 0 };
   let sync: SyncState = conn.sync ?? {
     backfillFrom: now - BACKFILL_DAYS * DAY_MS,
     backfillCursor: null,
@@ -297,6 +301,8 @@ async function runSync(
   // 4. Accepted → invoices, within the scan meter.
   const ingest = await ingestAccepted(rid, connId, conn, access, adapter, ingestDocs);
   result.ingested = ingest.created;
+  result.paused = ingest.paused;
+  result.expired = ingest.expired;
 
   await saveSync(connId, epoch, { sync, lastSyncAt: now, ingestPending: ingest.pending });
   return result;
@@ -467,16 +473,18 @@ async function classifyCandidates(
 }
 
 /** For the Settings card: messages taken as invoices (in Triage, on the
- * way, or waiting for the meter), how many are not in Triage yet, and how
- * many messages were looked at in all (the card's progress count). */
-export async function inboxCounts(rid: string, connId: string): Promise<{ checked: number; found: number; waiting: number }> {
+ * way, or waiting for the meter), how many are not in Triage yet, how
+ * many waited too long and were let go, and how many messages were looked
+ * at in all (the card's progress count). */
+export async function inboxCounts(rid: string, connId: string): Promise<{ checked: number; found: number; waiting: number; expired: number }> {
   const byConn = ingests(rid).where("connectionId", "==", connId);
-  const [checked, found, waiting] = await Promise.all([
+  const [checked, found, waiting, expired] = await Promise.all([
     byConn.count().get(),
     byConn.where("verdict", "in", ["accepted", "ingested", "deferred_quota"]).count().get(),
     byConn.where("verdict", "in", ["accepted", "deferred_quota"]).count().get(),
+    byConn.where("verdict", "==", "expired_quota").count().get(),
   ]);
-  return { checked: checked.data().count, found: found.data().count, waiting: waiting.data().count };
+  return { checked: checked.data().count, found: found.data().count, waiting: waiting.data().count, expired: expired.data().count };
 }
 
 /**

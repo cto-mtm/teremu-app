@@ -296,6 +296,8 @@ export const emailStatusSchema = z.object({
       checked: z.number().catch(0),
       found: z.number().catch(0),
       waiting: z.number().catch(0),
+      // Held by the meter past 31 days and let go.
+      expired: z.number().catch(0),
       paused: z.boolean().catch(false),
       nextCheckAt: z.number().catch(0),
     }),
@@ -313,6 +315,12 @@ export const emailSyncResultSchema = z.object({
   backfillDone: z.boolean(),
   // Invoices this round created — the card tells the invoices store.
   ingested: z.number().catch(0),
+  // Candidates still waiting for the classifier.
+  waiting: z.number().catch(0),
+  // The meter holds this inbox's invoices after the round.
+  paused: z.boolean().catch(false),
+  // Held messages let go this round (waited past 31 days).
+  expired: z.number().catch(0),
 })
 
 /** POST /email/oauth — outcome of finishing a connect flow. */
@@ -402,6 +410,10 @@ export const meSchema = z.object({
   locale: localeSchema.nullable().optional().catch(null),
   plan: z.enum(['free', 'pro', 'max']),
   usage: z.object({ scans: z.number(), scanLimit: z.number() }),
+  // Emailed invoices the scan meter holds this month (every paywall surface).
+  emailWaiting: z.number().catch(0),
+  // Stripe's subscription status; 'past_due' = paid, but the card is failing.
+  billing: z.object({ status: z.string().nullable().catch(null) }).catch({ status: null }),
   // Kitchen labor per hour (restaurant setting, in its currency) — feeds
   // prep-time plate costing. Optional so older API responses still validate.
   laborRatePerHour: z.number().nullable().optional(),

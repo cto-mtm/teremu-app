@@ -3,7 +3,7 @@ import { GoogleAuth } from "google-auth-library";
 import { getFirestore } from "firebase-admin/firestore";
 import { DEFAULT_LOCALE, localeSchema, todayIn, type Locale, type Unit } from "@teremu/shared";
 import { logger } from "firebase-functions/v2";
-import { PLAN_LIMITS, planOf } from "./plan.js";
+import { PLAN_LIMITS, planOf, type Plan } from "./plan.js";
 
 /**
  * Email via mtmcya-mailer (docs/mtmcya-mailer.md): one authenticated
@@ -324,11 +324,28 @@ export function claimCodeEmail(args: { locale: Locale; code: string; placeName: 
  * Email import hit the plan's document limit (docs/email-ingestion.md
  * §Triage integration): invoices keep being found, and wait. One per
  * restaurant per month. Fixed content plus two numbers — nothing from
- * the mail it read.
+ * the mail it read. With a plan to grow into it is an upgrade nudge; on
+ * the top plan (`upgradeTo` null) a plain notice that points at
+ * Settings, with no unsubscribe — it is not promotional.
  */
-export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: number }): MailContent {
+export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: number; upgradeTo: Plan | null }): MailContent {
   const c = COPY[args.locale].emailQuota;
-  const pricingUrl = `${APP_URL}/pricing`;
+  if (!args.upgradeTo) {
+    const settingsUrl = `${APP_URL}/settings?card=email`;
+    return {
+      subject: c.subject(args.waiting).slice(0, 200),
+      text: [c.bodyTop(args.limit), "", settingsUrl, "", footerText(c.footer)].join("\n"),
+      html: layout(
+        args.locale,
+        `<p style="margin:0 0 20px">${c.bodyTop(args.limit)}</p>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
+<a href="${esc(settingsUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.ctaSettings}</a>
+</td></tr></table>`,
+        c.footer,
+      ),
+    };
+  }
+  const pricingUrl = `${APP_URL}/pricing?reason=email_quota`;
   return {
     subject: c.subject(args.waiting).slice(0, 200),
     // An upgrade nudge is promotional: it carries the mailer's one-click
@@ -430,6 +447,8 @@ const es = {
     body: (limit: number) => `Este mes ya usaste los ${limit} documentos de tu plan. Teremu sigue encontrando facturas en tu correo y las guarda: no se pierde ninguna.`,
     next: "Se importan solas el mes que viene, o en cuanto mejores tu plan.",
     cta: "Ver planes",
+    bodyTop: (limit: number) => `Este mes ya usaste los ${limit} documentos de tu plan. Las facturas esperan y entran solas el mes que viene.`,
+    ctaSettings: "Abrir Ajustes",
     footer: "Enviado con Teremu.",
     unsubscribe: "Dejar de recibir estos avisos",
   },
@@ -480,6 +499,8 @@ const en: typeof es = {
     body: (limit) => `You have used your plan's ${limit} documents this month. Teremu keeps finding invoices in your inbox and holds on to them — none are lost.`,
     next: "They come in on their own next month, or as soon as you upgrade.",
     cta: "See plans",
+    bodyTop: (limit) => `You have used your plan's ${limit} documents this month. The invoices wait and come in on their own next month.`,
+    ctaSettings: "Open Settings",
     footer: "Sent with Teremu.",
     unsubscribe: "Stop these notices",
   },

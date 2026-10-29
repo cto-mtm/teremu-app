@@ -4,9 +4,10 @@ import { logger } from "firebase-functions/v2";
 import { emailQuotaEmail, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
 import type { ExtractionPath, InvoiceDoc } from "../models.js";
 import { processInvoiceImage, processInvoiceText } from "../pipeline.js";
-import { consumeScan, monthKey, releaseScan } from "../plan.js";
+import { consumeScan, monthKey, planOf, releaseScan, upgradeFrom } from "../plan.js";
 import { bodyText } from "./body.js";
 import { inspectPdf, normalizeImage, rasterizePdf, UnreadableDocumentError } from "./pdf.js";
+import { clearQuotaPause } from "./planChange.js";
 import { connectionRef, db, ingests, type ConnectionDoc } from "./store.js";
 import type { IngestDoc } from "./sync.js";
 import { recordOutcome } from "./stats.js";
@@ -40,6 +41,10 @@ export interface IngestResult {
   created: number;
   /** Accepted messages still waiting for a later tick (the cap, not the quota). */
   pending: boolean;
+  /** The meter holds this inbox's invoices after this pass. */
+  paused: boolean;
+  /** Deferred messages let go this pass (waited past 31 days). */
+  expired: number;
 }
 
 /** Turn this inbox's accepted (and, when the meter allows, deferred)
@@ -52,9 +57,9 @@ export async function ingestAccepted(
   adapter: MailAdapter,
   maxDocs: number,
 ): Promise<IngestResult> {
-  const result: IngestResult = { created: 0, pending: false };
   // The meter's month is the restaurant's (plan.ts monthKey, A4).
   const timeZone = (await db().collection("restaurants").doc(rid).get()).get("timezone") as string | undefined;
+  const period = monthKey(timeZone);
   // Let go of what waited too long first — a paused inbox stops at its
   // first refused scan and would never reach the oldest messages.
   const expired = await ingests(rid)
@@ -63,6 +68,11 @@ export async function ingestAccepted(
     .where("internalDate", "<", Date.now() - DEFERRED_MAX_AGE_MS)
     .get();
   for (const d of expired.docs) await d.ref.update({ verdict: "expired_quota", snippet: FieldValue.delete(), updatedAt: Date.now() });
+  const result: IngestResult = { created: 0, pending: false, paused: conn.quotaPausedPeriod === period, expired: expired.size };
+
+  // A pause from a month that is over lifts whether or not anything is
+  // left to import — otherwise the stamp keeps the inbox due every hour.
+  if (conn.quotaPausedPeriod && conn.quotaPausedPeriod !== period) await clearQuotaPause(connId, rid);
 
   const snap = await ingests(rid)
     .where("connectionId", "==", connId)
@@ -70,7 +80,7 @@ export async function ingestAccepted(
     .orderBy("internalDate", "desc")
     .limit(maxDocs + 10)
     .get();
-  let pauseCleared = !conn.quotaPausedPeriod;
+  let pauseCleared = conn.quotaPausedPeriod !== period;
 
   for (const msg of snap.docs) {
     const ing = msg.data() as IngestDoc;
@@ -96,12 +106,14 @@ export async function ingestAccepted(
         const quota = await consumeScan(rid);
         if (!quota.ok) {
           await msg.ref.update({ verdict: "deferred_quota", done: [...done], invoiceIds, updatedAt: Date.now() });
-          await pauseForQuota(rid, connId, quota.limit, timeZone);
+          await pauseForQuota(rid, connId, quota.limit, period);
+          result.paused = true;
           return result;
         }
         if (!pauseCleared) {
-          await connectionRef(connId).update({ quotaPausedPeriod: null });
+          await clearQuotaPause(connId, rid);
           pauseCleared = true;
+          result.paused = false;
         }
       }
       if (prepared.kind !== "empty") {
@@ -224,34 +236,36 @@ async function createInvoice(
 }
 
 /**
- * The scan meter refused: flag the inbox for this month and, once per
- * restaurant and month, tell the owner how many invoices are waiting —
- * the most concrete upgrade prompt the product has. Best effort: a mail
- * failure never fails the sync.
+ * The scan meter refused: flag the inbox for this month, refresh the
+ * restaurant's waiting count (`emailQuota`, what GET /me ships to every
+ * paywall surface) and, once per restaurant and month, tell the owner how
+ * many invoices are waiting — the most concrete upgrade prompt the
+ * product has. On the top plan the same mail is a notice, not a nudge.
+ * Best effort: a mail failure never fails the sync.
  */
-async function pauseForQuota(rid: string, connId: string, limit: number, timeZone: string | undefined): Promise<void> {
-  const period = monthKey(timeZone);
+async function pauseForQuota(rid: string, connId: string, limit: number, period: string): Promise<void> {
   await connectionRef(connId).update({ quotaPausedPeriod: period });
   const restRef = db().collection("restaurants").doc(rid);
-  const first = await db().runTransaction(async (tx) => {
+  // Across the restaurant's inboxes: the meter is shared.
+  const waiting = (await ingests(rid).where("verdict", "in", ["accepted", "deferred_quota"]).count().get()).data().count;
+  const plan = await db().runTransaction(async (tx) => {
     const rest = await tx.get(restRef);
-    if (rest.get("emailQuotaNudged") === period) return false;
-    tx.set(restRef, { emailQuotaNudged: period }, { merge: true });
-    return true;
+    const first = rest.get("emailQuotaNudged") !== period;
+    tx.set(restRef, { emailQuota: { period, waiting }, ...(first ? { emailQuotaNudged: period } : {}) }, { merge: true });
+    return first ? planOf(rest.get("plan")) : null;
   });
-  if (!first) return;
+  if (!plan) return;
   try {
-    const [owner, waiting] = await Promise.all([
-      ownerRecipient(rid),
-      ingests(rid).where("verdict", "in", ["accepted", "deferred_quota"]).count().get(),
-    ]);
+    const owner = await ownerRecipient(rid);
     if (!owner) return;
+    const upgradeTo = upgradeFrom(plan);
     await sendMail({
       to: owner.to,
-      ...emailQuotaEmail({ locale: owner.locale, waiting: waiting.data().count, limit }),
+      ...emailQuotaEmail({ locale: owner.locale, waiting, limit, upgradeTo }),
       kind: "email-quota",
-      // Promotional (an upgrade nudge): one-click unsubscribe, honoured by the mailer (B4).
-      unsubscribeTopic: "email-quota",
+      // An upgrade nudge is promotional: one-click unsubscribe, honoured by
+      // the mailer (B4). The top plan's notice is not.
+      ...(upgradeTo ? { unsubscribeTopic: "email-quota" } : {}),
       // One per restaurant per month (the flag above); the key makes a retry free.
       idempotencyKey: `email-quota-${mailKeyHash(rid, period)}`,
     });

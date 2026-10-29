@@ -266,6 +266,8 @@ export interface InboxView {
   found: number;
   /** Of those, not in Triage yet (on the way, or held by the meter). */
   waiting: number;
+  /** Held by the meter past 31 days and let go — never imported. */
+  expired: number;
   /** The meter refused this month: found invoices wait until it resets. */
   paused: boolean;
   /** When "check now" opens again (epoch ms; 0 = now) — the client shows

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { checkoutSessionParams } from "../src/billing.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type Stripe from "stripe";
+import { checkoutSessionParams, planFromSubscription } from "../src/billing.js";
 
 /**
  * Pure: the Checkout Session body (docs/us-market-readiness.md A3). The
@@ -33,5 +34,33 @@ describe("checkoutSessionParams", () => {
     const p = checkoutSessionParams({ ...base, existingCustomer: undefined });
     expect(p.success_url).toBe("https://app.example/settings?billing=success");
     expect(p.cancel_url).toBe("https://app.example/pricing?billing=cancelled");
+  });
+});
+
+/**
+ * Pure apart from the price ids in the environment: which Stripe statuses
+ * keep the tier that was bought (decided 2026-10-29 — a failing renewal
+ * keeps the plan while Stripe retries; docs/business-model.md §3).
+ */
+describe("planFromSubscription", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const sub = (status: string, price = "price_max_month") =>
+    ({ status, items: { data: [{ price: { id: price } }] } }) as unknown as Stripe.Subscription;
+
+  it("keeps the bought tier while active, trialing or past due", () => {
+    vi.stubEnv("STRIPE_PRICE_MAX_MONTHLY", "price_max_month");
+    for (const status of ["active", "trialing", "past_due"]) expect(planFromSubscription(sub(status)), status).toBe("max");
+  });
+
+  it("drops to free once the subscription is dead, unpaid, never paid or paused", () => {
+    vi.stubEnv("STRIPE_PRICE_MAX_MONTHLY", "price_max_month");
+    for (const status of ["canceled", "unpaid", "incomplete", "incomplete_expired", "paused"]) {
+      expect(planFromSubscription(sub(status)), status).toBe("free");
+    }
+  });
+
+  it("falls back to pro for a price outside the configured ladder", () => {
+    expect(planFromSubscription(sub("active", "price_unknown"))).toBe("pro");
   });
 });

@@ -64,7 +64,7 @@ import { assistant, type AssistantPrincipal } from "./assistant/manifest.js";
 import { draftRecipes, extractMenu, type CatalogEntry } from "./menuscan.js";
 import { mergeIngredients, setAliases } from "./merge.js";
 import { consumeMailQuota, inviteEmail, mailAccepted, mailKeyHash, orderEmail, sendMail, senderName } from "./mail.js";
-import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, monthKey, PLAN_LIMITS, planOf, refundScan } from "./plan.js";
+import { consumeScan, getPlanInfo, MAX_FREE_LOCATIONS_PER_OWNER, monthKey, PLAN_LIMITS, planOf, refundScan, upgradeFrom } from "./plan.js";
 import {
   billingConfigured,
   cancelSubscription,
@@ -117,6 +117,7 @@ import {
 } from "./email/oauth.js";
 import { EMAIL_SECRETS } from "./email/index.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
+import { resumeAfterPlanChange } from "./email/planChange.js";
 import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox } from "./email/sync.js";
 import { recordOutcome } from "./email/stats.js";
 
@@ -235,7 +236,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
   // The tier a paywalled action would need — null when already on the
   // top plan, so the client can turn "limit reached" into a real upgrade
   // CTA instead of a dead-end message (and never nag a max user to upgrade).
-  const upgradeTo = planInfo.plan === "free" ? "pro" : planInfo.plan === "pro" ? "max" : null;
+  const upgradeTo = upgradeFrom(planInfo.plan);
   const paywall = (code: string) =>
     json(res, 402, { error: code, plan: planInfo.plan, upgradeTo });
   const cappedDays = (fallback: number): number =>
@@ -279,6 +280,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
       locale: localeSchema.nullable().catch(null).parse(userSnap.get("locale") ?? null),
       plan: planInfo.plan,
       usage: { scans: planInfo.scanCount, scanLimit: planInfo.limits.scans },
+      // Emailed invoices the meter is holding this month — every paywall
+      // surface shows the number (docs/email-quota-paywall-plan.md).
+      emailWaiting: planInfo.emailQuotaWaiting,
+      // Stripe's view of the subscription: "past_due" = paid, card failing.
+      billing: { status: planInfo.subscriptionStatus },
       laborRatePerHour: planInfo.laborRatePerHour,
       currency: planInfo.currency,
       currencyLocked: !anyApproved.empty,
@@ -1482,6 +1488,8 @@ async function route(req: Request, res: Response): Promise<unknown> {
       }
       const { plan } = z.object({ plan: z.enum(["free", "pro", "max"]) }).parse(req.body);
       await db.collection("restaurants").doc(rid).set({ plan }, { merge: true });
+      // Same reaction as the Stripe webhook (billing.ts applySubscription).
+      await resumeAfterPlanChange(rid, planInfo.plan, plan);
       return json(res, 200, { ok: true, plan });
     }
   }

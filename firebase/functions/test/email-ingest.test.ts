@@ -179,24 +179,77 @@ describe("email ingest: the scan meter", () => {
     await connect(o);
     const res = await syncNow(o);
     expect(res.status).toBe(200);
-    expect(res.body.ingested).toBe(0);
+    expect(res.body).toMatchObject({ ingested: 0, paused: true, expired: 0 });
     expect((await ingest(o.rid, "017").get()).get("verdict")).toBe("deferred_quota");
     expect((await inbox().get()).get("quotaPausedPeriod")).toBe(month());
     expect((await db().doc(`restaurants/${o.rid}`).get()).get("emailQuotaNudged")).toBe(month());
     expect((await byMessage(o)).size).toBe(0);
-    expect((await get("/email", o.token)).body.inboxes[0]).toMatchObject({ paused: true, found: 7, waiting: 7 });
+    expect((await get("/email", o.token)).body.inboxes[0]).toMatchObject({ paused: true, found: 7, waiting: 7, expired: 0 });
+    // Every paywall surface reads the count from the profile.
+    expect((await get("/me", o.token)).body.emailWaiting).toBe(7);
 
     // A message that waited past 31 days is let go, not imported late.
     await ingest(o.rid, "002").update({ verdict: "deferred_quota", internalDate: Date.now() - 40 * 86_400_000 });
 
-    // A paused inbox stays due: the first check after an upgrade resumes it.
+    // A plan written straight to Firestore reaches no hook: the paused
+    // inbox stays due, and the first check after the upgrade resumes it.
     await setPlan(o.rid, "pro");
     const resumed = await syncNow(o);
     expect(resumed.status).toBe(200);
-    expect(resumed.body.ingested).toBe(3);
+    expect(resumed.body).toMatchObject({ ingested: 3, paused: false, expired: 1 });
     expect((await inbox().get()).get("quotaPausedPeriod")).toBeNull();
     expect((await ingest(o.rid, "002").get()).get("verdict")).toBe("expired_quota");
-    expect((await get("/email", o.token)).body.inboxes[0]).toMatchObject({ paused: false });
+    expect((await get("/email", o.token)).body.inboxes[0]).toMatchObject({ paused: false, expired: 1 });
+    expect((await get("/me", o.token)).body.emailWaiting).toBe(0);
+  });
+
+  it("a plan switch lifts the pause at once — before any sync — and the backlog drains", async () => {
+    await db().doc(`restaurants/${o.rid}`).set({ scanPeriod: month(), scanCount: 25 }, { merge: true });
+    await connect(o);
+    expect((await syncNow(o)).body.paused).toBe(true);
+
+    expect((await api("/billing/plan", { token: o.token, method: "PUT", body: { plan: "pro" } })).status).toBe(200);
+    expect((await inbox().get()).get("quotaPausedPeriod")).toBeNull();
+    expect((await get("/email", o.token)).body.inboxes[0]).toMatchObject({ paused: false, working: true, nextCheckAt: 0 });
+    expect((await get("/me", o.token)).body.emailWaiting).toBe(0);
+
+    await drain(o);
+    expect((await byMessage(o)).size).toBe(7);
+  });
+
+  it("a switch down, or to the same plan, leaves the pause alone", async () => {
+    await setPlan(o.rid, "pro");
+    await db().doc(`restaurants/${o.rid}`).set({ scanPeriod: month(), scanCount: 500 }, { merge: true });
+    await connect(o);
+    expect((await syncNow(o)).body.paused).toBe(true);
+    await api("/billing/plan", { token: o.token, method: "PUT", body: { plan: "pro" } });
+    await api("/billing/plan", { token: o.token, method: "PUT", body: { plan: "free" } });
+    expect((await inbox().get()).get("quotaPausedPeriod")).toBe(month());
+  });
+
+  it("clears a pause left over from last month even with nothing waiting", async () => {
+    await connect(o);
+    await drain(o);
+    const d = new Date();
+    const lastMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+    await inbox().update({ quotaPausedPeriod: lastMonth });
+
+    expect((await syncNow(o)).status).toBe(200); // a stamped inbox is due
+    expect((await inbox().get()).get("quotaPausedPeriod")).toBeNull();
+    const view = (await get("/email", o.token)).body.inboxes[0];
+    expect(view.paused).toBe(false);
+    expect(view.nextCheckAt).toBeGreaterThan(Date.now()); // back on the plan's daily cadence
+  });
+
+  it("holds the top plan's invoices too, with the count on the profile", async () => {
+    await setPlan(o.rid, "max");
+    await db().doc(`restaurants/${o.rid}`).set({ scanPeriod: month(), scanCount: 1500 }, { merge: true });
+    await connect(o);
+    expect((await syncNow(o)).body).toMatchObject({ paused: true, ingested: 0 });
+    // The once-a-month notice went out (its Max copy has no pricing link —
+    // mail-units.test.ts; no mail leaves the emulator to inspect here).
+    expect((await db().doc(`restaurants/${o.rid}`).get()).get("emailQuotaNudged")).toBe(month());
+    expect((await get("/me", o.token)).body.emailWaiting).toBe(7);
   });
 });
 

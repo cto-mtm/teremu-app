@@ -6,7 +6,8 @@ import Stripe from "stripe";
 // Explicit alias so the exported secret refs don't force TS to name a
 // deep internal type (TS2742) when other modules import them.
 type SecretParam = ReturnType<typeof defineSecret>;
-import type { Plan } from "./plan.js";
+import { resumeAfterPlanChange } from "./email/planChange.js";
+import { planOf, type Plan } from "./plan.js";
 
 export const STRIPE_SECRET_KEY: SecretParam = defineSecret("STRIPE_SECRET_KEY");
 export const STRIPE_WEBHOOK_SECRET: SecretParam = defineSecret("STRIPE_WEBHOOK_SECRET");
@@ -165,11 +166,25 @@ export async function cancelSubscription(rid: string): Promise<void> {
 
 // ── Webhook ─────────────────────────────────────────────────────────
 
+/** Subscription statuses that keep the tier that was bought:
+ *
+ *   active, trialing   paid (or in a trial)
+ *   past_due           a renewal failed and Stripe is retrying (~3 weeks
+ *                      by default) — a card problem must not re-cap a
+ *                      paying restaurant mid-retry (decided 2026-10-29,
+ *                      docs/business-model.md §3)
+ *
+ * Everything else is Free: canceled; unpaid (the retries ran out);
+ * incomplete / incomplete_expired (the first payment never completed);
+ * paused (collection paused on purpose). */
+const PAID_STATUSES: ReadonlySet<Stripe.Subscription.Status> = new Set(["active", "trialing", "past_due"]);
+
 /** subscription state → our plan: dead → free, else the tier whose
  * price was actually bought. An unrecognized price falls back to "pro"
- * (fail-open to the cheaper tier, logged for investigation). */
-function planFromSubscription(sub: Stripe.Subscription): Plan {
-  if (!(sub.status === "active" || sub.status === "trialing")) return "free";
+ * (fail-open to the cheaper tier, logged for investigation). Pure apart
+ * from the price ids in the environment (test/billing-units.test.ts). */
+export function planFromSubscription(sub: Stripe.Subscription): Plan {
+  if (!PAID_STATUSES.has(sub.status)) return "free";
   const priceId = sub.items.data[0]?.price?.id;
   for (const plan of Object.keys(PRICE_ENV) as PaidPlan[]) {
     if (Object.values(PRICE_ENV[plan]).some((envName) => process.env[envName] === priceId)) {
@@ -199,16 +214,22 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
     logger.warn("Could not re-fetch subscription — applying event snapshot", { sub: sub.id, err });
   }
   const interval = sub.items.data[0]?.price?.recurring?.interval;
-  await getFirestore().collection("restaurants").doc(rid).set(
+  const ref = getFirestore().collection("restaurants").doc(rid);
+  const from = planOf((await ref.get()).get("plan"));
+  const to = planFromSubscription(sub);
+  await ref.set(
     {
-      plan: planFromSubscription(sub),
+      plan: to,
       planInterval: interval === "year" ? "year" : "month",
       stripeCustomerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
       stripeSubscriptionId: sub.id,
+      // "past_due" keeps the plan; the app shows the payment problem.
+      subscriptionStatus: sub.status,
     },
     { merge: true },
   );
   logger.info("Applied subscription", { rid, status: sub.status });
+  await resumeAfterPlanChange(rid, from, to);
 }
 
 /**
