@@ -60,13 +60,15 @@ watch(assistantOpen, (open) => {
 // and it yields to the first-login onboarding tour: a brand-new user
 // sees the tour, and the launcher waits for their next session / the FAB
 // (checking onboarding's own localStorage key rather than its ref, which
-// is declared below).
+// is declared below). Keyed on the profile's PRESENCE, not the object:
+// every reloadProfile() swaps it, and once the tour has closed that would
+// pop the launcher mid-session on the next currency/plan/locale save.
 const launcherOpen = ref(false)
 const LAUNCHER_SEEN = 'teremu-launcher-seen'
 watch(
-  () => [authStore.ready, authStore.user, authStore.profile] as const,
-  ([ready, user, profile]) => {
-    if (!ready || !user || !profile) return
+  () => [authStore.ready, authStore.user, !!authStore.profile] as const,
+  ([ready, user, hasProfile]) => {
+    if (!ready || !user || !hasProfile) return
     const isMobile = matchMedia('(max-width: 767px)').matches
     const onboardingPending = !localStorage.getItem(`teremu-onboarded:${user.uid}`)
     if (isMobile && !onboardingPending && !sessionStorage.getItem(LAUNCHER_SEEN)) {
@@ -86,13 +88,17 @@ const onboardingKey = (uid: string) => `teremu-onboarded:${uid}`
 // Also not while the owner is still ON the setup page: finishing it marks
 // setup done, and the tour must not cover the "¡Listo!" screen.
 watch(
-  () => [authStore.profile, authStore.user, authStore.listingSetupPending, route.name, listingStore.handoff] as const,
-  ([profile, user, setupPending, routeName, handoff]) => {
+  () =>
+    [authStore.profile, authStore.user, authStore.listingSetupPending, route.name, listingStore.handoff, bare.value] as const,
+  ([profile, user, setupPending, routeName, handoff, isBare]) => {
     if (
       profile &&
       user &&
       !setupPending &&
       routeName !== 'restaurant-setup' &&
+      // …nor over a chromeless page: the scanner owns the viewport (a
+      // /scan link or shared file can be a new member's first screen).
+      !isBare &&
       // …nor over the recipe wizard the setup hands off to (MenuPage).
       !handoff &&
       !localStorage.getItem(onboardingKey(user.uid))

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAssistant } from '@mtmcya/assistant/vue'
@@ -59,6 +59,9 @@ watch(wizardOpen, (isOpen) => {
   recipeSeed.value = undefined
   listing.handoff = false // the first-login tour may open now (AppShell)
 })
+// Leaving before the wizard closed (or before the imported dishes loaded
+// and it ever opened) must not hold the tour back for the whole session.
+onUnmounted(() => (listing.handoff = false))
 // Deep link from the setup "done" screen: /menu?recipes=listing.
 watch(
   () => [route.query.recipes, needRecipes.value.length] as const,
