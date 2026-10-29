@@ -67,7 +67,8 @@ e2e/
     ├── vendors/             # directory search, vendor page, ordering contact
     ├── settings/            # team invite + per-area permissions (second signed-in user),
     │                        #   location name / labor rate / units / health, new location + POS
-    │                        #   + email import (fake inbox: connect → check now → Triage)
+    │                        #   + email import (fake inbox: connect → check now → Triage;
+    │                        #   at Free's limit: waiting count → pricing → upgrade → imported)
     ├── pricing/             # plan page, free vs pro gates
     └── setup/               # "find your restaurant": a FRESH owner imports a listing (fake Places
                              #   backend + fixture websites) → review → save → recipe hand-off
