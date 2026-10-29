@@ -32,7 +32,7 @@ export const US_PACK: CountryPack = {
     '- Pack sizes read COUNT/SIZE: "4/5 LB" is 4 bags of 5 lb (packQty 20, packUnit "lb"); "12/32 OZ" is 12 units of 32 oz (packQty 24, packUnit "lb"); "24/16 FLOZ" is 24 bottles of 16 fl oz (packQty 3, packUnit "gal").',
     '- "CS" / "CA" = case, "EA" = each, "DZ" = dozen, "LB" = lb, "OZ" = oz, "GAL" = gal, "BG"/"BAG" and "BX" = box, "CT"/"PK" = case.',
     '- Catch-weight lines bill by weight ("1 CS  38.6 LB @ 3.29/LB"): qty is the billed weight in lb, unit "lb", unitPrice the per-lb price.',
-    '- "Sales Tax", "Fuel Surcharge", "Delivery Charge", "CRV", "Bottle Deposit" and "Pallet Fee" are not products: skip them as lines but include them in "total".',
+    '- "Sales Tax", "Fuel Surcharge", "Delivery Charge", "CRV", "Bottle Deposit" and "Pallet Fee" are not products: skip them as lines — the printed total already includes them.',
   ].join("\n"),
   nonProductLineNames: ["Sales Tax", "Tax", "Fuel Surcharge", "Delivery Charge", "Delivery Fee", "CRV", "Bottle Deposit", "Pallet Fee"],
 };

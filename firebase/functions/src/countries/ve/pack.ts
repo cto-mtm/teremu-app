@@ -22,7 +22,7 @@ export const VE_PACK: CountryPack = {
     "VENEZUELAN DOCUMENTS:",
     '- Bolívar amounts are written "Bs.", "Bs", "Bs.S", "Bs.D" or "BsF" — report the currency as "VES". Numbers use "." for thousands and "," for decimals ("Bs. 9.312,50" = 9312.50).',
     '- "SENIAT" (the tax authority) is printed on every fiscal receipt, often in large type at the top or bottom next to "MAQUINA FISCAL" / "FACTURA" marks: it is NEVER the vendor. The vendor is the business whose name and RIF (J-…, V-…) head the document; the buyer\'s RIF appears next to "CLIENTE" / "RAZON SOCIAL".',
-    '- "IVA" (16 %) is VAT and "IGTF" (3 %) is the tax on paying in foreign currency: skip them as lines but include them in "total". "BI" / "BASE IMPONIBLE" and "SUBTOTAL" are subtotals, never lines. Items marked "(E)" or "EXENTO" are tax-exempt products — keep them as lines.',
+    '- "IVA" (16 %) is VAT and "IGTF" (3 %) is the tax on paying in foreign currency: skip them as lines — the printed total already includes them. "BI" / "BASE IMPONIBLE" and "SUBTOTAL" are subtotals, never lines. Items marked "(E)" or "EXENTO" are tax-exempt products — keep them as lines.',
     '- A "REF" / "$" / "USD" amount next to the Bs. total, or a "TASA BCV" / "TASA" figure, is the printed exchange rate context: copy the rate into "printedFxRate".',
   ].join("\n"),
   nonProductLineNames: ["IVA", "IGTF"],

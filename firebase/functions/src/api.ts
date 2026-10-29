@@ -694,9 +694,11 @@ async function route(req: Request, res: Response): Promise<unknown> {
           ...(inv.pagesPending ? { pagesPending: false } : {}),
         });
         // An emailed document is re-read the way it was read: its text
-        // (text_layer / body) or its page images.
+        // (text_layer / body) or its page images. An emailed document's
+        // page images are Gmail data and go to Vertex, not the default
+        // provider (Limited Use) — the `email` field marks the source.
         if (inv.email?.textPath && inv.extraction !== "vision") await processInvoiceText(rid, id, inv.email.textPath);
-        else await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath]);
+        else await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath], inv.email ? "vertex" : "default");
         return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "GET" && action === "text") {

@@ -3,6 +3,7 @@ import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { extractInvoice, extractInvoiceFromText, type ExtractionContext, type OcrResult } from "./ocr.js";
 import { refundScan } from "./plan.js";
+import type { LlmBackend } from "./llm.js";
 import { expandUsage, todayIn, vendorKey } from "@teremu/shared";
 import { convertQty } from "./units.js";
 import { convertInvoice, hasPricedLines, rerateBasePrice, toBaseTotal } from "./fx/convert.js";
@@ -276,14 +277,17 @@ async function extractionContext(rid: string): Promise<ExtractionContext> {
 export async function processInvoiceImage(
   rid: string,
   invoiceId: string,
-  imagePaths: string[]
+  imagePaths: string[],
+  // "vertex" for an emailed PDF/photo: its page images are Gmail user
+  // data and must not reach the third-party default provider (Limited Use).
+  backend: LlmBackend = "default",
 ): Promise<void> {
   await runExtraction(rid, invoiceId, async (context) => {
     // All pages of the document, in capture order — one extraction call.
     const buffers = await Promise.all(
       imagePaths.map(async (p) => (await getStorage().bucket().file(p).download())[0])
     );
-    return extractInvoice(buffers.map((b) => b.toString("base64")), context);
+    return extractInvoice(buffers.map((b) => b.toString("base64")), context, backend);
   });
 }
 

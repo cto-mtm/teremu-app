@@ -213,7 +213,9 @@ async function createInvoice(
     scanPeriod: monthKey(timeZone),
   };
   await ref.set(doc);
-  if (prepared.extraction === "vision") await processInvoiceImage(rid, ref.id, paths);
+  // Gmail page images go to Vertex, not the default provider (Limited
+  // Use — docs/llm.md §Two backends).
+  if (prepared.extraction === "vision") await processInvoiceImage(rid, ref.id, paths, "vertex");
   else await processInvoiceText(rid, ref.id, textPath!);
   // Extraction said "not a document" and discarded it: a classifier
   // misfire, which counts against this inbox's junk rate.

@@ -20,18 +20,18 @@ LLM_PROVIDER=gemini
 
 plus putting a Gemini API key where the key lives (`firebase functions:secrets:set NVIDIA_API_KEY` in prod, `.secret.local` locally). Gemini's OpenAI-compatibility layer (`https://generativelanguage.googleapis.com/v1beta/openai/`) accepts the same bearer-token auth, `max_tokens`/`temperature` params, and base64 `data:` URLs in `image_url` parts that our payloads already use.
 
-### Two backends: page images on the provider, email text on Vertex (2026-10-22)
+### Two backends: scanned page images on the provider, all email data on Vertex (2026-10-22; emailed images 2026-10-28)
 
 `chatCompletion(…, { backend })` picks where a call goes (`LlmBackend` in `llm.ts`):
 
 | Backend | Used by | How it authenticates |
 | --- | --- | --- |
-| `default` | everything with page images (invoice OCR of scans **and** of emailed PDFs/photos — the `vision` path), menu scan, recipe drafts | the configured provider above (`NVIDIA_API_KEY`) |
-| `vertex` | the **text** calls on email data: the stage-1 classifier (`email-classify`) and text extraction (`ocr-text` — a PDF's text layer or an email body) | Gemini on Vertex AI in `GOOGLE_VERTEX_PROJECT` / `GOOGLE_VERTEX_LOCATION` (the assistant's settings), as the function's own service account — no key. Model `google/gemini-3.5-flash-lite` (`VERTEX_LLM_MODEL` overrides) |
+| `default` | page images the app captured (invoice OCR of scans and multi-page captures), menu scan, recipe drafts | the configured provider above (`NVIDIA_API_KEY`) |
+| `vertex` | every call on email data: the stage-1 classifier (`email-classify`), text extraction (`ocr-text` — a PDF's text layer or an email body), and the page images of an emailed PDF or photo (`ocr`, the `vision` path — `extractInvoice(…, "vertex")` via `processInvoiceImage(…, "vertex")`, also on a re-read of an emailed invoice) | Gemini on Vertex AI in `GOOGLE_VERTEX_PROJECT` / `GOOGLE_VERTEX_LOCATION` (the assistant's settings), as the function's own service account — no key. Model `google/gemini-3.5-flash-lite` (`VERTEX_LLM_MODEL` overrides; `vertexModel()`) |
 
-The endpoint is Vertex's OpenAI-compatible one (`https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/chat/completions`, a regional host for other locations — Google's "OpenAI compatibility" docs, checked 2026-10-22), so the same request body, structured output and retries apply. Text calls **never fall back** to the default provider: without Vertex they use their offline mock (emulator, tests), and a deployment without `GOOGLE_VERTEX_PROJECT` keeps email import switched off (`emailAvailable`). Cassettes work the same for both.
+The endpoint is Vertex's OpenAI-compatible one (`https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/chat/completions`, a regional host for other locations — Google's "OpenAI compatibility" docs, checked 2026-10-22), so the same request body, structured output and retries apply. Email calls **never fall back** to the default provider: without Vertex they use their offline mock (emulator, tests), and a deployment without `GOOGLE_VERTEX_PROJECT` keeps email import switched off (`emailAvailable`). `test/email-units.test.ts` pins both halves for emailed images. Cassettes work the same for both.
 
-**Limited Use caveat (Gmail).** The page images of an *emailed* PDF or photo are Gmail data too, and they go to the default provider. Before Google verifies `gmail.readonly`, that provider must not use the data for training (NVIDIA's free endpoint gives no such guarantee — a paid/enterprise plan, or moving the `vision` path for emailed documents to Vertex, closes it), or the scope justification must say what it does. See docs/email-ingestion.md.
+**Limited Use (Gmail): closed for page images.** An emailed PDF's or photo's page images are Gmail data too. Since 2026-10-28 they go to Vertex like the rest of the email path, so no Gmail data reaches a third-party provider that might train on it. See docs/email-ingestion.md.
 
 ## Current providers
 
@@ -48,6 +48,8 @@ A candidate is only qualified once it passes all four: invocable, accepts images
 **Verified preset behavior** (`meta/llama-3.2-11b-vision-instruct`, Kroger receipt, 2026-08-13): vendor, all three line items, unit prices and grand total all correct. It also emits exactly the sloppiness `ocr.ts` is built to absorb — `"unit": "F"` (a receipt tax flag, off-vocabulary → `.catch("each")`), `"date": "null"` as a string (fails the regex → `.catch(null)`), and one line categorized `other` instead of `meat`. The lenient zod layer is load-bearing, not defensive decoration: without it this reply would fail the scan outright.
 
 **Production OCR model: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`**, set with `LLM_MODEL` in `firebase/functions/.env` (the preset above stays the code default). Measured on a real client month scored against the accountant's export (`docs/real-samples.md`, 2026-09-23): totals right to the cent on **208/248** documents vs **21/248** for the 11b preset — the 11b answers most real invoices in prose, and rejects every multi-page scan (`400 At most 1 image(s)`). Weak spots: albarán vs factura only 68% right, ~15% unreadable. Menu scan, recipe drafts and the assistant were smoke-tested on it too. To compare another model on the same documents: `LLM_MODEL=… npm run real:eval`.
+
+**Gemini on Vertex, same documents (2026-10-28).** `npm run real:eval -- --vertex` sends the page images to `google/gemini-3.5-flash-lite` with the production prompt and context. With the Oct 28 prompt fixes (service bills have lines, albarán labels, base-only documents, ISO dates) it read **248/248** documents, totals right on **246** (the other two are disputable in the accountant's export), document type **247**, dates **243**, vendor **226**, multi-page **20/20**. Nemotron, re-scored with the same code: 211 read, 208 totals, type 143. Cost measured from `llm_usage`: ~4.5K input + ~0.4K output tokens per scan, **≈ $0.0024 average** (P95 $0.0035, worst 4-page document $0.0099) at $0.30 / $2.50 per 1M (Gemini API pricing re-checked 2026-10-28). Scans still go to Nemotron in production until the default backend's provider is switched.
 
 **Rate limits are retried.** The free tier throttles bursts (a stack of scans uploaded together): `chatCompletion` retries 429/502/503/504 and network errors twice with backoff, honoring `Retry-After` (capped at 5 s). Nothing else is retried — a 400/401/404/410 will not fix itself.
 

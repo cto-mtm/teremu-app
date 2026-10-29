@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { GoogleAuth } from "google-auth-library";
 import { bodyText } from "../src/email/body";
 import { htmlToText } from "../src/helpers/html";
 import { candidateAttachments, mockVerdict, senderAddress, stage0 } from "../src/email/classify";
@@ -8,6 +9,7 @@ import type { MailMessageMeta } from "../src/email/types";
 import { fetchRetrying } from "../src/email/gmail";
 import { acceptThreshold } from "../src/email/stats";
 import { llmEnabled, vertexConfigured } from "../src/llm";
+import { extractInvoice } from "../src/ocr";
 
 // Email ingestion building blocks that need no emulator: PDF reading,
 // body text, the stage-0 gates and the offline classifier.
@@ -156,7 +158,7 @@ describe("Gmail backoff (fetchRetrying)", () => {
   });
 });
 
-describe("LLM routing: email text on Vertex, page images on the default provider", () => {
+describe("LLM routing: email on Vertex, scanned page images on the default provider", () => {
   const saved = { ...process.env };
   afterEach(() => {
     process.env = { ...saved };
@@ -177,6 +179,44 @@ describe("LLM routing: email text on Vertex, page images on the default provider
     process.env.TEREMU_TEST_MOCKS = "1";
     process.env.GOOGLE_VERTEX_PROJECT = "teremu-app";
     expect(llmEnabled("vertex")).toBe(false);
+  });
+
+  // Emailed page images are Gmail data (Limited Use): extractInvoice with
+  // "vertex" must reach Vertex or nothing — never the default provider.
+  describe("emailed page images", () => {
+    const reply = { kind: "receipt", docType: "invoice", confidence: 0.9, vendor: "Proveedor SL", date: "2026-05-02", lineItems: [{ name: "Tomate", qty: 1, unit: "kg", unitPrice: 2, total: 2 }], total: 2 };
+    const fetchStub = () =>
+      vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) } }] }), { status: 200 }));
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("go to Vertex when it is configured", async () => {
+      delete process.env.TEREMU_TEST_MOCKS;
+      process.env.LLM_API_KEY = "nvidia-key";
+      process.env.GOOGLE_VERTEX_PROJECT = "teremu-app";
+      vi.spyOn(GoogleAuth.prototype, "getAccessToken").mockResolvedValue("vertex-token");
+      const fetch = fetchStub();
+      vi.stubGlobal("fetch", fetch);
+      const r = await extractInvoice(["aGk="], {}, "vertex");
+      expect(r.vendor).toBe("Proveedor SL");
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toContain("aiplatform.googleapis.com/v1/projects/teremu-app/");
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer vertex-token");
+    });
+
+    it("fall back to the offline mock, not the default provider, without Vertex", async () => {
+      delete process.env.TEREMU_TEST_MOCKS;
+      delete process.env.GOOGLE_VERTEX_PROJECT;
+      process.env.LLM_API_KEY = "nvidia-key";
+      const fetch = fetchStub();
+      vi.stubGlobal("fetch", fetch);
+      const r = await extractInvoice(["aGk="], {}, "vertex");
+      expect(fetch).not.toHaveBeenCalled();
+      expect(r.lineItems.length).toBeGreaterThan(0); // the mock's invented lines
+    });
   });
 });
 

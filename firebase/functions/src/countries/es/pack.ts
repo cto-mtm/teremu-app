@@ -26,8 +26,11 @@ export const ES_PACK: CountryPack = {
   ocrHints: [
     "SPANISH DOCUMENTS:",
     '- Dates are DD/MM/YYYY ("03/04/2026" is 3 April). Numbers use "." to group thousands and "," for decimals ("9.312,50" = 9312.50).',
-    '- "FACTURA" is an invoice, "ALBARÁN" / "NOTA DE ENTREGA" a delivery note, "FACTURA RECTIFICATIVA" / "ABONO" a credit. "BASE IMPONIBLE" and "SUBTOTAL" are subtotals, "IVA" and "RECARGO DE EQUIVALENCIA" are tax lines: skip them as lines but include them in "total".',
+    '- "FACTURA" is an invoice, "ALBARÁN" / "NOTA DE ENTREGA" a delivery note, "FACTURA RECTIFICATIVA" / "ABONO" a credit. "BASE IMPONIBLE" and "SUBTOTAL" are subtotals, "IVA" and "RECARGO DE EQUIVALENCIA" are tax lines: skip them as lines — the printed total already includes them.',
     '- The buyer appears next to "CLIENTE", "DESTINATARIO" or "ENTREGAR EN"; the vendor is the business whose name and CIF / NIF head the document.',
+    '- A document with no "FACTURA" heading whose number is labelled "ALBARÁN" / "ALBARAN:" / "Nº ALBARÁN" / "Albarà" (as a heading, a field label or the header of the number column) is a delivery note, even with TOTAL / ENTREGADO / CAMBIO or "Facturación: semanal" printed. "Albarán-Factura" is an invoice.',
+    '- A "Recibo de alquiler" is a rent bill: its line is the rent ("Renta"). "Retención IRPF" is tax withholding, not a line; "TOTAL A PAGAR" already reflects it. Utility and professional-fee lines read "Energía consumida", "Término fijo", "Contabilidad mensual" and the like.',
+    '- "Base imp." with no IVA line and no "Total" is a document that stops at its pre-tax base.',
   ].join("\n"),
   nonProductLineNames: ["IVA", "Recargo de equivalencia", "Portes", "Transporte"],
 };

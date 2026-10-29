@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmEnabled, parseModelJson } from "./llm.js";
+import { chatCompletion, llmEnabled, parseModelJson, type LlmBackend } from "./llm.js";
 import {
   categorySchema,
   currencySchema,
@@ -28,17 +28,17 @@ const SUBCATEGORY_GUIDE = Object.entries(SUBCATEGORIES)
   .map(([cat, subs]) => `${cat}: ${subs.join("|")}`)
   .join("; ");
 
-const EXTRACTION_PROMPT = `You are an expert at reading restaurant vendor invoices and receipts, including crumpled, handwritten, or poorly printed ones.
+const EXTRACTION_PROMPT = `You are an expert at reading the documents a restaurant is billed with (vendor invoices, delivery notes, receipts, rent and utility bills), including crumpled, handwritten, or poorly printed ones.
 
 FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdown fences, no commentary) in exactly this shape:
 
 {
-  "kind": "one of: receipt (a purchase receipt or vendor invoice/delivery note), other (anything that is not a purchase document: people, food photos, menus, screenshots, blank pages)",
+  "kind": "one of: receipt (any document that bills or charges the business: a purchase receipt, vendor invoice or delivery note, and also rent receipts, utility and fuel bills, professional fees, subscriptions), other (anything that is not such a document: people, food photos, menus, screenshots, blank pages)",
   "title": "the document's own heading as printed (e.g. FACTURA, Factura simplificada, ALBARÁN, Albarán valorado, Nota de entrega, Invoice, Packing slip, Delivery note, Abono), or null",
   "docType": "one of: invoice (factura / bill / ticket / receipt — the vendor charging money), delivery_note (albarán / packing slip / nota de entrega / delivery note — goods handed over, to be billed later; an albarán VALORADO shows prices and is STILL a delivery note), credit_memo (abono / factura rectificativa / credit note / credit memo / return — the vendor crediting money back; report its quantities and amounts as POSITIVE numbers)",
   "confidence": 0.9,
   "vendor": "vendor or supplier business name, or null",
-  "date": "invoice date as YYYY-MM-DD, or null",
+  "date": "invoice date written as YYYY-MM-DD whatever order the page prints it in, or null",
   "currency": "ISO 4217 code of the currency the LINE prices are printed in (USD, EUR, VES, MXN, GBP, CAD), or null if it cannot be determined",
   "printedFxRate": null,
   "lineItems": [
@@ -50,7 +50,7 @@ FIRST classify the image, THEN extract. Reply with ONLY a JSON object (no markdo
 Rules:
 - If "kind" is "other", set lineItems to [] and everything else to null — do NOT invent data.
 - "confidence" is how sure you are about the classification AND the extraction overall (0 to 1).
-- "docType" follows what the document CALLS itself, not whether it shows prices: a vendor on monthly billing delivers on priced albaranes for weeks and sends one factura at month end, and that factura is the only one that charges. Copy the heading into "title"; still extract every line and price an albarán prints.
+- "docType" follows what the document CALLS itself, not whether it shows prices: a vendor on monthly billing delivers on priced albaranes for weeks and sends one factura at month end, and that factura is the only one that charges. Copy the heading into "title"; still extract every line and price an albarán prints. A document with no invoice heading that labels its number as a delivery-note number (a field label, or the header of the number column) is a delivery note too, even with till totals (TOTAL / CASH / CHANGE) printed; a heading that names both a delivery note and an invoice is an invoice.
 - "vendor" is the SELLER who issued the document — never the buyer/customer it is billed or delivered to. Invoices usually show both parties: the buyer appears in a cliente / bill to / deliver to box. When a BUYER name is provided below, that business (or close variants of it) is the customer, NOT the vendor. If the only business name you can read is the buyer's, set "vendor" to null.
 - Normalize product names (e.g. "TOM RMA 25#" -> "Roma Tomatoes").
 - "match": when a KNOWN INGREDIENTS list is provided below and a line is the same product (any spelling/abbreviation/language), copy that list entry EXACTLY into "match". Otherwise null. Never invent names not on the list.
@@ -60,8 +60,9 @@ Rules:
 - Units: "ea", "pc", "pcs" -> "each"; "cs", "ca", "ct" -> "case"; "pk", "bg", "bag" -> "pack"; "bx" -> "box"; "dz", "doz" -> "dozen"; "cn" -> "can". A number followed by "#" is pounds ("25#" = 25 lb); "#10" / "#5" / "#300" next to "CAN" or after a slash is a CAN SIZE, never a weight.
 - A credit memo lists what was returned or credited: positive numbers, docType "credit_memo". A line with a NEGATIVE amount on an ordinary invoice (a discount, a returned item) is not a product line: leave it out of lineItems; the printed total already reflects it.
 - "subcategory" must come from ITS OWN category's list (or be null when unsure): ${SUBCATEGORY_GUIDE}.
-- Skip non-product lines (tax, delivery, deposits) but include their sum in "total".
-- Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines.
+- Skip non-product lines (tax, delivery, deposits): they are not lineItems, and the printed grand total already includes them.
+- A bill for a service rather than goods (a rent receipt, electricity, gas, water, fuel, phone, accounting / legal fees, software or subscriptions) still has lines: one per charged concept or service as printed (e.g. "Rent", "Energy used", "Monthly bookkeeping"), its amount before tax, "qty": 1, "unit": "each", "category": "other". Tax and tax withholding are not lines. Never return an empty lineItems for a document that charges money.
+- Copy the printed grand total into "total" exactly as printed — do NOT recompute it from the lines, and ignore handwritten notes and sums. Only when NO grand total is printed anywhere — the document stops at a pre-tax base (a base or subtotal with no tax line and no grand total) — report that base as "total"; never add tax that is not printed. When a "Total" is printed, it wins over every base or subtotal.
 - Numbers: write every quantity and amount as a plain JSON number with "." as the decimal point and NO thousands separators. Work out the document's own convention first: many documents print "9.312,00", where "." groups thousands and "," is the decimal — that is 9312.00, never 9.312. Money totals never have more than 2 decimals.
 - "currency" is the currency the LINE prices are printed in; report every amount in that one currency. If the document ALSO prints an exchange rate ("tasa", "tipo de cambio", "T/C", "exchange rate") — typically next to a grand total shown in a second currency — copy that rate as a plain number into "printedFxRate" and still report "total" in the line currency. Otherwise "printedFxRate" is null.
 - Never write a " character inside a value: spell inches as "in" ("12 in", not 12") and drop quotes around brand names.
@@ -243,6 +244,23 @@ function applyCurrencyAliases(raw: unknown, aliases: Record<string, Currency> | 
   return { ...(raw as object), currency: aliased ?? upper };
 }
 
+/**
+ * A date the model copied in the document's own order ("30/04/2026")
+ * instead of ISO, rewritten with the pack's day/month order before the
+ * schema sees it — the schema would otherwise drop it to null. Anything
+ * else passes through untouched.
+ */
+function applyDateOrder(raw: unknown, order: "DMY" | "MDY" = "DMY"): unknown {
+  if (!raw || typeof raw !== "object" || !("date" in raw)) return raw;
+  const value = (raw as { date: unknown }).date;
+  const m = typeof value === "string" ? value.trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/) : null;
+  if (!m) return raw;
+  const [day, month] = order === "MDY" ? [Number(m[2]), Number(m[1])] : [Number(m[1]), Number(m[2])];
+  if (month < 1 || month > 12 || day < 1 || day > 31) return raw;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return { ...(raw as object), date: `${m[3]}-${pad(month)}-${pad(day)}` };
+}
+
 // What a document calls itself, in the languages our vendors print.
 // A heading that says "factura" is a bill whatever else it says
 // ("FACTURA — albaranes 12, 13" is the month-end factura listing the
@@ -331,9 +349,15 @@ export const imageDataUrl = (b64: string): string => `data:image/jpeg;base64,${b
 export async function extractInvoice(
   imagesBase64: string[],
   context: ExtractionContext = {},
+  // Where the page images go. Gmail-sourced images (an emailed PDF or
+  // photo) are Google user data and pass "vertex", so no Workspace data
+  // reaches a third-party model that might train on it (Limited Use —
+  // docs/llm.md §Two backends, docs/email-ingestion.md). Scanned
+  // receipts keep the default provider.
+  backend: LlmBackend = "default",
 ): Promise<OcrResult> {
-  if (!llmEnabled()) {
-    logger.warn("LLM API key not set — returning mock OCR extraction");
+  if (!llmEnabled(backend)) {
+    logger.warn("LLM backend not configured — returning mock OCR extraction");
     return mockExtraction(context.baseCurrency ?? DEFAULT_CURRENCY);
   }
 
@@ -364,6 +388,7 @@ export async function extractInvoice(
       maxTokens: imagesBase64.length > 1 ? 4096 : 2560,
       temperature: 0.1,
       label: "ocr",
+      backend,
       json: { name: "invoice_extraction", schema: schemasFor(conventionFor(context.baseCurrency)).response },
     },
   );
@@ -387,7 +412,7 @@ function contextPrompt(context: ExtractionContext): string {
   const pack = context.pack;
   if (pack?.ocrHints) prompt += `\n\n${pack.ocrHints}`;
   if (pack?.nonProductLineNames?.length) {
-    prompt += `\n\nAlso treat these as non-product lines: skip them but include their sum in "total": ${pack.nonProductLineNames.join(", ")}.`;
+    prompt += `\n\nAlso treat these as non-product lines — skip them as lines; the printed total already includes them: ${pack.nonProductLineNames.join(", ")}.`;
   }
   return prompt;
 }
@@ -396,7 +421,9 @@ function contextPrompt(context: ExtractionContext): string {
  * the country-pack tests (aliases and never-a-vendor names). */
 export function toResult(raw: string, context: ExtractionContext): OcrResult {
   const { response } = schemasFor(conventionFor(context.baseCurrency));
-  const parsed = response.parse(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases));
+  const parsed = response.parse(
+    applyDateOrder(applyCurrencyAliases(parseModelJson(raw), context.pack?.currencyAliases), context.pack?.dateOrder),
+  );
   if (parsed.error)
     return { vendor: null, date: null, docType: "invoice", lineItems: [], total: 0, confidence: 0, printedFxRate: null, unreadable: true };
   // Stage 1 verdict: not a purchase document (or the model is guessing).

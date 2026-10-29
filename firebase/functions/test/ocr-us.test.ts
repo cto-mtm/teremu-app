@@ -88,6 +88,16 @@ describe("document type from the heading (albarán valorado)", () => {
   });
 });
 
+describe("dates copied in the page's own order", () => {
+  it("rewrites them to ISO with the pack's day/month order", () => {
+    expect(toResult(reply({ date: "30/04/2026" }), es).date).toBe("2026-04-30");
+    expect(toResult(reply({ date: "4/5/2026" }), us).date).toBe("2026-04-05");
+    expect(toResult(reply({ date: "2026-04-30" }), es).date).toBe("2026-04-30");
+    // Not a date in either order: dropped, never guessed.
+    expect(toResult(reply({ date: "31/13/2026" }), es).date).toBeNull();
+  });
+});
+
 describe("credit memos and negative lines", () => {
   it("keeps a credit memo's type and stores its amounts as positive magnitudes", () => {
     const r = toResult(

@@ -86,6 +86,11 @@ export function llmEnabled(backend: LlmBackend = "default"): boolean {
   return backend === "vertex" ? vertexConfigured() : llmApiKey() !== undefined;
 }
 
+/** The model Vertex calls use (VERTEX_LLM_MODEL overrides). */
+export function vertexModel(): string {
+  return process.env.VERTEX_LLM_MODEL || "google/gemini-3.5-flash-lite";
+}
+
 /** Vertex's OpenAI-compatible chat endpoint (Google's "OpenAI
  * compatibility" docs): `aiplatform.googleapis.com` for `global`, the
  * regional host otherwise; model ids carry a `google/` prefix. */
@@ -95,7 +100,7 @@ function vertexTarget(): { url: string; model: string } {
   const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
   return {
     url: `https://${host}/v1/projects/${project}/locations/${location}/endpoints/openapi/chat/completions`,
-    model: process.env.VERTEX_LLM_MODEL || "google/gemini-3.5-flash-lite",
+    model: vertexModel(),
   };
 }
 
