@@ -1,6 +1,8 @@
 const es = {
   cta: 'Ver planes',
   dismiss: 'Descartar aviso',
+  locked: 'Esperando tu plan',
+  more: 'y {n} más',
   // Under the title, by reason: what the next plan does ({plan} = its name)…
   upsell: {
     scan_limit: 'Mejora tu plan para seguir escaneando este mes.',
@@ -17,6 +19,8 @@ const es = {
 const en: typeof es = {
   cta: 'See plans',
   dismiss: 'Dismiss notice',
+  locked: 'Waiting for your plan',
+  more: 'and {n} more',
   upsell: {
     scan_limit: 'Upgrade your plan to keep scanning this month.',
     email_quota: 'With {plan} they come in today.',

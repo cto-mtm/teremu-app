@@ -11,11 +11,13 @@ import {
   CLASSIFY_BATCH,
   classifyMessages,
   senderAddress,
+  senderName,
   stage0,
+  type AmountHint,
   type CandidateKind,
   type ClassifyInput,
 } from "./classify.js";
-import type { InvoiceDoc } from "../models.js";
+import type { Currency, InvoiceDoc } from "../models.js";
 import { ingestAccepted, INGEST_PER_TICK } from "./ingest.js";
 import { acceptThreshold } from "./stats.js";
 import { connectionRef, db, ingests, withAccess, type ConnectionDoc, type SyncState } from "./store.js";
@@ -88,6 +90,10 @@ export interface IngestDoc {
   /** "allowlist" = accepted without stage 1: the sender's mail was approved before. */
   reason?: "allowlist" | null;
   confidence?: number | null;
+  /** Stage 1's hints for the paywall's teaser (what is waiting) — kept
+   * only while the message waits, dropped with its preview. */
+  vendorHint?: string | null;
+  amountHint?: AmountHint | null;
   classifyAttempts?: number;
   /** Ingest progress: the parts (attachment ids, or "body") already turned
    * into invoices, and those invoices — a message resumes where it stopped. */
@@ -456,8 +462,8 @@ async function classifyCandidates(
         write.update(d.ref, {
           verdict: yes ? "accepted" : "classified_no",
           confidence: v.confidence,
-          // A rejected message keeps no preview (data minimization).
-          ...(yes ? {} : { snippet: FieldValue.delete() }),
+          // A rejected message keeps no preview and no hints (data minimization).
+          ...(yes ? { vendorHint: v.vendor, amountHint: v.amount } : { snippet: FieldValue.delete() }),
           updatedAt: now,
         });
       } else {
@@ -485,6 +491,84 @@ export async function inboxCounts(rid: string, connId: string): Promise<{ checke
     byConn.where("verdict", "==", "expired_quota").count().get(),
   ]);
   return { checked: checked.data().count, found: found.data().count, waiting: waiting.data().count, expired: expired.data().count };
+}
+
+/** Every field a message keeps only while it waits — dropped together
+ * when it leaves the queue (imported, let go, deleted). */
+export const PREVIEW_FIELDS = { snippet: FieldValue.delete(), vendorHint: FieldValue.delete(), amountHint: FieldValue.delete() };
+
+/** Messages read when summing up what waits (the backlog is bounded by
+ * the 31-day window and stage 1's daily cap). */
+const WAITING_SCAN = 500;
+/** Waiting messages GET /email/waiting lists by name. */
+export const WAITING_ITEMS = 10;
+
+export interface WaitingItem {
+  id: string;
+  /** The sender's display name (senderName), not the address. */
+  from: string;
+  subject: string;
+  receivedAt: number;
+  /** The first candidate attachment's file name; null for a body invoice. */
+  attachment: string | null;
+  kind: CandidateKind | null;
+  vendorHint: string | null;
+  amountHint: AmountHint | null;
+}
+
+export interface WaitingSummary {
+  /** Messages taken as invoices and not in Triage yet, across inboxes. */
+  waiting: number;
+  /** Distinct senders, most frequent first (ties: most recent first). */
+  senders: string[];
+  /** The newest waiting messages, up to the limit asked for. */
+  items: WaitingItem[];
+  /** The amount hints added up — only when every hint is in the
+   * restaurant's base currency (mixed or foreign hints are never summed);
+   * null without hints. About, not exact: hints come from the mail. */
+  amountTotal: AmountHint | null;
+}
+
+/**
+ * What waits for the meter (or for the next tick) across the restaurant's
+ * inboxes, newest first: the paywall's teaser — the waiting list, the
+ * mail's sender names and total (docs/email-quota-paywall-plan.md Phase
+ * 4). Index: emailIngests (verdict, internalDate desc).
+ */
+export async function waitingItems(rid: string, limit: number, base: Currency): Promise<WaitingSummary> {
+  const queue = ingests(rid).where("verdict", "in", ["accepted", "deferred_quota"]);
+  const [snap, count] = await Promise.all([queue.orderBy("internalDate", "desc").limit(WAITING_SCAN).get(), queue.count().get()]);
+  const docs = snap.docs.map((d) => ({ id: d.id, ing: d.data() as IngestDoc }));
+
+  const bySender = new Map<string, number>();
+  for (const { ing } of docs) {
+    const name = senderName(ing.from ?? "");
+    bySender.set(name, (bySender.get(name) ?? 0) + 1);
+  }
+  // Map order is first-seen, i.e. most recent first: a stable sort keeps it for ties.
+  const senders = [...bySender.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+
+  const hints = docs.map(({ ing }) => ing.amountHint).filter((h): h is AmountHint => Boolean(h));
+  const amountTotal =
+    hints.length && hints.every((h) => h.currency === base)
+      ? { value: Math.round(hints.reduce((sum, h) => sum + h.value, 0) * 100) / 100, currency: base }
+      : null;
+
+  return {
+    waiting: count.data().count,
+    senders,
+    items: docs.slice(0, limit).map(({ id, ing }) => ({
+      id,
+      from: senderName(ing.from ?? ""),
+      subject: ing.subject ?? "",
+      receivedAt: ing.internalDate,
+      attachment: ing.attachments?.[0]?.filename ?? null,
+      kind: ing.kind,
+      vendorHint: ing.vendorHint ?? null,
+      amountHint: ing.amountHint ?? null,
+    })),
+    amountTotal,
+  };
 }
 
 /**

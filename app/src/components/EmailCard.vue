@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
 import { planRose } from '../lib/plans'
 import { emailOAuthResultSchema, emailStatusSchema, emailSyncResultSchema, posConnectSchema } from '../lib/schemas'
+import { useEmailWaiting } from '../composables/useEmailWaiting'
 import { useAuthStore } from '../stores/auth'
 import { useInvoicesStore } from '../stores/invoices'
 import { useLocationStore } from '../stores/location'
@@ -162,6 +163,9 @@ async function load(): Promise<void> {
   if (res.ok) status.value = res.data
 }
 
+// What the meter holds, by name: listed in the notice while an inbox is paused.
+const waiting = useEmailWaiting(() => status.value?.inboxes.some((i) => i.paused) ?? false)
+
 async function connect(provider: string): Promise<void> {
   busy.value = provider
   const res = await apiFetch(`/email/${provider}/connect`, { method: 'POST' }, posConnectSchema)
@@ -268,6 +272,8 @@ onMounted(async () => {
           v-if="inbox.paused"
           reason="email_quota"
           :title="t('email.paused', inbox.waiting)"
+          :items="waiting?.items"
+          :count="waiting?.waiting"
         />
         <p v-if="inbox.expired > 0" class="text-xs text-smoke">{{ t('email.expired', inbox.expired) }}</p>
         <div v-if="canEdit" class="flex flex-wrap items-center gap-2">

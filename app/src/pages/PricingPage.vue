@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
+import { formatMoney } from '../i18n'
 import { upgradeFrom } from '../lib/plans'
 import { billingUrlSchema } from '../lib/schemas'
+import { useEmailWaiting } from '../composables/useEmailWaiting'
 import { useAuthStore } from '../stores/auth'
 import BaseButton from '../components/BaseButton.vue'
 
@@ -14,7 +16,7 @@ import BaseButton from '../components/BaseButton.vue'
  * (both locales) here. The upgrade CTA opens Stripe Checkout for the
  * chosen billing interval; the plan only flips once the webhook fires.
  */
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +42,23 @@ const context = computed(() => {
   if (reason === 'email_free' && plan.value === 'free') return t('pricing.context.emailFree')
   if (reason === 'scan_limit') return t(`pricing.context.scanLimit.${next}`)
   return null
+})
+
+// From the email paywall: who sent what is waiting, and about how much it
+// adds up to when every hint is in the base currency.
+const waiting = useEmailWaiting(() => context.value !== null && reason === 'email_quota')
+const named = computed(() => {
+  const senders = waiting.value?.senders ?? []
+  if (!senders.length) return null
+  const shown = senders.slice(0, 3)
+  const rest = senders.length - shown.length
+  const who = new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(
+    rest ? [...shown, t('pricing.context.moreSuppliers', rest)] : shown,
+  )
+  const total = waiting.value?.amountTotal
+  return total
+    ? t('pricing.context.namedTotal', { who, amount: formatMoney(total.value, total.currency) })
+    : t('pricing.context.named', { who })
 })
 
 // Back from Stripe without paying: say nothing changed, then clean the URL.
@@ -89,7 +108,10 @@ async function changePlan(): Promise<void> {
     </div>
 
     <p v-if="cancelled" class="text-center text-sm text-smoke" role="status">{{ t('pricing.cancelled') }}</p>
-    <p v-if="context" class="rounded-xl bg-ember-50 px-4 py-3 text-center text-sm text-ember-700">{{ context }}</p>
+    <div v-if="context" class="space-y-1 rounded-xl bg-ember-50 px-4 py-3 text-center text-sm text-ember-700">
+      <p v-if="named" class="font-semibold">{{ named }}</p>
+      <p>{{ context }}</p>
+    </div>
 
     <!-- Billing interval toggle -->
     <div class="flex items-center justify-center">

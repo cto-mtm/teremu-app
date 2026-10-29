@@ -8,7 +8,7 @@ const waitingDismissed = ref(false)
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
 import { useKitchenStore } from '../stores/kitchen'
@@ -18,6 +18,8 @@ import type { Invoice } from '../lib/types'
 import InvoiceCard from '../components/InvoiceCard.vue'
 import PageLoader from '../components/PageLoader.vue'
 import UpgradeNotice from '../components/UpgradeNotice.vue'
+import WaitingInvoiceRow from '../components/WaitingInvoiceRow.vue'
+import { useEmailWaiting } from '../composables/useEmailWaiting'
 import { upgradeFrom } from '../lib/plans'
 
 const { t, n, d } = useI18n()
@@ -32,6 +34,17 @@ const showInfo = ref(false)
 const emailWaiting = computed(() =>
   upgradeFrom(auth.profile?.plan ?? 'free') && !waitingDismissed.value ? (auth.profile?.emailWaiting ?? 0) : 0,
 )
+// Which invoices, by name: the banner lists them and the first three sit
+// at the top of the queue as locked ghost cards.
+const waiting = useEmailWaiting(() => emailWaiting.value > 0)
+const ghosts = computed(() => (emailWaiting.value > 0 ? (waiting.value?.items.slice(0, 3) ?? []) : []))
+/** A ghost card is not an invoice: the owner goes to the plans, anyone
+ * else to the banner that explains it. */
+const router = useRouter()
+function openWaiting(): void {
+  if (auth.profile?.role === 'owner') void router.push({ path: '/pricing', query: { reason: 'email_quota' } })
+  else document.getElementById('waiting-banner')?.scrollIntoView({ block: 'center' })
+}
 
 // Albarán ↔ factura pairing: automatic from scans, manually resolvable.
 // The pantry prices value unpriced albarán lines, the way Pulse does.
@@ -115,8 +128,11 @@ onUnmounted(() => {
 
     <UpgradeNotice
       v-if="emailWaiting > 0"
+      id="waiting-banner"
       reason="email_quota"
       :title="t('email.paused', emailWaiting)"
+      :items="waiting?.items"
+      :count="waiting?.waiting"
       dismissible
       @dismiss="waitingDismissed = true"
     />
@@ -151,6 +167,21 @@ onUnmounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Locked: invoices the plan's limit holds in the inbox, not in the queue yet -->
+    <div v-if="ghosts.length" class="space-y-2">
+      <WaitingInvoiceRow
+        v-for="item in ghosts"
+        :key="item.id"
+        :item="item"
+        ghost
+        class="cursor-pointer"
+        role="button"
+        tabindex="0"
+        @click="openWaiting"
+        @keydown.enter="openWaiting"
+      />
+    </div>
 
     <PageLoader v-if="store.loading && !store.invoices.length" :cards="0" :lines="4" />
 

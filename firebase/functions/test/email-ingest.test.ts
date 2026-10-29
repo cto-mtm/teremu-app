@@ -253,6 +253,78 @@ describe("email ingest: the scan meter", () => {
   });
 });
 
+describe("email ingest: what waits (the paywall's teaser)", () => {
+  interface Waiting {
+    waiting: number;
+    senders: string[];
+    items: { id: string; from: string; subject: string; attachment: string | null; kind: string; amountHint: unknown; vendorHint: unknown }[];
+    amountTotal: { value: number; currency: string } | null;
+  }
+
+  it("lists the held messages by sender, newest first, with the hints the mail quoted", async () => {
+    await db().doc(`restaurants/${o.rid}`).set({ scanPeriod: month(), scanCount: 25, currency: "EUR" }, { merge: true });
+    await connect(o);
+    expect((await syncNow(o)).body.paused).toBe(true);
+
+    const res = await get<Waiting>("/email/waiting", o.token);
+    expect(res.status).toBe(200);
+    expect(res.body.waiting).toBe(7);
+    // Display names, not addresses; one each, so most recent first.
+    expect(res.body.senders).toEqual([
+      "Mi Tienda Online",
+      "Carnicería Hermanos Gil",
+      "Quesos Artesanos",
+      "CloudTPV",
+      "Pescados Ría",
+      "Huerta La Vega",
+      "Distribuciones Frescos",
+    ]);
+    expect(res.body.items.map((i) => i.from)).toEqual(res.body.senders);
+    const cloud = res.body.items.find((i) => i.from === "CloudTPV")!;
+    expect(cloud).toMatchObject({ kind: "body", attachment: null, amountHint: { value: 49, currency: "EUR" } });
+    expect(res.body.items.find((i) => i.from === "Quesos Artesanos")).toMatchObject({ attachment: "factura-2026-318.pdf", amountHint: null });
+    // Every hint is in the restaurant's currency: they add up.
+    expect(res.body.amountTotal).toEqual({ value: 49, currency: "EUR" });
+
+    // A rejected message keeps no hints (data minimization) …
+    const makro = (await ingest(o.rid, "010").get()).data()!;
+    expect(makro.verdict).toBe("classified_no");
+    expect(makro.amountHint).toBeUndefined();
+    expect(makro.vendorHint).toBeUndefined();
+    // … and an imported one drops them with its preview. (A plan written
+    // straight to Firestore runs no hook: the first check resumes it.)
+    await setPlan(o.rid, "pro");
+    expect((await syncNow(o)).status).toBe(200);
+    await drain(o);
+    const imported = (await ingest(o.rid, "006").get()).data()!;
+    expect(imported.verdict).toBe("ingested");
+    expect(imported.amountHint).toBeUndefined();
+    expect((await get<Waiting>("/email/waiting", o.token)).body).toMatchObject({ waiting: 0, items: [], senders: [], amountTotal: null });
+  });
+
+  it("never adds up hints in another currency", async () => {
+    await db().doc(`restaurants/${o.rid}`).set({ scanPeriod: month(), scanCount: 25, currency: "USD" }, { merge: true });
+    await connect(o);
+    await syncNow(o);
+    const res = await get<Waiting>("/email/waiting", o.token);
+    expect(res.body.items.find((i) => i.from === "CloudTPV")!.amountHint).toEqual({ value: 49, currency: "EUR" });
+    expect(res.body.amountTotal).toBeNull();
+  });
+
+  it("guards the list: 401 without a token, 403 without triage or integrations, open to either", async () => {
+    expect((await api("/email/waiting", { rid: o.rid })).status).toBe(401);
+    const member = async (perms: Partial<typeof NO_PERMS>) => {
+      const uid = `m-${uniqueId()}`;
+      const email = `${uid}@test.local`;
+      await seedMember(o.rid, uid, { ...NO_PERMS, ...perms }, "member", email);
+      return makeUserToken({ uid, email });
+    };
+    expect((await api("/email/waiting", { token: await member({ scan: true }), rid: o.rid })).status).toBe(403);
+    expect((await api("/email/waiting", { token: await member({ triage: "read" }), rid: o.rid })).status).toBe(200);
+    expect((await api("/email/waiting", { token: await member({ integrations: "read" }), rid: o.rid })).status).toBe(200);
+  });
+});
+
 describe("email ingest: review signals", () => {
   it("approving an emailed document puts its sender on the allowlist for that kind of mail", async () => {
     await connect(o);

@@ -7,6 +7,7 @@ import type {
   categorySchema,
   countryProfileSchema,
   currencySchema,
+  emailWaitingSchema,
   docTypeSchema,
   expenseSchema,
   fxDecisionSchema,
@@ -56,6 +57,8 @@ export type Location = z.infer<typeof locationSchema>
 export type DocType = z.infer<typeof docTypeSchema>
 export type FxDecision = z.infer<typeof fxDecisionSchema>
 export type CountryProfile = z.infer<typeof countryProfileSchema>
+export type EmailWaiting = z.infer<typeof emailWaitingSchema>
+export type WaitingItem = EmailWaiting['items'][number]
 /** The money side of an approval body — see docs/multi-currency.md. */
 export interface ApprovalMoney {
   currency?: Currency

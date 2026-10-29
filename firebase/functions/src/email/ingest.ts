@@ -1,15 +1,14 @@
-import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { emailQuotaEmail, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
-import type { ExtractionPath, InvoiceDoc } from "../models.js";
+import { currencySchema, DEFAULT_CURRENCY, type Currency, type ExtractionPath, type InvoiceDoc } from "../models.js";
 import { processInvoiceImage, processInvoiceText } from "../pipeline.js";
 import { consumeScan, monthKey, planOf, releaseScan, upgradeFrom } from "../plan.js";
 import { bodyText } from "./body.js";
 import { inspectPdf, normalizeImage, rasterizePdf, UnreadableDocumentError } from "./pdf.js";
 import { clearQuotaPause } from "./planChange.js";
 import { connectionRef, db, ingests, type ConnectionDoc } from "./store.js";
-import type { IngestDoc } from "./sync.js";
+import { PREVIEW_FIELDS, waitingItems, type IngestDoc } from "./sync.js";
 import { recordOutcome } from "./stats.js";
 import { MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js";
 
@@ -58,7 +57,8 @@ export async function ingestAccepted(
   maxDocs: number,
 ): Promise<IngestResult> {
   // The meter's month is the restaurant's (plan.ts monthKey, A4).
-  const timeZone = (await db().collection("restaurants").doc(rid).get()).get("timezone") as string | undefined;
+  const restaurant = await db().collection("restaurants").doc(rid).get();
+  const timeZone = restaurant.get("timezone") as string | undefined;
   const period = monthKey(timeZone);
   // Let go of what waited too long first — a paused inbox stops at its
   // first refused scan and would never reach the oldest messages.
@@ -67,7 +67,7 @@ export async function ingestAccepted(
     .where("verdict", "==", "deferred_quota")
     .where("internalDate", "<", Date.now() - DEFERRED_MAX_AGE_MS)
     .get();
-  for (const d of expired.docs) await d.ref.update({ verdict: "expired_quota", snippet: FieldValue.delete(), updatedAt: Date.now() });
+  for (const d of expired.docs) await d.ref.update({ verdict: "expired_quota", ...PREVIEW_FIELDS, updatedAt: Date.now() });
   const result: IngestResult = { created: 0, pending: false, paused: conn.quotaPausedPeriod === period, expired: expired.size };
 
   // A pause from a month that is over lifts whether or not anything is
@@ -99,14 +99,14 @@ export async function ingestAccepted(
         prepared = await prepare(ing, part, access, adapter);
       } catch (err) {
         if (!(err instanceof MailNotFoundError)) throw err;
-        await msg.ref.update({ verdict: "gone", snippet: FieldValue.delete(), updatedAt: Date.now() });
+        await msg.ref.update({ verdict: "gone", ...PREVIEW_FIELDS, updatedAt: Date.now() });
         break;
       }
       if (prepared.kind === "document") {
         const quota = await consumeScan(rid);
         if (!quota.ok) {
           await msg.ref.update({ verdict: "deferred_quota", done: [...done], invoiceIds, updatedAt: Date.now() });
-          await pauseForQuota(rid, connId, quota.limit, period);
+          await pauseForQuota(rid, connId, quota.limit, period, currencySchema.catch(DEFAULT_CURRENCY).parse(restaurant.get("currency")));
           result.paused = true;
           return result;
         }
@@ -131,8 +131,8 @@ export async function ingestAccepted(
       await msg.ref.update({ done: [...done], invoiceIds, updatedAt: Date.now() });
     }
     if (parts.every((p) => done.has(p))) {
-      // In Triage now: the message record keeps no preview.
-      await msg.ref.update({ verdict: "ingested", snippet: FieldValue.delete(), updatedAt: Date.now() });
+      // In Triage now: the message record keeps no preview and no hints.
+      await msg.ref.update({ verdict: "ingested", ...PREVIEW_FIELDS, updatedAt: Date.now() });
     }
   }
   return result;
@@ -243,11 +243,11 @@ async function createInvoice(
  * product has. On the top plan the same mail is a notice, not a nudge.
  * Best effort: a mail failure never fails the sync.
  */
-async function pauseForQuota(rid: string, connId: string, limit: number, period: string): Promise<void> {
+async function pauseForQuota(rid: string, connId: string, limit: number, period: string, base: Currency): Promise<void> {
   await connectionRef(connId).update({ quotaPausedPeriod: period });
   const restRef = db().collection("restaurants").doc(rid);
   // Across the restaurant's inboxes: the meter is shared.
-  const waiting = (await ingests(rid).where("verdict", "in", ["accepted", "deferred_quota"]).count().get()).data().count;
+  const { waiting, senders, amountTotal } = await waitingItems(rid, 0, base);
   const plan = await db().runTransaction(async (tx) => {
     const rest = await tx.get(restRef);
     const first = rest.get("emailQuotaNudged") !== period;
@@ -261,7 +261,7 @@ async function pauseForQuota(rid: string, connId: string, limit: number, period:
     const upgradeTo = upgradeFrom(plan);
     await sendMail({
       to: owner.to,
-      ...emailQuotaEmail({ locale: owner.locale, waiting, limit, upgradeTo }),
+      ...emailQuotaEmail({ locale: owner.locale, waiting, limit, upgradeTo, senders, amountTotal }),
       kind: "email-quota",
       // An upgrade nudge is promotional: one-click unsubscribe, honoured by
       // the mailer (B4). The top plan's notice is not.

@@ -73,6 +73,10 @@ const es = {
       pro: 'Las facturas que esperan en tu correo entran hoy con Pro, y tienes 500 documentos al mes. | Tienes 1 factura esperando en tu correo. Con Pro entra hoy y tienes 500 documentos al mes. | Tienes {n} facturas esperando en tu correo. Con Pro entran hoy y tienes 500 documentos al mes.',
       max: 'Las facturas que esperan en tu correo entran hoy con Max, y tienes 1.500 documentos al mes. | Tienes 1 factura esperando en tu correo. Con Max entra hoy y tienes 1.500 documentos al mes. | Tienes {n} facturas esperando en tu correo. Con Max entran hoy y tienes 1.500 documentos al mes.',
     },
+    // With the senders' names ({who}: "Makro, Coca-Cola y 3 proveedores más").
+    named: 'Hoy entrarían facturas de {who}.',
+    namedTotal: 'Hoy entrarían facturas de {who}: unos {amount} que no están en tus márgenes.',
+    moreSuppliers: '1 proveedor más | {n} proveedores más',
     emailFree: 'Las facturas del correo cuentan para tus 25 documentos al mes. Pro sube el límite a 500 y revisa el correo cada 6 horas.',
     scanLimit: {
       pro: 'Llegaste a los 25 documentos de este mes. Pro sube el límite a 500.',
@@ -157,6 +161,9 @@ const en: typeof es = {
       pro: 'The invoices waiting in your inbox come in today with Pro, and you get 500 documents a month. | You have 1 invoice waiting in your inbox. With Pro it comes in today and you get 500 documents a month. | You have {n} invoices waiting in your inbox. With Pro they come in today and you get 500 documents a month.',
       max: 'The invoices waiting in your inbox come in today with Max, and you get 1,500 documents a month. | You have 1 invoice waiting in your inbox. With Max it comes in today and you get 1,500 documents a month. | You have {n} invoices waiting in your inbox. With Max they come in today and you get 1,500 documents a month.',
     },
+    named: 'Invoices from {who} would come in today.',
+    namedTotal: 'Invoices from {who} would come in today: about {amount} that is not in your margins.',
+    moreSuppliers: '1 more supplier | {n} more suppliers',
     emailFree: 'Emailed invoices count toward your 25 documents a month. Pro raises the limit to 500 and checks your inbox every 6 hours.',
     scanLimit: {
       pro: 'You reached this month’s 25 documents. Pro raises the limit to 500.',

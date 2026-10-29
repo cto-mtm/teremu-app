@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GoogleAuth } from "google-auth-library";
 import { bodyText } from "../src/email/body";
 import { htmlToText } from "../src/helpers/html";
-import { candidateAttachments, mockVerdict, senderAddress, stage0 } from "../src/email/classify";
+import { candidateAttachments, mockAmount, mockVerdict, senderAddress, senderName, stage0 } from "../src/email/classify";
+import { emailQuotaEmail, sendersPhrase } from "../src/mail";
 import { FAKE_PDFS } from "../src/email/fake";
 import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } from "../src/email/pdf";
 import type { MailMessageMeta } from "../src/email/types";
@@ -115,6 +116,15 @@ describe("stage 0", () => {
   it("extracts the sender address", () => {
     expect(senderAddress("Huerta La Vega <Pedidos@LaVega.test>")).toBe("pedidos@lavega.test");
     expect(senderAddress("plain@x.test")).toBe("plain@x.test");
+  });
+
+  it("names the sender for people: the display name, else the domain without its TLD", () => {
+    expect(senderName("Huerta La Vega <pedidos@lavega.test>")).toBe("Huerta La Vega");
+    expect(senderName('"Makro" <no-reply@makro.es>')).toBe("Makro");
+    expect(senderName("O'Reilly Foods <a@oreilly.test>")).toBe("O'Reilly Foods");
+    expect(senderName("pedidos@coca-cola.com")).toBe("Coca-Cola");
+    expect(senderName("<facturas@makro.co.uk>")).toBe("Makro");
+    expect(senderName("billing@mail.cloudtpv.test")).toBe("Cloudtpv");
   });
 });
 
@@ -252,9 +262,38 @@ describe("junk-rate threshold", () => {
 describe("offline classifier", () => {
   const input = (subject: string, snippet = "") => ({ id: "x", from: "", subject, snippet, attachments: [] });
   it("rejects the document kinds the prompt rejects, before looking for invoice words", () => {
-    expect(mockVerdict(input("Estado de cuenta", "factura pendiente"))).toEqual({ isInvoice: false, confidence: 0.9 });
+    expect(mockVerdict(input("Estado de cuenta", "factura pendiente"))).toMatchObject({ isInvoice: false, confidence: 0.9 });
     expect(mockVerdict(input("Confirmación de pedido 1"))).toMatchObject({ isInvoice: false });
-    expect(mockVerdict(input("Factura FV-1"))).toEqual({ isInvoice: true, confidence: 0.9 });
-    expect(mockVerdict(input("Hola"))).toEqual({ isInvoice: false, confidence: 0.6 });
+    expect(mockVerdict(input("Factura FV-1"))).toEqual({ isInvoice: true, confidence: 0.9, vendor: null, amount: null });
+    expect(mockVerdict(input("Hola"))).toMatchObject({ isInvoice: false, confidence: 0.6 });
+  });
+
+  it("hints an amount only where the mail quotes one with its currency, and only for an invoice", () => {
+    expect(mockVerdict(input("Tu factura de octubre", "Total 1.049,00 € (IVA incluido)")).amount).toEqual({ value: 1049, currency: "EUR" });
+    expect(mockVerdict(input("Confirmación de pedido", "Total 312,40 €")).amount).toBeNull();
+    expect(mockAmount("Invoice 88 — amount due $1,234.56")).toEqual({ value: 1234.56, currency: "USD" });
+    expect(mockAmount("Factura 2026/318, 3 líneas")).toBeNull();
+  });
+});
+
+describe("the quota mail names what waits", () => {
+  it("joins one, two, three and more senders", () => {
+    expect(sendersPhrase("es", ["Makro"])).toBe("Makro");
+    expect(sendersPhrase("es", ["Makro", "Coca-Cola"])).toBe("Makro y Coca-Cola");
+    expect(sendersPhrase("es", ["Makro", "Coca-Cola", "Frescos"])).toBe("Makro, Coca-Cola y Frescos");
+    expect(sendersPhrase("es", ["Makro", "Coca-Cola", "Frescos", "Gil", "La Vega"])).toBe("Makro, Coca-Cola, Frescos y 2 proveedores más");
+    expect(sendersPhrase("en", ["Makro", "Coca-Cola", "Frescos", "Gil"])).toBe("Makro, Coca-Cola, Frescos and 1 more supplier");
+  });
+
+  it("adds the total line only when there is a total, and escapes the names", () => {
+    const base = { locale: "es" as const, waiting: 12, limit: 25, upgradeTo: "pro" as const, senders: ["Makro", "<b>Gil</b>"] };
+    const withTotal = emailQuotaEmail({ ...base, amountTotal: { value: 1900, currency: "EUR" } });
+    expect(withTotal.text).toContain("Tienes 12 facturas esperando en tu correo: Makro y <b>Gil</b>.");
+    expect(withTotal.text).toMatch(/Suman unos 1\.?900\s€ que aún no están en tus márgenes\./);
+    expect(withTotal.html).toContain("Makro y &lt;b&gt;Gil&lt;/b&gt;");
+    // Mixed currencies reach the builder as no total (waitingItems): no line.
+    const without = emailQuotaEmail({ ...base, amountTotal: null });
+    expect(without.text).not.toContain("Suman");
+    expect(without.text).toContain("Tienes 12 facturas esperando en tu correo:");
   });
 });

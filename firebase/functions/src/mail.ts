@@ -320,24 +320,54 @@ export function claimCodeEmail(args: { locale: Locale; code: string; placeName: 
   };
 }
 
+/** Sender names shown in a mail: at most this many, each this long. */
+const MAIL_SENDERS = 3;
+const SENDER_CHARS = 40;
+
+/** "Makro", "Makro y Coca-Cola", "Makro, Coca-Cola y Frescos",
+ * "Makro, Coca-Cola, Frescos y 2 proveedores más". */
+export function sendersPhrase(locale: Locale, senders: string[]): string {
+  const c = COPY[locale].emailQuota;
+  const named = senders.slice(0, MAIL_SENDERS).map((s) => s.slice(0, SENDER_CHARS));
+  const parts = senders.length > named.length ? [...named, c.more(senders.length - named.length)] : named;
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} ${c.and} ${parts[parts.length - 1]}` : (parts[0] ?? "");
+}
+
 /**
  * Email import hit the plan's document limit (docs/email-ingestion.md
  * §Triage integration): invoices keep being found, and wait. One per
- * restaurant per month. Fixed content plus two numbers — nothing from
- * the mail it read. With a plan to grow into it is an upgrade nudge; on
- * the top plan (`upgradeTo` null) a plain notice that points at
- * Settings, with no unsubscribe — it is not promotional.
+ * restaurant per month. Fixed copy plus the count, who sent what waits
+ * (sender display names from the owner's own inbox — escaped like
+ * anything else) and, when the mails quoted amounts in the restaurant's
+ * currency, about how much they add up to. With a plan to grow into it
+ * is an upgrade nudge; on the top plan (`upgradeTo` null) a plain notice
+ * that points at Settings, with no unsubscribe — it is not promotional.
  */
-export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: number; upgradeTo: Plan | null }): MailContent {
+export function emailQuotaEmail(args: {
+  locale: Locale;
+  waiting: number;
+  limit: number;
+  upgradeTo: Plan | null;
+  senders: string[];
+  amountTotal: { value: number; currency: string } | null;
+}): MailContent {
   const c = COPY[args.locale].emailQuota;
+  // What waits, by name and amount: the lines above the plan's own copy.
+  const money = (a: { value: number; currency: string }) =>
+    new Intl.NumberFormat(args.locale, { style: "currency", currency: a.currency, maximumFractionDigits: 0 }).format(a.value);
+  const lead = [
+    ...(args.senders.length ? [c.waitingFrom(args.waiting, sendersPhrase(args.locale, args.senders))] : []),
+    ...(args.amountTotal ? [c.total(money(args.amountTotal))] : []),
+  ];
+  const leadHtml = lead.map((line) => `<p style="margin:0 0 12px">${esc(line)}</p>\n`).join("");
   if (!args.upgradeTo) {
     const settingsUrl = `${APP_URL}/settings?card=email`;
     return {
       subject: c.subject(args.waiting).slice(0, 200),
-      text: [c.bodyTop(args.limit), "", settingsUrl, "", footerText(c.footer)].join("\n"),
+      text: [...lead, c.bodyTop(args.limit), "", settingsUrl, "", footerText(c.footer)].join("\n"),
       html: layout(
         args.locale,
-        `<p style="margin:0 0 20px">${c.bodyTop(args.limit)}</p>
+        `${leadHtml}<p style="margin:0 0 20px">${c.bodyTop(args.limit)}</p>
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
 <a href="${esc(settingsUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.ctaSettings}</a>
 </td></tr></table>`,
@@ -351,10 +381,10 @@ export function emailQuotaEmail(args: { locale: Locale; waiting: number; limit: 
     // An upgrade nudge is promotional: it carries the mailer's one-click
     // unsubscribe (`unsubscribeTopic: "email-quota"` on the send; the mailer
     // fills {{unsubscribeUrl}} and honours the opt-out — docs/mtmcya-mailer.md).
-    text: [c.body(args.limit), "", c.next, "", pricingUrl, "", footerText(c.footer), `${c.unsubscribe}: {{unsubscribeUrl}}`].join("\n"),
+    text: [...lead, c.body(args.limit), "", c.next, "", pricingUrl, "", footerText(c.footer), `${c.unsubscribe}: {{unsubscribeUrl}}`].join("\n"),
     html: layout(
       args.locale,
-      `<p style="margin:0 0 12px">${c.body(args.limit)}</p>
+      `${leadHtml}<p style="margin:0 0 12px">${c.body(args.limit)}</p>
 <p style="margin:0 0 20px">${c.next}</p>
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#2b2420;border-radius:6px">
 <a href="${esc(pricingUrl)}" style="display:inline-block;padding:12px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#ffffff;text-decoration:none">${c.cta}</a>
@@ -449,6 +479,10 @@ const es = {
     cta: "Ver planes",
     bodyTop: (limit: number) => `Este mes ya usaste los ${limit} documentos de tu plan. Las facturas esperan y entran solas el mes que viene.`,
     ctaSettings: "Abrir Ajustes",
+    waitingFrom: (n: number, who: string) => `Tienes ${n === 1 ? "1 factura esperando" : `${n} facturas esperando`} en tu correo: ${who}.`,
+    and: "y",
+    more: (n: number) => (n === 1 ? "1 proveedor más" : `${n} proveedores más`),
+    total: (amount: string) => `Suman unos ${amount} que aún no están en tus márgenes.`,
     footer: "Enviado con Teremu.",
     unsubscribe: "Dejar de recibir estos avisos",
   },
@@ -501,6 +535,10 @@ const en: typeof es = {
     cta: "See plans",
     bodyTop: (limit) => `You have used your plan's ${limit} documents this month. The invoices wait and come in on their own next month.`,
     ctaSettings: "Open Settings",
+    waitingFrom: (n, who) => `You have ${n === 1 ? "1 invoice" : `${n} invoices`} waiting in your inbox: ${who}.`,
+    and: "and",
+    more: (n) => (n === 1 ? "1 more supplier" : `${n} more suppliers`),
+    total: (amount) => `They add up to about ${amount} that is not in your margins yet.`,
     footer: "Sent with Teremu.",
     unsubscribe: "Stop these notices",
   },

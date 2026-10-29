@@ -2,7 +2,9 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { upgradeFrom } from '../lib/plans'
+import type { WaitingItem } from '../lib/types'
 import { useAuthStore } from '../stores/auth'
+import WaitingInvoiceRow from './WaitingInvoiceRow.vue'
 
 /**
  * The one paywall banner (docs/email-quota-paywall-plan.md Phase 2): the
@@ -12,6 +14,8 @@ import { useAuthStore } from '../stores/auth'
  * (the pricing page explains the reason); on the top plan, what happens
  * next and no button — a Max owner is never asked to upgrade. A member
  * sees the text only. Positioning comes from the caller's class.
+ * `items` (the invoices waiting in the inbox, from GET /email/waiting)
+ * shows what would come in — up to five, then "y N más" against `count`.
  */
 export type UpgradeReason = 'scan_limit' | 'email_quota'
 
@@ -19,14 +23,21 @@ const props = defineProps<{
   title: string
   reason: UpgradeReason
   dismissible?: boolean
+  items?: WaitingItem[]
+  count?: number
 }>()
 defineEmits<{ dismiss: [] }>()
+
+/** Waiting invoices listed by name; the rest are counted. */
+const SHOWN = 5
 
 const { t } = useI18n()
 const auth = useAuthStore()
 
 const next = computed(() => upgradeFrom(auth.profile?.plan ?? 'free'))
 const isOwner = computed(() => auth.profile?.role === 'owner')
+const shown = computed(() => props.items?.slice(0, SHOWN) ?? [])
+const more = computed(() => Math.max(0, (props.count ?? shown.value.length) - shown.value.length))
 const text = computed(() =>
   next.value
     ? t(`upgradeNotice.upsell.${props.reason}`, { plan: t(`pricing.${next.value}.name`) })
@@ -43,6 +54,10 @@ const text = computed(() =>
       </button>
     </div>
     <p v-if="text" class="text-[11px] font-medium text-white/85">{{ text }}</p>
+    <ul v-if="shown.length" class="space-y-1">
+      <WaitingInvoiceRow v-for="item in shown" :key="item.id" :item="item" />
+    </ul>
+    <p v-if="shown.length && more" class="text-[11px] font-medium text-white/85">{{ t('upgradeNotice.more', { n: more }) }}</p>
     <RouterLink
       v-if="next && isOwner"
       :to="{ path: '/pricing', query: { reason } }"

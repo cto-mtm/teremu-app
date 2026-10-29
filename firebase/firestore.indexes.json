@@ -25,6 +25,14 @@
         { "fieldPath": "verdict", "order": "ASCENDING" },
         { "fieldPath": "internalDate", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "emailIngests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "verdict", "order": "ASCENDING" },
+        { "fieldPath": "internalDate", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

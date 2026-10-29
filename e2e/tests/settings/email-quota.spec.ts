@@ -2,7 +2,9 @@
  * The email import at Free's limit (docs/email-quota-paywall-plan.md):
  * an inbox connected with the month's 25 documents already spent finds
  * its invoices and holds them — the email card, Triage and the pricing
- * page all say how many wait — and an upgrade lets them in at once.
+ * page all say how many wait and from whom (locked rows, ghost cards at
+ * the top of Triage, the senders in the pricing strip) — and an upgrade
+ * lets them in at once.
  *
  * Same shape as email.spec.ts: a FRESH location (an inbox feeds one
  * restaurant, and the fake inbox is a single account), desktop only (the
@@ -42,6 +44,9 @@ test.describe('Email import at the plan limit', () => {
     const notice = card.getByRole('alert').filter({ hasText: '7 facturas esperando en tu correo.' })
     await expect(notice).toBeVisible({ timeout: 90_000 })
     await expect(notice).toContainText('Con Pro entran hoy.')
+    // The teaser: what is waiting, by sender (locked rows, newest first).
+    await expect(notice.getByRole('listitem').filter({ hasText: 'CloudTPV' })).toBeVisible()
+    await expect(notice.getByText('y 2 más')).toBeVisible()
     await expect(card.getByText('Revisado: las facturas nuevas esperan a que tu plan tenga hueco.')).toBeVisible()
     await expect(card.getByText('Revisión terminada.')).toHaveCount(0)
     // The Plan card says it too, beside the upgrade button.
@@ -54,12 +59,19 @@ test.describe('Email import at the plan limit', () => {
     await page.getByRole('button', { name: 'Prefiero empezar de cero' }).click()
     await page.goto('/triage')
     await expect(page.getByRole('alert').filter({ hasText: '7 facturas esperando en tu correo.' })).toBeVisible()
+    // The first three wait at the top of the queue as locked ghost cards.
+    const ghosts = page.getByRole('button').filter({ hasText: 'Esperando tu plan' })
+    await expect(ghosts).toHaveCount(3)
+    await expect(ghosts.first()).toContainText('Mi Tienda Online')
 
     // ── Pricing, from the notice: why the owner is here, and email in each plan ──
     await page.goto('/settings')
     await notice.getByRole('link', { name: 'Ver planes', exact: true }).click()
     await expect(page).toHaveURL(/\/pricing\?reason=email_quota/)
     await expect(page.getByText('Tienes 7 facturas esperando en tu correo. Con Pro entran hoy y tienes 500 documentos al mes.')).toBeVisible()
+    await expect(
+      page.getByText(/^Hoy entrarían facturas de Mi Tienda Online, Carnicería Hermanos Gil, Quesos Artesanos y 4 proveedores más/),
+    ).toBeVisible()
     await expect(page.getByText('Facturas por correo: 1 buzón, una revisión al día')).toBeVisible()
     await expect(page.getByText('Facturas por correo cada 6 horas')).toBeVisible()
     await expect(page.getByText('Hasta 3 buzones de correo')).toBeVisible()
@@ -79,6 +91,7 @@ test.describe('Email import at the plan limit', () => {
     await page.goto('/triage')
     await expect(page.getByRole('link').filter({ hasText: '📧 Correo' }).first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('alert').filter({ hasText: 'facturas esperando' })).toHaveCount(0)
+    await expect(page.getByRole('button').filter({ hasText: 'Esperando tu plan' })).toHaveCount(0)
 
     // ── Free the fake inbox for email.spec.ts ──
     await page.goto('/settings')

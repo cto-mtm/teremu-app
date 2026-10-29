@@ -305,6 +305,32 @@ export const emailStatusSchema = z.object({
   limits: z.object({ inboxes: z.number(), syncHours: z.number() }),
 })
 
+/** An amount a mail quoted — a hint in its own currency, never converted. */
+const amountHintSchema = z.object({ value: z.number(), currency: currencySchema }).nullable().catch(null)
+
+/** GET /email/waiting — what the scan meter holds, for the paywall's
+ * teaser: newest messages by sender, the senders by frequency, and the
+ * hints added up when they are all in the base currency. */
+export const emailWaitingSchema = z.object({
+  waiting: z.number().catch(0),
+  senders: z.array(z.string()).catch([]),
+  items: z
+    .array(
+      z.object({
+        id: z.string(),
+        from: z.string().catch(''),
+        subject: z.string().catch(''),
+        receivedAt: z.number().catch(0),
+        attachment: z.string().nullable().catch(null),
+        kind: z.string().nullable().catch(null),
+        vendorHint: z.string().nullable().catch(null),
+        amountHint: amountHintSchema,
+      }),
+    )
+    .catch([]),
+  amountTotal: amountHintSchema,
+})
+
 /** GET /invoices/:id/text — the text an emailed invoice was read from. */
 export const invoiceTextSchema = z.object({ text: z.string() })
 

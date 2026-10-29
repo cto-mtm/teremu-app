@@ -1,6 +1,7 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
 import { chatCompletion, llmEnabled, parseModelJson } from "../llm.js";
+import { currencySchema, type Currency } from "../models.js";
 import type { MailAttachment, MailMessageMeta } from "./types.js";
 
 /**
@@ -11,9 +12,10 @@ import type { MailAttachment, MailMessageMeta } from "./types.js";
  * ever reaches extraction (Phase 3).
  *
  * Everything the model sees here is untrusted mail. Its only output is
- * a verdict per id, so a message that "instructs" the model can at worst
- * misclassify itself — and extraction's own `not_a_document` check and
- * discard-refund catch that.
+ * a verdict per id — plus, for the paywall's teaser, a vendor name and an
+ * amount the owner reads as hints — so a message that "instructs" the
+ * model can at worst misclassify itself or mislabel its own hint — and
+ * extraction's own `not_a_document` check and discard-refund catch that.
  */
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -58,6 +60,22 @@ export function senderAddress(from: string): string {
   return (angle?.[1] ?? from.trim()).toLowerCase();
 }
 
+/** Second-level labels that are not the name ("makro.co.uk"). */
+const GENERIC_LABELS = new Set(["co", "com", "org", "net", "gov", "gob", "ac", "edu"]);
+const capitalise = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
+
+/** Who a From header names, for people to read: the display name
+ * ("\"Makro\" <no-reply@makro.es>" → "Makro"), else the address's domain
+ * without its TLD, capitalised ("pedidos@coca-cola.com" → "Coca-Cola"). */
+export function senderName(from: string): string {
+  const display = from.replace(/<[^<>]*>/g, "").trim().replace(/^["']+|["']+$/g, "").trim();
+  if (display && !display.includes("@")) return display;
+  const labels = (senderAddress(from).split("@")[1] ?? "").split(".").slice(0, -1);
+  while (labels.length > 1 && GENERIC_LABELS.has(labels[labels.length - 1])) labels.pop();
+  const name = labels[labels.length - 1];
+  return name ? name.split("-").map(capitalise).join("-") : senderAddress(from);
+}
+
 // ── Stage 1 ─────────────────────────────────────────────────────────
 
 export interface ClassifyInput {
@@ -70,20 +88,45 @@ export interface ClassifyInput {
   bodyPreview?: string;
 }
 
+/** An amount the mail itself quotes — a hint for the owner, never a
+ * stored amount (it is not read from the document). */
+export interface AmountHint {
+  value: number;
+  currency: Currency;
+}
+
 export interface Verdict {
   isInvoice: boolean;
   confidence: number;
+  /** The supplier's trade name as written in the mail (≤ 60 chars). */
+  vendor: string | null;
+  amount: AmountHint | null;
 }
 
+/** Longest vendor hint kept. */
+const VENDOR_MAX = 60;
+
 const replySchema = z.object({
-  verdicts: z.array(z.object({ id: z.string(), isInvoice: z.boolean(), confidence: z.number().min(0).max(1) })),
+  verdicts: z.array(
+    z.object({
+      id: z.string(),
+      isInvoice: z.boolean(),
+      confidence: z.number().min(0).max(1),
+      // Hints for the owner, never trusted for anything else: a bad one
+      // is dropped, not a failed batch.
+      vendor: z.string().nullable().catch(null),
+      amount: z.object({ value: z.number().positive(), currency: currencySchema }).nullable().catch(null),
+    }),
+  ),
 });
 
 const PROMPT = `You sort a restaurant's email. For each message decide whether it carries a document that BILLS the restaurant — a supplier invoice or delivery note for goods or services, or a bill for rent, electricity, gas, water, fuel, phone, professional fees (gestoría, asesoría, lawyer) or a subscription — with line items or an amount owed. Messages are in Spanish or English.
 
 Reply with ONLY a JSON object (no markdown fences, no commentary):
-{"verdicts": [{"id": "<message id>", "isInvoice": true, "confidence": 0.0-1.0}]}
+{"verdicts": [{"id": "<message id>", "isInvoice": true, "confidence": 0.0-1.0, "vendor": "Makro" | null, "amount": {"value": 1234.56, "currency": "EUR"} | null}]}
 One verdict per message, ids copied exactly.
+vendor: the supplier's trade name as the message writes it (sender name, signature or subject), at most 60 characters; null when the message does not name one.
+amount: only when the subject or preview quotes the document's total with a currency symbol or code (importe, total, total factura, amount due, balance due) — the number as a plain decimal and its ISO currency code; null otherwise. Never guess, never add up lines, never convert.
 
 YES (isInvoice true): factura, factura simplificada, albarán, nota de entrega, recibo of a purchase, recibo de alquiler (rent receipt), a utility or fuel bill ("tu factura de luz", "factura de gas"), abono / factura rectificativa / nota de crédito, invoice, bill, receipt, packing slip, credit memo / credit note, a photo or scan of any of these, an invoice written in the email body with its lines and total.
 NO (isInvoice false): estado de cuenta / extracto / statement; tarifa / lista de precios / catálogo / price list; pedido / confirmación de pedido / order confirmation (not yet billed); presupuesto / quote; aviso de pago / pago realizado / payment confirmation; shipping or delivery tracking; marketing, newsletters, offers; personal or internal mail; bank and card notices (a bank's own statement or card alert — but a vendor's bill that is paid by direct debit is still YES).
@@ -108,9 +151,19 @@ const MOCK_YES = /(factura|albar[aá]n|recibo|abono|invoice|receipt|packing slip
 
 export function mockVerdict(m: ClassifyInput): Verdict {
   const text = `${m.subject} ${m.snippet} ${m.attachments.map((a) => a.filename).join(" ")} ${m.bodyPreview ?? ""}`;
-  if (MOCK_NO.test(text)) return { isInvoice: false, confidence: 0.9 };
-  if (MOCK_YES.test(text)) return { isInvoice: true, confidence: 0.9 };
-  return { isInvoice: false, confidence: 0.6 };
+  if (MOCK_NO.test(text)) return { isInvoice: false, confidence: 0.9, vendor: null, amount: null };
+  if (MOCK_YES.test(text)) return { isInvoice: true, confidence: 0.9, vendor: null, amount: mockAmount(`${m.subject} ${m.snippet}`) };
+  return { isInvoice: false, confidence: 0.6, vendor: null, amount: null };
+}
+
+/** The mock's amount hint: a total the subject or preview quotes in euros
+ * ("Total 49,00 €", Spanish separators) or dollars ("$1,234.56"). */
+export function mockAmount(text: string): AmountHint | null {
+  const eur = /(\d{1,3}(?:\.\d{3})*,\d{2})\s?(?:€|EUR)/.exec(text);
+  if (eur) return { value: Number(eur[1].replace(/\./g, "").replace(",", ".")), currency: "EUR" };
+  const usd = /(?:\$|USD)\s?(\d{1,3}(?:,\d{3})*\.\d{2})/.exec(text);
+  if (usd) return { value: Number(usd[1].replace(/,/g, "")), currency: "USD" };
+  return null;
 }
 
 /** Stage 1 for up to CLASSIFY_BATCH messages. Ids the model left out are
@@ -136,7 +189,10 @@ export async function classifyMessages(items: ClassifyInput[]): Promise<Map<stri
     throw new Error("email_classify_shape");
   }
   const asked = new Set(items.map((m) => m.id));
-  for (const v of parsed.data.verdicts) if (asked.has(v.id)) out.set(v.id, { isInvoice: v.isInvoice, confidence: v.confidence });
+  for (const v of parsed.data.verdicts) {
+    if (!asked.has(v.id)) continue;
+    out.set(v.id, { isInvoice: v.isInvoice, confidence: v.confidence, vendor: v.vendor?.trim().slice(0, VENDOR_MAX) || null, amount: v.amount });
+  }
   return out;
 }
 

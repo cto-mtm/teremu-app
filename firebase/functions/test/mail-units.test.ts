@@ -23,7 +23,7 @@ describe("mail footers", () => {
 
   it("gives the upgrade nudge the mailer's one-click unsubscribe, in both parts", () => {
     for (const locale of ["es", "en"] as const) {
-      const m = emailQuotaEmail({ locale, waiting: 3, limit: 25, upgradeTo: "pro" });
+      const m = emailQuotaEmail({ locale, waiting: 3, limit: 25, upgradeTo: "pro", senders: [], amountTotal: null });
       expect(m.text).toContain("{{unsubscribeUrl}}");
       expect(m.html).toContain('href="{{unsubscribeUrl}}"');
       expect(m.text).toContain(ADDRESS);
@@ -36,7 +36,7 @@ describe("mail footers", () => {
 
   it("tells the top plan the invoices wait, with no pricing link and no unsubscribe", () => {
     for (const locale of ["es", "en"] as const) {
-      const m = emailQuotaEmail({ locale, waiting: 12, limit: 1500, upgradeTo: null });
+      const m = emailQuotaEmail({ locale, waiting: 12, limit: 1500, upgradeTo: null, senders: ["Makro"], amountTotal: null });
       for (const part of [m.text, m.html!]) {
         expect(part).not.toContain("/pricing");
         expect(part).not.toContain("{{unsubscribeUrl}}");

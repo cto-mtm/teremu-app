@@ -119,7 +119,7 @@ import {
 import { EMAIL_SECRETS } from "./email/index.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
 import { resumeAfterPlanChange } from "./email/planChange.js";
-import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox } from "./email/sync.js";
+import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox, waitingItems, WAITING_ITEMS } from "./email/sync.js";
 import { recordOutcome } from "./email/stats.js";
 
 // LLM provider key (see llm.ts — the secret keeps its historical name
@@ -1401,6 +1401,12 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (m === "GET" && seg.length === 1) {
       if (!can(member, "integrations")) return forbidden(res);
       return json(res, 200, await emailStatus(rid, planInfo.plan, planInfo.timezone));
+    }
+    // What the meter holds, by sender, date and hint — the paywall's
+    // teaser in Triage, Settings and the pricing page: either area reads it.
+    if (m === "GET" && id === "waiting" && seg.length === 2) {
+      if (!can(member, "triage") && !can(member, "integrations")) return forbidden(res);
+      return json(res, 200, await waitingItems(rid, WAITING_ITEMS, planInfo.currency));
     }
     // Finish a connect: completeOAuth checks the CALLER started this flow
     // and re-checks their rights on the restaurant it was for.
