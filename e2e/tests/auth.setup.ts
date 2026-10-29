@@ -37,8 +37,10 @@ setup('sign in with Google and complete onboarding', async ({ page }) => {
   await expect(page).toHaveURL(/\/$/)
   await expect(tour).toBeVisible({ timeout: 20_000 })
 
-  // ── 4. Walk all five beats, then finish ──
-  for (const step of ['Escanea sin frenar', 'Márgenes y despensa, solos', 'Tu equipo y tu asistente', 'Empieza gratis']) {
+  // ── 4. Walk all six beats, then finish ──
+  // (The email beat shows because the emulator's fake inbox makes email
+  // import available and verified — GET /me features.emailImport.)
+  for (const step of ['Escanea sin frenar', 'Facturas por correo, sin escanear', 'Márgenes y despensa, solos', 'Tu equipo y tu asistente', 'Empieza gratis']) {
     await page.getByRole('button', { name: 'Siguiente' }).click()
     await expect(page.getByRole('heading', { name: step, level: 2 })).toBeVisible()
   }

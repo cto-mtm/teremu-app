@@ -63,7 +63,8 @@ e2e/
     ├── scan/                # the golden path: scan → triage → approve
     ├── triage/              # dismiss → restore → approve as expense; albarán ↔ factura reconciliation;
     │                        #   link a line to an existing ingredient ("Nuevo" → picker → alias);
-    │                        #   first-approval main-currency prompt (fresh location)
+    │                        #   first-approval main-currency prompt (fresh location);
+    │                        #   empty queue → connect an inbox → the email card in Settings
     ├── vendors/             # directory search, vendor page, ordering contact
     ├── settings/            # team invite + per-area permissions (second signed-in user),
     │                        #   location name / labor rate / units / health, new location + POS

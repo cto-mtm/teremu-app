@@ -1,13 +1,21 @@
 <script lang="ts">
 import { ref } from 'vue'
+import type { z } from 'zod'
+import { emailStatusSchema } from '../lib/schemas'
+
+type EmailStatus = z.infer<typeof emailStatusSchema>
 
 // The waiting-invoices banner, once dismissed, stays away for the rest of
 // the app session (module scope: survives leaving Triage, not a reload).
 const waitingDismissed = ref(false)
+
+// The empty queue's email prompt asks GET /email once per location and
+// app session — not on every empty render.
+const inboxStatus = new Map<string, Promise<EmailStatus | null>>()
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
@@ -19,7 +27,10 @@ import InvoiceCard from '../components/InvoiceCard.vue'
 import PageLoader from '../components/PageLoader.vue'
 import UpgradeNotice from '../components/UpgradeNotice.vue'
 import WaitingInvoiceRow from '../components/WaitingInvoiceRow.vue'
+import BaseButton from '../components/BaseButton.vue'
+import { useEmailConnect } from '../composables/useEmailConnect'
 import { useEmailWaiting } from '../composables/useEmailWaiting'
+import { apiFetch } from '../lib/api'
 import { upgradeFrom } from '../lib/plans'
 
 const { t, n, d } = useI18n()
@@ -44,6 +55,33 @@ const router = useRouter()
 function openWaiting(): void {
   if (auth.profile?.role === 'owner') void router.push({ path: '/pricing', query: { reason: 'email_quota' } })
   else document.getElementById('waiting-banner')?.scrollIntoView({ block: 'center' })
+}
+
+// An empty queue invites the owner to connect an inbox — or, when one is
+// being checked, says the invoices are on their way. Only once the app
+// may advertise email import (Gmail verified) and for someone who may
+// connect one.
+const emailPrompt = ref<{ provider: string } | 'working' | null>(null)
+const { busy: emailBusy, connect: connectEmail } = useEmailConnect()
+const emailFailed = ref(false)
+watch(
+  () => !store.loading && store.pending.length === 0 && Boolean(auth.profile?.features.emailImport) && auth.can('integrations', 'edit'),
+  async (empty) => {
+    const rid = auth.profile?.restaurantId
+    if (!empty || !rid) return
+    if (!inboxStatus.has(rid)) {
+      inboxStatus.set(rid, apiFetch('/email', undefined, emailStatusSchema).then((res) => (res.ok ? res.data : null)))
+    }
+    const status = await inboxStatus.get(rid)
+    if (!status) return
+    const provider = status.providers.find((p) => p.available)?.provider
+    if (!status.inboxes.length) emailPrompt.value = provider ? { provider } : null
+    else emailPrompt.value = status.inboxes.some((i) => i.working) ? 'working' : null
+  },
+  { immediate: true },
+)
+async function onConnectEmail(provider: string): Promise<void> {
+  emailFailed.value = (await connectEmail(provider)) !== null
 }
 
 // Albarán ↔ factura pairing: automatic from scans, manually resolvable.
@@ -185,8 +223,21 @@ onUnmounted(() => {
 
     <PageLoader v-if="store.loading && !store.invoices.length" :cards="0" :lines="4" />
 
-    <div v-else-if="store.pending.length === 0" class="card py-10 text-center text-sm text-smoke">
-      {{ t('triage.empty') }}
+    <div v-else-if="store.pending.length === 0" class="card space-y-3 py-10 text-center text-sm text-smoke">
+      <p>{{ t('triage.empty') }}</p>
+      <template v-if="emailPrompt === 'working'">
+        <p>
+          {{ t('triage.emptyEmailWorking') }}
+          <RouterLink to="/settings?card=email" class="font-medium text-ember-700 hover:underline">{{ t('triage.emptyEmailLink') }}</RouterLink>
+        </p>
+      </template>
+      <template v-else-if="emailPrompt">
+        <p>📧 {{ t('triage.emptyEmail') }}</p>
+        <p v-if="emailFailed" class="text-xs text-coral-600" role="alert">{{ t('email.error.generic') }}</p>
+        <BaseButton :disabled="emailBusy" @click="onConnectEmail(emailPrompt.provider)">
+          {{ emailBusy ? t('email.connecting') : t('email.connect', { provider: t('email.provider.' + emailPrompt.provider) }) }}
+        </BaseButton>
+      </template>
     </div>
 
     <!-- Recipe 4: rows animate in/out (approve removes them) with FLIP moves -->

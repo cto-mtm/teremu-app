@@ -6,25 +6,31 @@ import BaseButton from './BaseButton.vue'
 import logoColor from '../assets/logo-color.svg'
 
 /**
- * First-login tour: four beats of what the app does + the plans. Shown
+ * First-login tour: the beats of what the app does + the plans. Shown
  * once per device (AppShell persists dismissal in localStorage) —
- * skipping counts as done, no nagging.
+ * skipping counts as done, no nagging. The email beat (informational: the
+ * tour is a modal and connecting is a redirect) and the plans' email
+ * lines appear only once the app may advertise email import
+ * (`features.emailImport`: Gmail verified).
  */
 const { t } = useI18n()
 const auth = useAuthStore()
 const open = defineModel<boolean>({ required: true })
 
-const STEPS = ['welcome', 'scan', 'margins', 'team', 'plans'] as const
-const ICONS: Record<(typeof STEPS)[number], string> = {
+type Step = 'welcome' | 'scan' | 'email' | 'margins' | 'team' | 'plans'
+const ICONS: Record<Step, string> = {
   welcome: '', // logo instead
   scan: '📷',
+  email: '📧',
   margins: '📈',
   team: '👥',
   plans: '✨',
 }
+const emailImport = computed(() => Boolean(auth.profile?.features.emailImport))
+const STEPS = computed<Step[]>(() => ['welcome', 'scan', ...(emailImport.value ? (['email'] as const) : []), 'margins', 'team', 'plans'])
 const step = ref(0)
-const current = computed(() => STEPS[step.value])
-const last = computed(() => step.value === STEPS.length - 1)
+const current = computed(() => STEPS.value[step.value])
+const last = computed(() => step.value === STEPS.value.length - 1)
 
 function finish(): void {
   // AppShell persists the dismissal (localStorage) when this closes.
@@ -67,7 +73,9 @@ function finish(): void {
                       {{ t('onboarding.steps.plans.current') }}
                     </span>
                   </div>
-                  <div class="mt-1 text-xs text-smoke">{{ t('onboarding.steps.plans.freeItems') }}</div>
+                  <div class="mt-1 text-xs text-smoke">
+                    {{ t('onboarding.steps.plans.freeItems') }}<template v-if="emailImport"> · {{ t('onboarding.steps.plans.freeEmail') }}</template>
+                  </div>
                 </div>
                 <div
                   class="rounded-xl border p-3"
@@ -79,7 +87,9 @@ function finish(): void {
                       {{ t('onboarding.steps.plans.current') }}
                     </span>
                   </div>
-                  <div class="mt-1 text-xs text-smoke">{{ t('onboarding.steps.plans.proItems') }}</div>
+                  <div class="mt-1 text-xs text-smoke">
+                    {{ t('onboarding.steps.plans.proItems') }}<template v-if="emailImport"> · {{ t('onboarding.steps.plans.proEmail') }}</template>
+                  </div>
                 </div>
               </div>
             </div>

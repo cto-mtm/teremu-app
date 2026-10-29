@@ -9,6 +9,7 @@ import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } fro
 import type { MailMessageMeta } from "../src/email/types";
 import { fetchRetrying } from "../src/email/gmail";
 import { acceptThreshold } from "../src/email/stats";
+import { emailImportOffered } from "../src/email/index";
 import { llmEnabled, llmModel, vertexConfigured } from "../src/llm";
 import { extractInvoice } from "../src/ocr";
 
@@ -273,6 +274,18 @@ describe("offline classifier", () => {
     expect(mockVerdict(input("Confirmación de pedido", "Total 312,40 €")).amount).toBeNull();
     expect(mockAmount("Invoice 88 — amount due $1,234.56")).toEqual({ value: 1234.56, currency: "USD" });
     expect(mockAmount("Factura 2026/318, 3 líneas")).toBeNull();
+  });
+});
+
+describe("the onboarding gate (GET /me features.emailImport)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("never advertises the import while the OAuth app is in Google's Testing status", () => {
+    // Offline (the suite's TEREMU_TEST_MOCKS): the fake inbox is available.
+    vi.stubEnv("TEREMU_TEST_MOCKS", "1");
+    expect(emailImportOffered()).toBe(true);
+    vi.stubEnv("GMAIL_OAUTH_TESTING", "true");
+    expect(emailImportOffered()).toBe(false);
   });
 });
 

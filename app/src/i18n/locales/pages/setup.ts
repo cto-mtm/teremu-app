@@ -99,6 +99,12 @@ const es = {
     toMenu: 'Ir a la carta',
     toPulse: 'Ir al panel',
     estimate: 'Estimar recetas',
+    // The invitation to connect an inbox (only once Gmail is verified).
+    email: {
+      title: '¿Te llegan facturas por correo? Conéctalo y entran solas.',
+      body: 'Teremu revisa los últimos 31 días y después solo el correo nuevo. Gratis incluye 25 documentos al mes; el resto espera a que mejores tu plan.',
+      otherAccount: 'Puede ser otra cuenta distinta de la que usas para entrar.',
+    },
   },
   errors: {
     generic: 'Algo falló. Inténtalo de nuevo.',
@@ -235,6 +241,11 @@ const en: typeof es = {
     toMenu: 'Go to menu',
     toPulse: 'Go to dashboard',
     estimate: 'Estimate recipes',
+    email: {
+      title: 'Do invoices reach you by email? Connect it and they come in on their own.',
+      body: 'Teremu checks the last 31 days, then only new mail. Free includes 25 documents a month; the rest wait until you upgrade.',
+      otherAccount: 'It can be a different account from the one you sign in with.',
+    },
   },
   errors: {
     generic: 'Something went wrong. Try again.',

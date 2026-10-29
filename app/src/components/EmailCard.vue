@@ -5,7 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
 import { planRose } from '../lib/plans'
-import { emailOAuthResultSchema, emailStatusSchema, emailSyncResultSchema, posConnectSchema } from '../lib/schemas'
+import { emailOAuthResultSchema, emailStatusSchema, emailSyncResultSchema } from '../lib/schemas'
+import { useEmailConnect } from '../composables/useEmailConnect'
 import { useEmailWaiting } from '../composables/useEmailWaiting'
 import { useAuthStore } from '../stores/auth'
 import { useInvoicesStore } from '../stores/invoices'
@@ -166,15 +167,13 @@ async function load(): Promise<void> {
 // What the meter holds, by name: listed in the notice while an inbox is paused.
 const waiting = useEmailWaiting(() => status.value?.inboxes.some((i) => i.paused) ?? false)
 
+const { connect: startConnect } = useEmailConnect()
 async function connect(provider: string): Promise<void> {
   busy.value = provider
-  const res = await apiFetch(`/email/${provider}/connect`, { method: 'POST' }, posConnectSchema)
-  if (res.ok) {
-    window.location.href = res.data.url
-    return
-  }
+  const error = await startConnect(provider)
+  if (!error) return
   busy.value = null
-  message.value = { ok: false, text: errorText(res.error) }
+  message.value = { ok: false, text: errorText(error) }
 }
 
 async function disconnect(inbox: Inbox): Promise<void> {
@@ -208,7 +207,9 @@ async function completeOAuth(state: string, code: string): Promise<void> {
 
 onMounted(async () => {
   const { email, state, code } = route.query
-  if (email) void router.replace({ query: {} }) // the code must not linger in the URL
+  // The code must not linger in the URL. Only this card's keys: `card`
+  // is the page's deep link (Settings scrolls to and rings this card).
+  if (email) void router.replace({ query: { ...route.query, email: undefined, state: undefined, code: undefined } })
   if (email === 'complete' && typeof state === 'string' && typeof code === 'string') {
     await completeOAuth(state, code)
   } else {

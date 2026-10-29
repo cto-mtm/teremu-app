@@ -116,7 +116,7 @@ import {
   emailStatus,
   startConnect as startEmailConnect,
 } from "./email/oauth.js";
-import { EMAIL_SECRETS } from "./email/index.js";
+import { EMAIL_SECRETS, emailImportOffered } from "./email/index.js";
 import type { ConnectionDoc as EmailConnectionDoc } from "./email/store.js";
 import { resumeAfterPlanChange } from "./email/planChange.js";
 import { nextSyncAt, rememberApprovedSender, syncDue, syncInbox, waitingItems, WAITING_ITEMS } from "./email/sync.js";
@@ -312,6 +312,9 @@ async function route(req: Request, res: Response): Promise<unknown> {
       // Whether the import can run here (a Places backend is configured):
       // the app hides its entry points otherwise instead of a 501.
       listingAvailable: listingBackend() !== null,
+      // What the app may advertise. emailImport: invite owners to connect
+      // an inbox (onboarding prompts) — off while the OAuth app is unverified.
+      features: { emailImport: emailImportOffered() },
       locations,
     });
   }

@@ -36,6 +36,13 @@ test('a new owner imports their restaurant and its menu', async ({ page }, testI
   await page.getByRole('button', { name: 'Guardar 7 platos' }).click()
   await expect(page.getByRole('heading', { name: '¡Listo!' })).toBeVisible({ timeout: 20_000 })
 
+  // No inbox yet: the done screen offers one, honest about Free's cap and
+  // about which account it can be.
+  await expect(page.getByText('¿Te llegan facturas por correo? Conéctalo y entran solas.')).toBeVisible()
+  await expect(page.getByText('Gratis incluye 25 documentos al mes; el resto espera a que mejores tu plan.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Puede ser otra cuenta distinta de la que usas para entrar.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Conectar Gmail' })).toBeVisible()
+
   // The new dishes have prices but no recipes: the next step drafts them,
   // in place, with the menu wizard seeded from the imported dishes.
   await page.getByRole('button', { name: /Estimar recetas/ }).click()

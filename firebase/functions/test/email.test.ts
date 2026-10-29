@@ -63,7 +63,11 @@ describe("email connect flow", () => {
     });
 
     const url = await consentUrl(o);
-    const done = await finish(o, await followConsent(url));
+    const landed = await followConsent(url);
+    // Back on Settings, at the email card, wherever the connect started.
+    expect(landed.pathname).toBe("/settings");
+    expect(landed.searchParams.get("card")).toBe("email");
+    const done = await finish(o, landed);
     expect(done).toEqual({ result: "connected", rid: o.rid, accountEmail: "fake-inbox@restaurante.test" });
 
     const after = await get("/email", o.token);
@@ -159,7 +163,9 @@ describe("email OAuth state", () => {
     const o = await owner();
     const url = await consentUrl(o);
     url.searchParams.set("state", "forged-state-0123456789");
-    expect((await followConsent(url)).searchParams.get("email")).toBe("invalid_state");
+    const landed = await followConsent(url);
+    expect(landed.searchParams.get("email")).toBe("invalid_state");
+    expect(landed.searchParams.get("card")).toBe("email"); // lands on the email card
     expect((await inbox().get()).exists).toBe(false);
   });
 
@@ -168,8 +174,17 @@ describe("email OAuth state", () => {
     const url = await consentUrl(o);
     url.searchParams.delete("code");
     url.searchParams.set("error", "access_denied");
-    expect((await followConsent(url)).searchParams.get("email")).toBe("denied");
+    const landed = await followConsent(url);
+    expect(landed.searchParams.get("email")).toBe("denied");
+    expect(landed.searchParams.get("card")).toBe("email");
     expect((await inbox().get()).exists).toBe(false);
+  });
+});
+
+describe("email: the onboarding gate", () => {
+  it("GET /me offers email import when a provider is available and verified", async () => {
+    const o = await owner();
+    expect((await get("/me", o.token)).body.features).toEqual({ emailImport: true });
   });
 });
 

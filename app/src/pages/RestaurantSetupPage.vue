@@ -4,7 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import { useEmailConnect } from '../composables/useEmailConnect'
+import { apiFetch } from '../lib/api'
 import { decimalMarkFor, parseAmount } from '../lib/csv'
+import { emailStatusSchema } from '../lib/schemas'
 import { useAuthStore } from '../stores/auth'
 import { useKitchenStore } from '../stores/kitchen'
 import { priceChanged, useListingStore, type ReviewDish } from '../stores/listing'
@@ -21,6 +24,22 @@ const auth = useAuthStore()
 const kitchen = useKitchenStore()
 const listing = useListingStore()
 const router = useRouter()
+
+// The done screen invites the owner to connect an inbox (docs/email-
+// quota-paywall-plan.md Phase 5): only when the app may advertise email
+// import (Gmail verified) and this person may connect one, and not when
+// an inbox already feeds this location. One GET /email, on arrival.
+const { busy: emailBusy, connect: connectEmail } = useEmailConnect()
+const emailOffer = ref<string | null>(null) // the provider to offer
+const emailFailed = ref(false)
+async function offerEmail(): Promise<void> {
+  if (!auth.profile?.features.emailImport || !auth.can('integrations', 'edit')) return
+  const res = await apiFetch('/email', undefined, emailStatusSchema)
+  if (res.ok && !res.data.inboxes.length) emailOffer.value = res.data.providers.find((p) => p.available)?.provider ?? null
+}
+async function onConnectEmail(): Promise<void> {
+  emailFailed.value = emailOffer.value ? (await connectEmail(emailOffer.value)) !== null : false
+}
 
 type Phase = 'search' | 'importing' | 'review' | 'done'
 const phase = ref<Phase>('search')
@@ -358,6 +377,7 @@ async function confirmImport(): Promise<void> {
   await auth.reloadProfile()
   void kitchen.refresh()
   phase.value = 'done'
+  void offerEmail()
 }
 
 /** Hand off to the recipe wizard; the first-login tour waits for it. */
@@ -838,6 +858,15 @@ const initials = (name: string) => {
         <p v-if="outcome.link === 'contested'" class="max-w-sm rounded-xl bg-ember-50 px-3 py-2 text-xs leading-relaxed text-ember-700">
           {{ t('setup.done.contested') }}
         </p>
+        <div v-if="emailOffer" class="w-full max-w-sm space-y-2 rounded-xl border border-gray-200 p-4 text-left">
+          <p class="text-sm font-semibold">📧 {{ t('setup.done.email.title') }}</p>
+          <p class="text-xs leading-relaxed text-smoke">{{ t('setup.done.email.body') }}</p>
+          <p class="text-xs leading-relaxed text-smoke">{{ t('setup.done.email.otherAccount') }}</p>
+          <p v-if="emailFailed" class="text-xs text-coral-600" role="alert">{{ t('email.error.generic') }}</p>
+          <BaseButton :disabled="emailBusy" @click="onConnectEmail">
+            {{ emailBusy ? t('email.connecting') : t('email.connect', { provider: t('email.provider.' + emailOffer) }) }}
+          </BaseButton>
+        </div>
         <div class="flex gap-2">
           <BaseButton variant="ghost" @click="router.replace('/')">{{ t('setup.done.toPulse') }}</BaseButton>
           <!-- New dishes have prices but no recipes yet: draft them next -->

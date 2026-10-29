@@ -12,6 +12,10 @@ const es = {
       title: 'Escanea sin frenar',
       body: '15 facturas arrugadas en 60 segundos. La IA las digitaliza en segundo plano y aterrizan en el Triaje: foto junto a la transcripción, corriges lo necesario y apruebas con un toque.',
     },
+    email: {
+      title: 'Facturas por correo, sin escanear',
+      body: 'Conecta el correo donde te llegan las facturas de tus proveedores: Teremu revisa los últimos 31 días y después cada correo nuevo, y las facturas aparecen en Revisar solas. Está en el plan Gratis (cuentan para los 25 documentos al mes).',
+    },
     margins: {
       title: 'Márgenes y despensa, solos',
       body: 'Cada compra actualiza los precios de tus ingredientes: el costo de cada plato se recalcula al instante y la despensa teórica se llena y se vacía con tus ventas. Te avisamos si un proveedor sube precios o un plato pierde margen.',
@@ -27,6 +31,8 @@ const es = {
       freeItems: '25 escaneos/mes · 1 usuario · 90 días de historial · alertas en la app · asistente ✨ (20 preguntas/mes)',
       proTitle: 'Pro',
       proItems: '500 escaneos/mes · 5 usuarios con permisos · historial completo · asistente ✨ (300 preguntas/mes) · etiquetas ilimitadas',
+      freeEmail: 'correo: 1 buzón',
+      proEmail: 'correo cada 6 h',
       current: 'Tu plan actual',
     },
   },
@@ -47,6 +53,10 @@ const en: typeof es = {
       title: 'Scan without stopping',
       body: '15 crumpled invoices in 60 seconds. The AI digitizes them in the background and they land in Triage: photo next to the transcription — fix what needs fixing, approve with one tap.',
     },
+    email: {
+      title: 'Invoices by email, no scanning',
+      body: 'Connect the inbox where your suppliers’ invoices arrive: Teremu checks the last 31 days, then every new email, and the invoices show up in Review on their own. It’s on the Free plan (they count toward the 25 documents a month).',
+    },
     margins: {
       title: 'Margins & pantry, on their own',
       body: "Every purchase rolls your ingredient prices: each dish's cost recalculates instantly, and the theoretical pantry fills with purchases and empties with sales. We alert you when a vendor raises prices or a dish slips under target.",
@@ -62,6 +72,8 @@ const en: typeof es = {
       freeItems: '25 scans/mo · 1 user · 90-day history · in-app alerts · ✨ assistant (20 questions/mo)',
       proTitle: 'Pro',
       proItems: '500 scans/mo · 5 users with permissions · full history · ✨ assistant (300 questions/mo) · unlimited tags',
+      freeEmail: 'email: 1 inbox',
+      proEmail: 'email every 6 h',
       current: 'Your current plan',
     },
   },

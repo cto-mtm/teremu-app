@@ -101,22 +101,24 @@ async function consumeState(nonce: string): Promise<OauthStateDoc | null> {
  * The provider's redirect lands here (emailOauthCallback). Like POS it
  * does NOT complete the connection — the state proves which flow this
  * is, not WHO is at the browser — so the code goes back to the app,
- * where the signed-in user completes it. Outcomes ride along as `?email=`.
+ * where the signed-in user completes it. Outcomes ride along as `?email=`;
+ * `card=email` lands every one of them on the email card, wherever the
+ * connect started (Settings, the setup done screen, Triage).
  */
 export async function oauthReturnUrl(query: { state?: unknown; code?: unknown; error?: unknown }): Promise<string> {
   const nonce = validNonce(query.state) ? query.state : null;
   const state = nonce ? ((await stateRef(nonce).get()).data() as OauthStateDoc | undefined) : undefined;
-  if (!nonce || !state || state.expiresAt <= Date.now()) return `${appReturnBase()}/settings?email=invalid_state`;
+  if (!nonce || !state || state.expiresAt <= Date.now()) return `${appReturnBase()}/settings?email=invalid_state&card=email`;
   const code = query.code;
   if (query.error || typeof code !== "string" || !code) {
     await stateRef(nonce).delete();
-    return `${state.returnTo}/settings?email=denied`;
+    return `${state.returnTo}/settings?email=denied&card=email`;
   }
-  return `${state.returnTo}/settings?${new URLSearchParams({ email: "complete", state: nonce, code })}`;
+  return `${state.returnTo}/settings?${new URLSearchParams({ email: "complete", state: nonce, code, card: "email" })}`;
 }
 
 /** Where the callback sends the browser when it could not even read the state. */
-export const oauthFailureUrl = (): string => `${appReturnBase()}/settings?email=failed`;
+export const oauthFailureUrl = (): string => `${appReturnBase()}/settings?email=failed&card=email`;
 
 export type OAuthResult =
   | "connected"

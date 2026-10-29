@@ -2,7 +2,7 @@ import { defineSecret } from "firebase-functions/params";
 import { functionUrl } from "../helpers/functionUrl.js";
 import { makeSealer } from "../helpers/sealer.js";
 import { vertexConfigured } from "../llm.js";
-import type { MailProvider } from "../models.js";
+import { MAIL_PROVIDERS, type MailProvider } from "../models.js";
 import { fakeMailAdapter } from "./fake.js";
 import { gmail } from "./gmail.js";
 import type { MailAdapter, MailProviderModule, SecretParam } from "./types.js";
@@ -56,6 +56,14 @@ export const emailAvailable = (provider: MailProvider): boolean =>
 
 /** Whether the provider's OAuth app is still unverified (types.ts `testing`). */
 export const providerInTesting = (provider: MailProvider): boolean => PROVIDERS[provider].testing();
+
+/** Whether the app may INVITE owners to connect an inbox (the onboarding
+ * prompts — GET /me `features.emailImport`): a provider is available and
+ * its OAuth app is verified. While Google still lists the client as
+ * Testing (unverified-app warning, 7-day grants, 100 users) the import
+ * stays in Settings for whoever looks for it, and nothing advertises it.
+ * Reads env only — no Firestore. */
+export const emailImportOffered = (): boolean => MAIL_PROVIDERS.some((p) => emailAvailable(p) && !providerInTesting(p));
 
 /** The callback's path on the app's own domain — Firebase Hosting rewrites
  * it to emailOauthCallback (firebase.json). */

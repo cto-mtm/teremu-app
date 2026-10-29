@@ -466,6 +466,9 @@ export const meSchema = z.object({
   // an API from before it reads as done, so nobody gets redirected.
   setupListing: setupListingSchema.catch('done'),
   listingAvailable: z.boolean().catch(false),
+  // What the app may advertise. emailImport: the onboarding prompts to
+  // connect an inbox (off while the Gmail OAuth app is unverified).
+  features: z.object({ emailImport: z.boolean().catch(false) }).catch({ emailImport: false }),
   locations: z.array(locationSchema),
 })
 
