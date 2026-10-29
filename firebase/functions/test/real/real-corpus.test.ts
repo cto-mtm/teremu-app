@@ -227,8 +227,9 @@ describe.skipIf(!present || covered.length === 0)("real corpus (one client month
     const billed = +approvedFood.reduce((s, i) => s + (i.total ?? 0), 0).toFixed(2);
     const rt = realtimeSpend(invoices, new Map(ingredients.map((i) => [i.id, i])));
     const realtime = +rt.seriesDocs.filter((i) => i.status === "approved" && isFoodInvoice(i)).reduce((s, i) => s + (i.total ?? 0), 0).toFixed(2);
-    // Delivery-dated spend = billed + received-but-unbilled; never double counts.
-    expect(realtime).toBeCloseTo(billed + rt.pendingTotal, 2);
+    // Delivery-dated spend = billed + received-but-unbilled; never double
+    // counts. Each side is rounded on its own, so a cent may separate them.
+    expect(Math.abs(realtime - (billed + rt.pendingTotal))).toBeLessThanOrEqual(0.011);
     expect(realtime).toBeGreaterThanOrEqual(billed);
 
     const recon = reconcileDeliveryNotes(invoices);

@@ -16,11 +16,13 @@ skip everything below.
 ```
 docs/samples/real/                 (gitignored)
   *.pdf                            as delivered: "Vendor - number - date - hash.pdf"
-  corpus.json                      buyer identity + per-vendor name aliases (hand-kept)
+  corpus.json                      buyer identity + per-vendor name aliases (hand-kept); optional
+                                   `restaurant: { country, currency, timezone }` (default ES / EUR / Europe/Madrid)
   golden.json                      ground truth per document (from the accounting export)
   _derived/manifest.json           npm run real:prepare
   _derived/pages/<id>/pN.jpg       the bytes the app would upload (canonical — never re-rendered)
   _derived/cassettes/<model>/      recorded model replies, one set per model
+  _derived/cassettes-aside/<set>/  earlier recordings moved out of the way to re-record (kept for comparison)
   _derived/reports/                eval reports (markdown + json)
   _derived/snapshots/              pinned results of the real-corpus suite
 ```
@@ -34,7 +36,7 @@ are mangled by the filename. `golden.json` overrides it per document id
 | step | command | deterministic? | network |
 |---|---|---|---|
 | 1. render pages | `npm run real:prepare` | yes (once; bytes are then canonical) | no |
-| 2. live eval + record | `npm run real:eval` | scoring yes, model no | **sends documents to the LLM provider** |
+| 2. live eval + record | `npm run real:eval` (default provider) or `npm run real:eval -- --vertex` (Gemini on Vertex: `GOOGLE_VERTEX_PROJECT`, ADC) | scoring yes, model no | **sends documents to that provider** — client consent first |
 | 3. re-score recordings | `npm run real:eval -- --replay` | yes | no |
 | 4. API suite on the month | `npm run test:real` | yes (replay) | no |
 | 5. UI specs on the month | `npm run test:e2e:real` | yes (seeded from recordings) | no |
@@ -50,6 +52,21 @@ key (it embeds the growing ingredient catalog). To measure a prompt or
 model change, re-run the live eval — `LLM_MODEL=… npm run real:eval`
 records into that model's own set, so models never mix. A replay miss is a
 hard failure, never a silent fallback.
+
+**The eval prompt is prod's.** `real:eval` builds the same extraction
+context the pipeline does: the buyer from `corpus.json`, the base
+currency, the country pack's OCR hints and the timezone (`restaurant` in
+`corpus.json`). The catalog starts empty, as for a new restaurant, so a
+real scan with a 300-name catalog sends somewhat more input tokens.
+
+**Re-recording after a prompt change.** A recording is reused even in
+record mode, so a prompt change measures nothing until the old replies
+are moved out of the way: move that model's folder (or the affected
+documents' files) under `_derived/cassettes-aside/`, then re-run
+`real:eval` — `--only <vendor>` re-records just one vendor's documents.
+The snapshots in `_derived/snapshots/` hold one baseline, not one per
+model: `npm run test:real -- --model <set>` compares any recorded set
+against it, and `-u` replaces it.
 
 Text-path cassettes are the exception: they hash every message, prompt
 included. The KNOWN INGREDIENTS list now also carries each ingredient's

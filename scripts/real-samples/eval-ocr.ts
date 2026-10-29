@@ -8,6 +8,7 @@
  *   npm run real:eval                         live model, resumable
  *   npm run real:eval -- --replay             re-score recorded replies only (no network, deterministic)
  *   npm run real:eval -- --only KSA --limit 5
+ *   npm run real:eval -- --vertex             page images to Gemini on Vertex (GOOGLE_VERTEX_PROJECT, ADC)
  *
  * The model is non-deterministic; the SCORING is not. Every live reply
  * is recorded as a cassette (llm.ts), so a run can be re-scored exactly
@@ -37,6 +38,7 @@ import {
 const { values: args } = parseArgs({
   options: {
     replay: { type: "boolean", default: false },
+    vertex: { type: "boolean", default: false },
     only: { type: "string" },
     limit: { type: "string" },
     concurrency: { type: "string", default: "3" },
@@ -53,12 +55,14 @@ if (existsSync(secretFile)) {
 }
 delete process.env.TEREMU_TEST_MOCKS;
 
-const { llmModel } = await import("../../firebase/functions/src/llm.js");
+const { llmModel, vertexModel } = await import("../../firebase/functions/src/llm.js");
 const { extractInvoice } = await import("../../firebase/functions/src/ocr.js");
 const { validateArithmetic } = await import("../../firebase/functions/src/pipeline.js");
+const { packFor } = await import("../../firebase/functions/src/countries/index.js");
 // llm.ts reads these per call. One cassette set per model, so comparing
-// models (LLM_MODEL=… npm run real:eval) never mixes their replies.
-const model = llmModel();
+// models (LLM_MODEL=… npm run real:eval, or --vertex) never mixes their
+// replies.
+const model = args.vertex ? vertexModel() : llmModel();
 process.env.LLM_CASSETTE_DIR = cassetteDirFor(model);
 process.env.LLM_CASSETTE_MODE = args.replay ? "replay" : "record";
 
@@ -73,6 +77,17 @@ const config = loadConfig();
 const golden = loadGolden()?.docs ?? {};
 const buyerName: string | null = config?.buyer?.name ?? null;
 const buyerAliases: string[] = [buyerName, ...(config?.buyer?.aliases ?? [])].filter(Boolean) as string[];
+// The prompt context prod builds for this restaurant (pipeline.ts
+// extractionContext): buyer, base currency, country pack, timezone. The
+// catalog starts empty, as for a new restaurant. corpus.json may set
+// `restaurant`; the default is the Spanish client the corpus came from.
+const restaurant = { country: "ES", currency: "EUR", timezone: "Europe/Madrid", ...(config?.restaurant ?? {}) };
+const context = {
+  restaurantName: buyerName,
+  baseCurrency: restaurant.currency,
+  pack: packFor(restaurant.country),
+  timezone: restaurant.timezone,
+};
 
 let docs = manifest.docs;
 if (args.only) docs = docs.filter((d) => d.file.toLowerCase().includes(args.only!.toLowerCase()));
@@ -124,7 +139,7 @@ async function evalDoc(d: Manifest["docs"][number]): Promise<Row> {
   const images = uniquePages(d).map((p: { path: string }) => readFileSync(join(DERIVED_DIR, p.path)).toString("base64"));
   const t0 = Date.now();
   try {
-    const r = await withRetry(() => extractInvoice(images, [], buyerName));
+    const r = await withRetry(() => extractInvoice(images, context, args.vertex ? "vertex" : "default"));
     const ms = Date.now() - t0;
     const outcome = r.notDocument ? "not_a_document" : r.unreadable || r.lineItems.length === 0 ? "unreadable" : "ok";
     const { warnings } = validateArithmetic(r.lineItems, r.total);
