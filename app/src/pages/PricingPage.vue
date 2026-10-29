@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../lib/api'
+import { upgradeFrom } from '../lib/plans'
 import { billingUrlSchema } from '../lib/schemas'
 import { useAuthStore } from '../stores/auth'
 import BaseButton from '../components/BaseButton.vue'
@@ -14,6 +16,8 @@ import BaseButton from '../components/BaseButton.vue'
  */
 const { t } = useI18n()
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
 const isOwner = computed(() => auth.profile?.role === 'owner')
 const plan = computed(() => auth.profile?.plan)
@@ -21,15 +25,43 @@ const plan = computed(() => auth.profile?.plan)
 const interval = ref<'month' | 'year'>('month')
 const busy = ref(false)
 
-const FREE_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10'] as const
-const PRO_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10'] as const
-const MAX_ITEMS = ['i1', 'i2'] as const
+const FREE_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11'] as const
+const PRO_ITEMS = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11'] as const
+const MAX_ITEMS = ['i1', 'i2', 'i3'] as const
+
+// Where the owner came from (a paywall notice's ?reason=): read once, so
+// the strip above the plans says why they are here. Left in the URL — a
+// refresh shows the same page.
+const reason = typeof route.query.reason === 'string' ? route.query.reason : null
+const context = computed(() => {
+  const next = upgradeFrom(plan.value ?? 'free')
+  if (!next) return null // the top plan has nothing to sell
+  if (reason === 'email_quota') return t(`pricing.context.emailQuota.${next}`, auth.profile?.emailWaiting ?? 0)
+  if (reason === 'email_free' && plan.value === 'free') return t('pricing.context.emailFree')
+  if (reason === 'scan_limit') return t(`pricing.context.scanLimit.${next}`)
+  return null
+})
+
+// Back from Stripe without paying: say nothing changed, then clean the URL.
+const cancelled = route.query.billing === 'cancelled'
+onMounted(() => {
+  if (cancelled) void router.replace({ query: { ...route.query, billing: undefined } })
+})
 
 async function upgrade(toPlan: 'pro' | 'max'): Promise<void> {
   busy.value = true
   const res = await apiFetch(
     '/billing/checkout',
-    { method: 'POST', body: JSON.stringify({ plan: toPlan, interval: interval.value }) },
+    // From the email paywall: Stripe brings the owner back to the email
+    // card, which imports what was waiting once the plan flips.
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        plan: toPlan,
+        interval: interval.value,
+        returnCard: reason === 'email_quota' || reason === 'email_free' ? 'email' : undefined,
+      }),
+    },
     billingUrlSchema,
   )
   busy.value = false
@@ -55,6 +87,9 @@ async function changePlan(): Promise<void> {
       <h1 class="text-2xl font-bold">{{ t('pricing.title') }}</h1>
       <p class="mx-auto max-w-xl text-sm leading-relaxed text-smoke">{{ t('pricing.subtitle') }}</p>
     </div>
+
+    <p v-if="cancelled" class="text-center text-sm text-smoke" role="status">{{ t('pricing.cancelled') }}</p>
+    <p v-if="context" class="rounded-xl bg-ember-50 px-4 py-3 text-center text-sm text-ember-700">{{ context }}</p>
 
     <!-- Billing interval toggle -->
     <div class="flex items-center justify-center">

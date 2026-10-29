@@ -14,6 +14,7 @@ import {
   menuItemKindSchema,
   menuItemOriginSchema,
   permsSchema,
+  settingsCardSchema,
   setupListingSchema,
   subcategorySchema,
   timezoneSchema,
@@ -500,6 +501,14 @@ export function newRestaurantSetupFields(): { setupListing?: "pending" } {
   const on = flag === "on" || (flag !== "off" && process.env.FUNCTIONS_EMULATOR === "true");
   return on ? { setupListing: "pending" } : {};
 }
+
+/** POST /billing/checkout — `returnCard` brings the owner back from
+ * Stripe to that Settings card (the email card, after a paywall). */
+export const checkoutSchema = z.object({
+  plan: z.enum(["pro", "max"]).default("pro"),
+  interval: z.enum(["month", "year"]).default("month"),
+  returnCard: settingsCardSchema.optional(),
+});
 
 /** POST /restaurants (create). */
 export const restaurantProfileSchema = z.object({

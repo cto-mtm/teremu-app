@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { card, type ToolRow } from "@mtmcya/assistant";
-import { categorySchema, normalizeName, unitSchema } from "@teremu/shared";
+import { categorySchema, normalizeName, settingsCardSchema, unitSchema } from "@teremu/shared";
 import { dishCosts } from "./code/dishCost.js";
 import { priceChanges } from "./code/priceChange.js";
 import { invoiceLines } from "./code/invoiceLines.js";
@@ -502,7 +502,7 @@ export const tools: ToolRow[] = [
       screen: z.enum(["pulse", "scan", "triage", "menu", "pantry", "vendors", "settings", "pricing", "setup"]),
       sheet: z.enum(["grocery", "plan", "add-ingredient", "revenue", "expense", "menu-scan", "new-dish", "new-prep"]).optional(),
       tab: z.enum(["categories", "providers", "preps"]).optional(),
-      card: z.enum(["plan", "location", "listing", "language", "units", "region", "currency", "tax", "labor", "integrations", "email", "team"]).optional(),
+      card: settingsCardSchema.optional(),
     }),
     to: "screen",
   },

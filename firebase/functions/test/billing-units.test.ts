@@ -35,6 +35,12 @@ describe("checkoutSessionParams", () => {
     expect(p.success_url).toBe("https://app.example/settings?billing=success");
     expect(p.cancel_url).toBe("https://app.example/pricing?billing=cancelled");
   });
+
+  it("lands on the Settings card the upgrade came from", () => {
+    const p = checkoutSessionParams({ ...base, existingCustomer: undefined, returnCard: "email" });
+    expect(p.success_url).toBe("https://app.example/settings?billing=success&card=email");
+    expect(p.cancel_url).toBe("https://app.example/pricing?billing=cancelled");
+  });
 });
 
 /**

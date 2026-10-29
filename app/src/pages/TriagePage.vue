@@ -1,5 +1,13 @@
+<script lang="ts">
+import { ref } from 'vue'
+
+// The waiting-invoices banner, once dismissed, stays away for the rest of
+// the app session (module scope: survives leaving Triage, not a reload).
+const waitingDismissed = ref(false)
+</script>
+
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useInvoicesStore } from '../stores/invoices'
@@ -9,6 +17,8 @@ import { reconcileDeliveryNotes, reconciliationCandidates, type ReconciliationRo
 import type { Invoice } from '../lib/types'
 import InvoiceCard from '../components/InvoiceCard.vue'
 import PageLoader from '../components/PageLoader.vue'
+import UpgradeNotice from '../components/UpgradeNotice.vue'
+import { upgradeFrom } from '../lib/plans'
 
 const { t, n, d } = useI18n()
 const store = useInvoicesStore()
@@ -16,6 +26,12 @@ const kitchen = useKitchenStore()
 const auth = useAuthStore()
 const canEdit = computed(() => auth.can('triage', 'edit'))
 const showInfo = ref(false)
+
+// Invoices the scan meter holds in the inbox (GET /me): shown here, where
+// they would land, with the way to let them in. Not on the top plan.
+const emailWaiting = computed(() =>
+  upgradeFrom(auth.profile?.plan ?? 'free') && !waitingDismissed.value ? (auth.profile?.emailWaiting ?? 0) : 0,
+)
 
 // Albarán ↔ factura pairing: automatic from scans, manually resolvable.
 // The pantry prices value unpriced albarán lines, the way Pulse does.
@@ -96,6 +112,14 @@ onUnmounted(() => {
       </div>
       <RouterLink to="/scan" class="btn-primary self-start sm:self-auto">{{ t('pulse.scanCta') }}</RouterLink>
     </div>
+
+    <UpgradeNotice
+      v-if="emailWaiting > 0"
+      reason="email_quota"
+      :title="t('email.paused', emailWaiting)"
+      dismissible
+      @dismiss="waitingDismissed = true"
+    />
 
     <!-- What-is-this explainer modal -->
     <Teleport to="body">

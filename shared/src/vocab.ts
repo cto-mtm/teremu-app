@@ -176,6 +176,13 @@ export const SETUP_LISTING_STATES = ["pending", "done", "skipped"] as const;
 export const setupListingSchema = z.enum(SETUP_LISTING_STATES);
 export type SetupListing = z.infer<typeof setupListingSchema>;
 
+/** The Settings cards a link may land on (`/settings?card=<name>`): the
+ * assistant's openScreen, the email mails, and Stripe Checkout's return
+ * (`returnCard`) all name one. Each is `#card-<name>` in SettingsPage. */
+export const SETTINGS_CARDS = ["plan", "location", "listing", "language", "units", "region", "currency", "tax", "labor", "integrations", "email", "team"] as const;
+export const settingsCardSchema = z.enum(SETTINGS_CARDS);
+export type SettingsCard = z.infer<typeof settingsCardSchema>;
+
 /** What kind of place a restaurant is — from its Google listing, confirmed
  * by the owner. Rendered via i18n `setup.cuisine.<id>`. */
 export const CUISINES = [

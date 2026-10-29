@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth'
 import { PDF_MAX_PAGES, isPdf, renderPdfPages, type RenderedPdf } from '../lib/pdf'
 import { pendingShare, releaseShared } from '../lib/shareTarget'
 import logoWhite from '../assets/logo-white.svg'
+import UpgradeNotice from '../components/UpgradeNotice.vue'
 
 /**
  * Continuous Invoice Capture. Snap → brief flash confirmation → the
@@ -254,12 +255,6 @@ async function sendPdf(file: File): Promise<void> {
   })
 }
 
-/** From the scan-limit CTA — the user is out of scans anyway, so leaving
- * the live camera to see plans loses nothing. */
-function goToPlans(): void {
-  router.push('/pricing')
-}
-
 function snap(): void {
   const el = video.value
   if (!el || !el.videoWidth || qualityIssue.value) return
@@ -428,31 +423,14 @@ function discardShared(): void {
 
       <!-- Scan limit reached: persistent, actionable upgrade CTA -->
       <Transition name="pop">
-        <div
+        <UpgradeNotice
           v-if="limitHit"
-          class="absolute top-20 right-8 left-8 mx-auto max-w-sm space-y-2 rounded-2xl bg-coral px-4 py-3 text-center text-white shadow-lg"
-          role="alert"
-        >
-          <button
-            class="absolute top-1.5 right-2 text-white/70"
-            :aria-label="t('scan.dismissNotice')"
-            @click="limitHit = false"
-          >
-            ✕
-          </button>
-          <p class="text-xs font-bold">
-            {{ atMaxTier ? t('scan.limitReachedMax') : t('scan.limitReached') }}
-          </p>
-          <template v-if="!atMaxTier">
-            <p class="text-[11px] font-medium text-white/85">{{ t('scan.limitUpgrade') }}</p>
-            <button
-              class="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-coral"
-              @click="goToPlans"
-            >
-              {{ t('scan.upgradeCta') }}
-            </button>
-          </template>
-        </div>
+          class="absolute top-20 right-8 left-8 mx-auto max-w-sm"
+          reason="scan_limit"
+          :title="atMaxTier ? t('scan.limitReachedMax') : t('scan.limitReached')"
+          dismissible
+          @dismiss="limitHit = false"
+        />
       </Transition>
 
       <!-- Shared from another app: confirm before it's scanned -->

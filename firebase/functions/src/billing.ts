@@ -7,6 +7,7 @@ import Stripe from "stripe";
 // deep internal type (TS2742) when other modules import them.
 type SecretParam = ReturnType<typeof defineSecret>;
 import { resumeAfterPlanChange } from "./email/planChange.js";
+import type { SettingsCard } from "./models.js";
 import { planOf, type Plan } from "./plan.js";
 
 export const STRIPE_SECRET_KEY: SecretParam = defineSecret("STRIPE_SECRET_KEY");
@@ -71,16 +72,17 @@ export async function createCheckoutSession(args: {
   email: string;
   plan: PaidPlan;
   interval: BillingInterval;
+  returnCard?: SettingsCard;
   origin: string | undefined;
 }): Promise<string> {
-  const { rid, email, plan, interval, origin } = args;
+  const { rid, email, plan, interval, returnCard, origin } = args;
   const db = getFirestore();
   const ref = db.collection("restaurants").doc(rid);
   const existingCustomer = (await ref.get()).get("stripeCustomerId") as string | undefined;
   const base = returnBase(origin);
 
   const session = await stripe().checkout.sessions.create(
-    checkoutSessionParams({ rid, email, price: priceFor(plan, interval), existingCustomer, base }),
+    checkoutSessionParams({ rid, email, price: priceFor(plan, interval), existingCustomer, base, returnCard }),
   );
   if (!session.url) throw new Error("Stripe returned no checkout URL");
   return session.url;
@@ -105,8 +107,11 @@ export function checkoutSessionParams(args: {
   price: string;
   existingCustomer: string | undefined;
   base: string;
+  /** The Settings card to land on afterwards (`?card=`), e.g. the email
+   * card when the owner upgraded from its paywall. */
+  returnCard?: SettingsCard;
 }): Stripe.Checkout.SessionCreateParams {
-  const { rid, email, price, existingCustomer, base } = args;
+  const { rid, email, price, existingCustomer, base, returnCard } = args;
   return {
     mode: "subscription",
     line_items: [{ price, quantity: 1 }],
@@ -121,7 +126,7 @@ export function checkoutSessionParams(args: {
     tax_id_collection: { enabled: true },
     // The webhook is what actually flips the plan; these URLs just bring
     // the user back. ?billing=success lets Settings re-read the profile.
-    success_url: `${base}/settings?billing=success`,
+    success_url: `${base}/settings?billing=success${returnCard ? `&card=${returnCard}` : ""}`,
     cancel_url: `${base}/pricing?billing=cancelled`,
   };
 }

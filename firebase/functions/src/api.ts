@@ -13,6 +13,7 @@ import { can, emailKey, requireMember, type Member } from "./tenancy.js";
 import {
   approveAsExpenseSchema,
   approveInvoiceSchema,
+  checkoutSchema,
   completePosOAuthSchema,
   countSchema,
   recipeUseSchema,
@@ -1454,12 +1455,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
     if (member.role !== "owner") return forbidden(res);
     if (m === "POST" && id === "checkout") {
       if (!billingConfigured()) return json(res, 501, { error: "billing_not_configured" });
-      const { plan, interval } = z
-        .object({
-          plan: z.enum(["pro", "max"]).default("pro"),
-          interval: z.enum(["month", "year"]).default("month"),
-        })
-        .parse(req.body ?? {});
+      const { plan, interval, returnCard } = checkoutSchema.parse(req.body ?? {});
       // Checkout creates a NEW subscription. A restaurant that already
       // has a live one must change plan via the portal, or Stripe would
       // happily bill two subscriptions at once.
@@ -1471,6 +1467,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         email: member.email,
         plan,
         interval,
+        returnCard,
         origin: req.headers.origin,
       });
       return json(res, 200, { url });

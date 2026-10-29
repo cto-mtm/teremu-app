@@ -111,6 +111,9 @@ const es = {
     manage: 'Gestionar suscripción',
     checkoutPlaceholder: 'Los pagos aún no están configurados — aquí se conectará Stripe.',
     devToggle: 'Cambiar plan (dev)',
+    emailWaiting: 'Ninguna factura esperando en tu correo. | 1 factura esperando en tu correo. | {n} facturas esperando en tu correo.',
+    emailWaitingLink: 'Ver correo',
+    paymentProblem: 'Hay un problema con el cobro de tu suscripción. Actualiza tu tarjeta para no perder tu plan.',
   },
   members: {
     title: 'Equipo',
@@ -257,6 +260,9 @@ const en: typeof es = {
     manage: 'Manage subscription',
     checkoutPlaceholder: 'Payments not configured yet — Stripe hooks in here.',
     devToggle: 'Switch plan (dev)',
+    emailWaiting: 'No invoices waiting in your inbox. | 1 invoice waiting in your inbox. | {n} invoices waiting in your inbox.',
+    emailWaitingLink: 'See email',
+    paymentProblem: 'There is a problem charging your subscription. Update your card to keep your plan.',
   },
   members: {
     title: 'Team',

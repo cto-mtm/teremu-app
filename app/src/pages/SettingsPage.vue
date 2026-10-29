@@ -4,7 +4,7 @@ import type { z } from 'zod'
 import { useI18n } from 'vue-i18n'
 import { currencyOptionLabel, currencySymbol, type SupportedLocale } from '../i18n'
 import { legalUrl } from '../lib/legal'
-import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from '@teremu/shared'
+import { CURRENCIES, DEFAULT_CURRENCY, SETTINGS_CARDS, type Currency } from '@teremu/shared'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { apiFetch } from '../lib/api'
@@ -37,19 +37,30 @@ onMounted(() => {
   void execute()
   if (isOwner.value) void loadMembers()
   // Returning from Stripe Checkout — the webhook may have already flipped
-  // the plan; re-read the profile so the UI reflects it, then clean the URL.
+  // the plan; re-read the profile so the UI reflects it, then clean the URL
+  // (only `billing`: a `card` deep link scrolls to its card on its own).
   if (route.query.billing === 'success') {
-    void auth.reloadProfile()
-    void router.replace({ query: {} })
+    void reloadUntilPaid()
+    void router.replace({ query: { ...route.query, billing: undefined } })
   }
 })
+
+/** The webhook can land after the browser does: read the profile again a
+ * couple of times while it still says Free, then stop. The email card
+ * notices the plan change and imports what was waiting. */
+async function reloadUntilPaid(): Promise<void> {
+  for (const wait of [0, 3000, 10_000]) {
+    await new Promise((r) => setTimeout(r, wait))
+    await auth.reloadProfile()
+    if (auth.profile?.plan !== 'free') return
+  }
+}
 
 // Deep link (the assistant's openScreen handoff): /settings?card=tax scrolls
 // to that card and rings it for a moment. The guard has the profile before
 // this page mounts, so the cards are there after one render; owner-only
 // ones are absent for a member (main.ts tells them before navigating).
 const focusedCard = ref<string | null>(null)
-const CARDS = ['plan', 'location', 'listing', 'language', 'units', 'region', 'currency', 'tax', 'labor', 'integrations', 'email', 'team']
 async function focusCard(name: string): Promise<void> {
   // After the render AND the router's own scroll reset (a frame after the
   // route commits), or the reset would undo the scroll.
@@ -61,7 +72,7 @@ async function focusCard(name: string): Promise<void> {
   focusedCard.value = name
   window.setTimeout(() => (focusedCard.value = null), 2500)
 }
-useQueryAction('card', Object.fromEntries(CARDS.map((name) => [name, () => focusCard(name)])))
+useQueryAction('card', Object.fromEntries(SETTINGS_CARDS.map((name) => [name, () => focusCard(name)])))
 const cardClass = (name: string) => (focusedCard.value === name ? 'ring-2 ring-ember-700/40' : '')
 
 // ── Plan & billing ──────────────────────────────────────────────
@@ -347,6 +358,20 @@ async function cancelInvite(emailKey: string): Promise<void> {
           />
         </div>
       </div>
+      <p v-if="auth.profile.emailWaiting > 0" class="text-xs text-coral-600">
+        {{ t('settings.plan.emailWaiting', auth.profile.emailWaiting) }}
+        <a
+          v-if="auth.can('integrations')"
+          href="#card-email"
+          class="font-medium text-ember-700 hover:underline"
+          @click.prevent="focusCard('email')"
+        >
+          {{ t('settings.plan.emailWaitingLink') }}
+        </a>
+      </p>
+      <p v-if="isOwner && auth.profile.billing.status === 'past_due'" class="text-xs font-medium text-coral-600" role="alert">
+        {{ t('settings.plan.paymentProblem') }}
+      </p>
       <div class="flex flex-wrap items-center gap-2">
         <template v-if="isOwner">
           <BaseButton v-if="auth.profile.plan === 'free'" @click="upgrade">

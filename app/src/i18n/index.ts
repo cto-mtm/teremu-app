@@ -12,6 +12,7 @@ import onboarding from './locales/components/onboarding'
 import locations from './locales/components/locations'
 import integrations from './locales/components/integrations'
 import email from './locales/components/email'
+import upgradeNotice from './locales/components/upgradeNotice'
 import pwa from './locales/components/pwa'
 import pulse from './locales/pages/pulse'
 import scan from './locales/pages/scan'
@@ -38,6 +39,7 @@ const messages = {
     locations: locations.es,
     integrations: integrations.es,
     email: email.es,
+    upgradeNotice: upgradeNotice.es,
     pwa: pwa.es,
     pulse: pulse.es,
     scan: scan.es,
@@ -60,6 +62,7 @@ const messages = {
     locations: locations.en,
     integrations: integrations.en,
     email: email.en,
+    upgradeNotice: upgradeNotice.en,
     pwa: pwa.en,
     pulse: pulse.en,
     scan: scan.en,

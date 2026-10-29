@@ -18,6 +18,7 @@ const es = {
     i8: '90 días de historial · 3 etiquetas de gasto',
     i9: 'Soporte de la comunidad',
     i10: 'Asistente: 20 preguntas al mes',
+    i11: 'Facturas por correo: 1 buzón, una revisión al día',
   },
   billing: {
     month: 'Mensual',
@@ -43,6 +44,7 @@ const es = {
     i8: 'Etiquetas de gasto ilimitadas',
     i9: 'Exportación de datos (CSV)',
     i10: 'Soporte prioritario (48 h)',
+    i11: 'Facturas por correo cada 6 horas',
   },
   max: {
     name: 'Max',
@@ -55,6 +57,7 @@ const es = {
     includes: 'Todo lo de Pro, y además:',
     i1: '1.500 escaneos con IA al mes',
     i2: 'Hasta 10 miembros con permisos por área',
+    i3: 'Hasta 3 buzones de correo',
   },
   grupo: {
     note: '¿Varios locales? Grupo llega pronto, con vista consolidada entre locales.',
@@ -64,6 +67,19 @@ const es = {
   upgradeCtaMax: 'Mejorar a Max',
   changeCta: 'Cambiar de plan',
   seePlans: 'Ver planes y funciones',
+  // Why the owner is here (?reason=, from a paywall notice).
+  context: {
+    emailQuota: {
+      pro: 'Las facturas que esperan en tu correo entran hoy con Pro, y tienes 500 documentos al mes. | Tienes 1 factura esperando en tu correo. Con Pro entra hoy y tienes 500 documentos al mes. | Tienes {n} facturas esperando en tu correo. Con Pro entran hoy y tienes 500 documentos al mes.',
+      max: 'Las facturas que esperan en tu correo entran hoy con Max, y tienes 1.500 documentos al mes. | Tienes 1 factura esperando en tu correo. Con Max entra hoy y tienes 1.500 documentos al mes. | Tienes {n} facturas esperando en tu correo. Con Max entran hoy y tienes 1.500 documentos al mes.',
+    },
+    emailFree: 'Las facturas del correo cuentan para tus 25 documentos al mes. Pro sube el límite a 500 y revisa el correo cada 6 horas.',
+    scanLimit: {
+      pro: 'Llegaste a los 25 documentos de este mes. Pro sube el límite a 500.',
+      max: 'Llegaste a los 500 documentos de este mes. Max sube el límite a 1.500.',
+    },
+  },
+  cancelled: 'Pago cancelado. Tu plan no cambió.',
 }
 
 // Typed against es: a missing or extra key here is a compile error.
@@ -87,6 +103,7 @@ const en: typeof es = {
     i8: '90-day history · 3 expense tags',
     i9: 'Community support',
     i10: 'Assistant: 20 questions a month',
+    i11: 'Invoices by email: 1 inbox, checked once a day',
   },
   billing: {
     month: 'Monthly',
@@ -112,6 +129,7 @@ const en: typeof es = {
     i8: 'Unlimited expense tags',
     i9: 'Data export (CSV)',
     i10: 'Priority support (48 h)',
+    i11: 'Invoices by email every 6 hours',
   },
   max: {
     name: 'Max',
@@ -124,6 +142,7 @@ const en: typeof es = {
     includes: 'Everything in Pro, plus:',
     i1: '1,500 AI scans per month',
     i2: 'Up to 10 members with per-area permissions',
+    i3: 'Up to 3 email inboxes',
   },
   grupo: {
     note: 'Multiple locations? Grupo is coming soon, with consolidated cross-location reporting.',
@@ -133,6 +152,18 @@ const en: typeof es = {
   upgradeCtaMax: 'Upgrade to Max',
   changeCta: 'Change plan',
   seePlans: 'See plans and features',
+  context: {
+    emailQuota: {
+      pro: 'The invoices waiting in your inbox come in today with Pro, and you get 500 documents a month. | You have 1 invoice waiting in your inbox. With Pro it comes in today and you get 500 documents a month. | You have {n} invoices waiting in your inbox. With Pro they come in today and you get 500 documents a month.',
+      max: 'The invoices waiting in your inbox come in today with Max, and you get 1,500 documents a month. | You have 1 invoice waiting in your inbox. With Max it comes in today and you get 1,500 documents a month. | You have {n} invoices waiting in your inbox. With Max they come in today and you get 1,500 documents a month.',
+    },
+    emailFree: 'Emailed invoices count toward your 25 documents a month. Pro raises the limit to 500 and checks your inbox every 6 hours.',
+    scanLimit: {
+      pro: 'You reached this month’s 25 documents. Pro raises the limit to 500.',
+      max: 'You reached this month’s 500 documents. Max raises the limit to 1,500.',
+    },
+  },
+  cancelled: 'Payment cancelled. Your plan did not change.',
 }
 
 export default { es, en }
