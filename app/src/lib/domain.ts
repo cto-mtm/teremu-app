@@ -73,6 +73,20 @@ const BAND_FLOOR = 5
 // billed there: the value only has to stay plausible.
 const OVERLAP_STRONG = 0.5
 const OVERLAP_BAND = 0.25
+// A summary factura line repeats the albarán's printed amount: only
+// rounding may separate them.
+const LISTED_BAND = 0.02
+
+/** The vendor key notes and facturas pair on: vendorKey with accents
+ * folded ("JORDÀ" and "JORDA" are one vendor, not "jord") and a trailing
+ * founding year dropped ("Jaume Jordà 2018 SLU" is "Jaume Jordà"). Local
+ * to reconciliation — stored contact keys and /vendors URLs stay on
+ * vendorKey. */
+function reconVendorKey(name: string): string {
+  const tokens = vendorKey(foldName(name)).split(' ')
+  if (tokens.length > 2 && /^(19|20)\d\d$/.test(tokens[tokens.length - 1])) tokens.pop()
+  return tokens.join(' ')
+}
 
 /** Shared line items priced differently on note vs invoice (>2%). */
 function priceDiffs(note: Invoice, invoice: Invoice): ReconciliationRow['diffs'] {
@@ -151,7 +165,10 @@ export function valueNote(note: Invoice, ingredientsById: Map<string, Ingredient
  * lines are near-exact, lines valued at the pantry's last price are
  * estimates. Failing that, the notes whose lines mostly appear on the
  * factura are evidently billed there and are claimed on a loose band;
- * then a single note within band. A note nobody can value attaches to
+ * then the notes a summary factura lists line by line (a line of exactly
+ * the albarán's printed amount); then a single note within band. Vendors
+ * pair on reconVendorKey, so accents and a founding year in the name
+ * do not split one supplier in two. A note nobody can value attaches to
  * the nearest factura the valued notes left unexplained. Facturas are
  * walked in date order and a claimed note is never offered to a later
  * one, so one factura cannot absorb a whole month of deliveries it did
@@ -201,7 +218,7 @@ export function reconcileDeliveryNotes(
       continue
     }
     if (!note.vendorName) continue
-    const key = vendorKey(note.vendorName)
+    const key = reconVendorKey(note.vendorName)
     pool.set(key, [...(pool.get(key) ?? []), note])
   }
 
@@ -221,7 +238,7 @@ export function reconcileDeliveryNotes(
 
   const sortedBills = [...bills].sort(byDate)
   for (const bill of sortedBills) {
-    const key = vendorKey(bill.vendorName!)
+    const key = reconVendorKey(bill.vendorName!)
     const unclaimed = pool.get(key)
     if (!unclaimed?.length) continue
     const billTime = noonMs(bill.invoiceDate)
@@ -244,14 +261,25 @@ export function reconcileDeliveryNotes(
       const loose = Math.max(band(evident, target), target * OVERLAP_BAND)
       if (evident.length && sum(evident) <= target + loose) claimed = evident
       else {
-        // 3. A single note the factura bills on its own.
+        // 3. A summary factura lists each albarán it bills as one line of
+        //    that albarán's amount: a note whose printed value is one of
+        //    those lines is billed there, one note per line, even when
+        //    the factura's other albaranes never reached Teremu.
+        const lines = bill.lineItems.map((l) => l.total).filter((t) => t > 0)
+        const listed = priced.filter((n) => {
+          const { firm, soft } = valued.get(n.id)!
+          const at = soft > 0 ? -1 : lines.findIndex((t) => Math.abs(t - firm) <= LISTED_BAND)
+          if (at >= 0) lines.splice(at, 1)
+          return at >= 0
+        })
+        // 4. A single note the factura bills on its own.
         const single = priced
           .filter((n) => Math.abs(value(n) - target) <= band([n], target))
           .sort((a, b) => Math.abs(value(a) - target) - Math.abs(value(b) - target))[0]
-        claimed = single ? [single] : []
+        claimed = listed.length ? listed : single ? [single] : []
       }
     }
-    // 4. Notes nobody could value: nothing to compare, so they attach to
+    // 5. Notes nobody could value: nothing to compare, so they attach to
     //    a factura the valued notes do not already explain — nearest date
     //    first, one per factura once something else explains part of it.
     const covered = sum(claimed)
@@ -265,7 +293,7 @@ export function reconcileDeliveryNotes(
     pool.set(key, unclaimed.filter((n) => !matchOf.has(n.id)))
   }
 
-  // 5. A vendor's lone leftover note and lone unexplained factura:
+  // 6. A vendor's lone leftover note and lone unexplained factura:
   //    nothing else accounts for either, so they belong together even
   //    when OCR read the money or the names apart — what a person
   //    would assume. Still never a delivery made after the factura, and
@@ -274,7 +302,7 @@ export function reconcileDeliveryNotes(
   for (const [key, remaining] of pool) {
     if (remaining.length !== 1) continue
     const [note] = remaining
-    const lone = sortedBills.filter((b) => vendorKey(b.vendorName!) === key && !explained.has(b.id) && coverable(note, b))
+    const lone = sortedBills.filter((b) => reconVendorKey(b.vendorName!) === key && !explained.has(b.id) && coverable(note, b))
     if (lone.length === 1) matchOf.set(note.id, lone[0])
   }
 
@@ -287,9 +315,9 @@ export function reconcileDeliveryNotes(
     const row: ReconciliationRow = { note, match: null, status: 'unmatched', diffs: [] }
     // The closest same-vendor factura in reach: most shared lines, then
     // the smallest value gap — the one a person would link by hand.
-    const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
+    const noteKey = note.vendorName ? reconVendorKey(note.vendorName) : ''
     const near = sortedBills
-      .filter((b) => noteKey && vendorKey(b.vendorName!) === noteKey && coverable(note, b))
+      .filter((b) => noteKey && reconVendorKey(b.vendorName!) === noteKey && coverable(note, b))
       .map((invoice) => {
         const target = Math.abs(foodSpend(invoice))
         const gapPct = target > 0 ? ((value(note) - target) / target) * 100 : 0
@@ -304,14 +332,14 @@ export function reconcileDeliveryNotes(
 /** Invoices a note could plausibly link to by hand (same vendor first,
  * the matcher's near miss before all). */
 export function reconciliationCandidates(invoices: Invoice[], note: Invoice, nearMissId?: string): Invoice[] {
-  const noteKey = note.vendorName ? vendorKey(note.vendorName) : ''
+  const noteKey = note.vendorName ? reconVendorKey(note.vendorName) : ''
   return invoices
     .filter((i) => isFoodInvoice(i) && i.docType !== 'credit_memo' && i.id !== note.id)
     .sort((a, b) => {
       if (a.id === nearMissId) return -1
       if (b.id === nearMissId) return 1
-      const aSame = a.vendorName && vendorKey(a.vendorName) === noteKey ? 0 : 1
-      const bSame = b.vendorName && vendorKey(b.vendorName) === noteKey ? 0 : 1
+      const aSame = a.vendorName && reconVendorKey(a.vendorName) === noteKey ? 0 : 1
+      const bSame = b.vendorName && reconVendorKey(b.vendorName) === noteKey ? 0 : 1
       if (aSame !== bSame) return aSame - bSame
       return (b.invoiceDate ?? '').localeCompare(a.invoiceDate ?? '')
     })

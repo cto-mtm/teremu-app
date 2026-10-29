@@ -171,6 +171,33 @@ describe('reconcileDeliveryNotes', () => {
     expect(reconcileDeliveryNotes([n, bill, stale])[0].match?.id).toBe(bill.id)
   })
 
+  it('pairs a note with the summary factura line that repeats its amount', () => {
+    // The factura lists albaranes, not goods; its other albaranes never
+    // reached Teremu, and a later factura is also in reach.
+    const n = note({ invoiceDate: '2026-05-06', lineItems: [line('Escarola', 2.18), line('Leche', 28.44)], total: 31.84 })
+    const albaran = (t: number) => ({ ...line('Albarán', t), qty: 1 })
+    const bill = inv({ invoiceDate: '2026-05-31', lineItems: [albaran(1.96), albaran(30.62), albaran(28.81)], total: 68.42 })
+    const june = inv({ invoiceDate: '2026-06-30', lineItems: [albaran(120)], total: 130 })
+    expect(reconcileDeliveryNotes([n, bill, june])[0].match?.id).toBe(bill.id)
+    // One line bills one note: a twin of the same amount stays unmatched.
+    const twin = note({ invoiceDate: '2026-05-08', lineItems: [line('Leche', 30.62)], total: 30.62 })
+    const wider = inv({ invoiceDate: '2026-05-31', lineItems: [albaran(30.62), albaran(50)], total: 88 })
+    expect(reconcileDeliveryNotes([n, twin, wider]).map((r) => r.match?.id ?? null)).toEqual([wider.id, null])
+    // An estimate never matches a printed line exactly by design.
+    const estimated = note({ invoiceDate: '2026-05-06', lineItems: [{ ...line('Leche', 0), ingredientId: 'milk' }], total: 0 })
+    const pantry = new Map([['milk', ing({ id: 'milk', lastUnitPrice: 30.62 })]])
+    expect(reconcileDeliveryNotes([estimated, bill, june], pantry)[0].status).toBe('unmatched')
+  })
+
+  it('pairs vendors across accents and a founding year in the name', () => {
+    const n = note({ vendorName: 'CELLER RIBÉ', invoiceDate: '2026-05-25', lineItems: [line('Garnatxa', 60), line('Ull de llebre', 22)], total: 99 })
+    const bill = inv({ vendorName: 'Celler Ribe 2018 SLU', invoiceDate: '2026-05-30', lineItems: [line('Garnatxa', 60), line('Ull de llebre', 22), line('Cava', 50)], total: 160 })
+    expect(reconcileDeliveryNotes([n, bill])[0].match?.id).toBe(bill.id)
+    // A number that is part of the name still tells vendors apart.
+    const numbered = inv({ vendorName: 'Bar 77', lineItems: [line('Garnatxa', 60), line('Ull de llebre', 22)], total: 82 })
+    expect(reconcileDeliveryNotes([note({ vendorName: 'Bar 78', lineItems: [line('Garnatxa', 60), line('Ull de llebre', 22)], total: 82 }), numbered])[0].status).toBe('unmatched')
+  })
+
   it('compares food value (the lines), not the printed total with tax', () => {
     const n = note({ lineItems: [line('Tomato', 50), line('Onion', 50)], total: 100 })
     const bill = inv({ lineItems: [line('tomato', 50), line('Onion', 50)], total: 121 })
