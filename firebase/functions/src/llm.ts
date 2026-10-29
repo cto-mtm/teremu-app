@@ -6,6 +6,8 @@
  *
  *   functions/.env (or shell / .secret.local in the emulator):
  *     LLM_PROVIDER=gemini      ← one line; presets URL + default model
+ *     LLM_PROVIDER=vertex      ← every call on Gemini on Vertex (no key;
+ *                                GOOGLE_VERTEX_PROJECT, VERTEX_LLM_MODEL)
  *     LLM_MODEL=...            ← optional, override the preset default
  *     LLM_URL=...              ← optional, any other OpenAI-compatible
  *                                chat/completions endpoint
@@ -14,9 +16,9 @@
  * name — it holds whichever provider's key). LLM_API_KEY also works
  * and wins when both are set.
  *
- * One call kind goes elsewhere on purpose: the TEXT calls on email data
- * use `backend: "vertex"` (Gemini on Vertex, no key — see LlmBackend and
- * docs/llm.md §Two backends).
+ * Calls on email data go to Vertex whatever the provider says
+ * (`backend: "vertex"` — Gmail data never reaches a third-party model;
+ * see LlmBackend and docs/llm.md §Two backends).
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -57,20 +59,35 @@ export function llmApiKey(): string | undefined {
   return process.env.LLM_API_KEY || process.env.NVIDIA_API_KEY;
 }
 
-/** The model every call uses (env override, else the provider preset). */
+/** LLM_PROVIDER=vertex: the default backend is Vertex too, so every call
+ * goes there (production since 2026-10-28, set in .env.teremu-app). */
+function defaultOnVertex(): boolean {
+  return process.env.LLM_PROVIDER === "vertex";
+}
+
+/** The model every call uses (env override, else the provider preset;
+ * on the vertex provider, Vertex's model — LLM_MODEL names a model of
+ * the key-based providers). */
 export function llmModel(): string {
+  if (defaultOnVertex()) return vertexModel();
   return process.env.LLM_MODEL || process.env.NVIDIA_MODEL || provider().model;
 }
 
 /**
  * Which backend a call goes to. `default` is the configured provider
- * above (NVIDIA today — invoice OCR on page images). `vertex` is Gemini on
- * Vertex AI in this project, authenticated as the function's own service
- * account (no key; the assistant uses the same project and model): the
- * TEXT calls on email data (classifier, text-layer / body extraction —
- * docs/email-ingestion.md), so Gmail text stays inside Google Cloud.
+ * above (scans, menu scan, recipe drafts) — itself Vertex when
+ * LLM_PROVIDER=vertex. `vertex` is Gemini on Vertex AI in this project,
+ * authenticated as the function's own service account (no key; the
+ * assistant uses the same project and model), and is where every call on
+ * email data goes whatever the provider (docs/email-ingestion.md), so
+ * Gmail data stays inside Google Cloud.
  */
 export type LlmBackend = "default" | "vertex";
+
+/** Where a call really goes once the provider setting is applied. */
+function resolveBackend(backend: LlmBackend = "default"): LlmBackend {
+  return backend === "vertex" || defaultOnVertex() ? "vertex" : "default";
+}
 
 /** Vertex is usable: a project is configured (GOOGLE_VERTEX_PROJECT, the
  * assistant's setting) and the hermetic test flag is off. */
@@ -83,7 +100,7 @@ export function vertexConfigured(): boolean {
  * llmApiKey) to pick their mock. */
 export function llmEnabled(backend: LlmBackend = "default"): boolean {
   if (cassetteMode() === "replay") return true;
-  return backend === "vertex" ? vertexConfigured() : llmApiKey() !== undefined;
+  return resolveBackend(backend) === "vertex" ? vertexConfigured() : llmApiKey() !== undefined;
 }
 
 /** The model Vertex calls use (VERTEX_LLM_MODEL overrides). */
@@ -214,7 +231,7 @@ export async function chatCompletion(
   // A replay miss is a hard failure, never a fallback: silently answering
   // with the random mock is exactly the nondeterminism replay removes.
   if (mode === "replay") throw new Error(`llm cassette miss: ${key}`);
-  const vertex = opts.backend === "vertex";
+  const vertex = resolveBackend(opts.backend) === "vertex";
   if (vertex ? !vertexConfigured() : !llmApiKey()) {
     throw new Error(vertex ? "Vertex not configured" : "no LLM API key"); // callers mock before reaching here
   }

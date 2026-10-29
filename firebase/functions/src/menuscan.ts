@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions/v2";
 import { z } from "zod";
-import { chatCompletion, llmApiKey, llmEnabled, parseModelJson } from "./llm.js";
+import { chatCompletion, llmEnabled, parseModelJson } from "./llm.js";
 import { categorySchema, IngredientIndex, normalizeName, unitSchema, type Category, type Unit } from "./models.js";
 
 /**
@@ -76,8 +76,8 @@ function toResult(raw: string): MenuScanResult {
 }
 
 export async function extractMenu(imageBase64: string): Promise<MenuScanResult> {
-  if (!llmApiKey()) {
-    logger.warn("LLM API key not set — returning mock menu extraction");
+  if (!llmEnabled()) {
+    logger.warn("LLM backend not configured — returning mock menu extraction");
     return mockMenu();
   }
   const raw = await callModel(
@@ -250,8 +250,8 @@ export async function draftRecipes(
   dishes: string[],
   catalog: CatalogEntry[],
 ): Promise<RecipeDraft[]> {
-  if (!llmApiKey()) {
-    logger.warn("LLM API key not set — returning mock recipe drafts");
+  if (!llmEnabled()) {
+    logger.warn("LLM backend not configured — returning mock recipe drafts");
     return mockDrafts(dishes, catalog);
   }
   const prompt = `${DRAFT_PROMPT}\n\nCATALOG:\n${JSON.stringify(

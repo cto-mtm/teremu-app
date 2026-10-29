@@ -8,7 +8,7 @@ import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } fro
 import type { MailMessageMeta } from "../src/email/types";
 import { fetchRetrying } from "../src/email/gmail";
 import { acceptThreshold } from "../src/email/stats";
-import { llmEnabled, vertexConfigured } from "../src/llm";
+import { llmEnabled, llmModel, vertexConfigured } from "../src/llm";
 import { extractInvoice } from "../src/ocr";
 
 // Email ingestion building blocks that need no emulator: PDF reading,
@@ -205,6 +205,24 @@ describe("LLM routing: email on Vertex, scanned page images on the default provi
       const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toContain("aiplatform.googleapis.com/v1/projects/teremu-app/");
       expect((init.headers as Record<string, string>).Authorization).toBe("Bearer vertex-token");
+    });
+
+    it("LLM_PROVIDER=vertex sends scans there too, with Vertex's model, no key needed", async () => {
+      delete process.env.TEREMU_TEST_MOCKS;
+      delete process.env.LLM_API_KEY;
+      delete process.env.NVIDIA_API_KEY;
+      process.env.LLM_PROVIDER = "vertex";
+      process.env.LLM_MODEL = "nvidia/some-model"; // the key-based providers' setting: ignored here
+      process.env.GOOGLE_VERTEX_PROJECT = "teremu-app";
+      expect(llmEnabled()).toBe(true);
+      expect(llmModel()).toBe("google/gemini-3.5-flash-lite");
+      vi.spyOn(GoogleAuth.prototype, "getAccessToken").mockResolvedValue("vertex-token");
+      const fetch = fetchStub();
+      vi.stubGlobal("fetch", fetch);
+      await extractInvoice(["aGk="], {}); // a scan: the default backend
+      const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toContain("aiplatform.googleapis.com/v1/projects/teremu-app/");
+      expect(JSON.parse(String(init.body)).model).toBe("google/gemini-3.5-flash-lite");
     });
 
     it("fall back to the offline mock, not the default provider, without Vertex", async () => {
