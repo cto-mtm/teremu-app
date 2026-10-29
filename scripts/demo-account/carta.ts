@@ -107,7 +107,7 @@ export const CANON: Canon[] = [
   c(/veri/i, "Agua Veri 50 cl (caja 24)", "beverage", "water", box),
   c(/malavella/i, "Malavella con gas 30 cl (caja 24)", "beverage", "water", box),
   c(/aigua/i, "Agua mineral 50 cl", "beverage", "water"),
-  c(/agua de (coco|gogo)|coco/i, "Agua de coco", "beverage", "juice"),
+  c(/agua de (coco|gogo)|coco/i, "Agua de coco", "beverage", "juice", each),
   c(/coca cola zero/i, "Coca-Cola Zero lata", "beverage", "soft_drinks"),
   c(/coca cola/i, "Coca-Cola lata", "beverage", "soft_drinks"),
   c(/nestea/i, "Nestea limón", "beverage", "soft_drinks"),
@@ -333,7 +333,7 @@ export const MENU: Dish[] = [
     r("Patata agria", 200, "g"),
     r("Aceite de oliva", 40, "ml"),
     r("Sal en escamas", 2, "g"),
-    r("Mostaza de Dijon", 10, "g"),
+    r("Mostaza de Dijon", 10, "g", 0.05),
   ]),
   // ── Postres ────────────────────────────────────────────────────────
   dish(POSTRES, "Arroz crujiente con helado de vainilla", 7, 75, 3, [
@@ -359,12 +359,12 @@ export const MENU: Dish[] = [
   ]),
   dish(POSTRES, "Yogur griego, miel y brevas", 6.5, 78, 2, [
     r("Yogur griego", 150, "g", 0.15),
-    r("Miel de mil flores", 20, "g"),
+    r("Miel de mil flores", 15, "g", 0.03),
     r("Brevas", 80, "g"),
   ]),
   // ── Vinos y bebidas ────────────────────────────────────────────────
   dish(BEBER, "Copa de vino natural", 5.5, 66, 12, [r("Viladomat Aragó Petit Viladomat 2024", 0.2, "each")]),
   dish(BEBER, "Caña Estrella Damm", 3, 48, 14, [r("Estrella Damm (barril 30 L)", 0.0115, "each")]),
   dish(BEBER, "Agua Font d'Or 50 cl", 2.5, 75, 6, [r("Agua Font d'Or 50 cl (caja 24)", 1 / 24, "case")]),
-  dish(BEBER, "Agua de coco", 3.5, 70, 2, [r("Agua de coco", 330, "ml", 1)]),
+  dish(BEBER, "Agua de coco", 3.5, 66, 2, [r("Agua de coco", 330, "ml", 1)]),
 ];
