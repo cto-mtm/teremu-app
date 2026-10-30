@@ -101,7 +101,9 @@ const clickable = computed(
               ? t('triage.failedUnreadable')
               : invoice.error === 'not_a_document'
                 ? t('triage.failedNotDocument')
-                : t('triage.failedProcessing')
+                : invoice.error === 'fetch_failed'
+                  ? t('triage.failedFetch')
+                  : t('triage.failedProcessing')
           }}
         </template>
       </div>

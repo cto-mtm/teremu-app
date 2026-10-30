@@ -21,7 +21,7 @@ import type { Currency, InvoiceDoc } from "../models.js";
 import { ingestAccepted, INGEST_PER_TICK } from "./ingest.js";
 import { acceptThreshold } from "./stats.js";
 import { connectionRef, db, ingests, withAccess, type ConnectionDoc, type SyncState } from "./store.js";
-import { MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageMeta } from "./types.js";
+import { MailFetchError, MailNotFoundError, type MailAccess, type MailAdapter, type MailMessageMeta } from "./types.js";
 
 /**
  * The sync engine (docs/email-ingestion.md §Sync engine, §AI
@@ -95,6 +95,9 @@ export interface IngestDoc {
   vendorHint?: string | null;
   amountHint?: AmountHint | null;
   classifyAttempts?: number;
+  /** Failed fetches of the part being ingested — rate limits excepted;
+   * cleared when the part is done (ingest.ts MAX_FETCH_ATTEMPTS). */
+  fetchAttempts?: number;
   /** Ingest progress: the parts (attachment ids, or "body") already turned
    * into invoices, and those invoices — a message resumes where it stopped. */
   done?: string[];
@@ -142,6 +145,8 @@ export interface SyncResult {
   paused: boolean;
   /** Held messages let go this run (they waited past 31 days). */
   expired: number;
+  /** Documents the provider would not hand over this run — in Triage as failed. */
+  failed: number;
 }
 
 /** Take the inbox for one sync, or refuse (409) if another holds it.
@@ -231,7 +236,7 @@ async function runSync(
 ): Promise<SyncResult> {
   const rid = conn.rid!;
   const epoch = conn.epoch;
-  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, ingested: 0, backfillDone: false, paused: false, expired: 0 };
+  const result: SyncResult = { listed: 0, waiting: 0, classified: 0, accepted: 0, ingested: 0, backfillDone: false, paused: false, expired: 0, failed: 0 };
   let sync: SyncState = conn.sync ?? {
     backfillFrom: now - BACKFILL_DAYS * DAY_MS,
     backfillCursor: null,
@@ -309,6 +314,7 @@ async function runSync(
   result.ingested = ingest.created;
   result.paused = ingest.paused;
   result.expired = ingest.expired;
+  result.failed = ingest.failed;
 
   await saveSync(connId, epoch, { sync, lastSyncAt: now, ingestPending: ingest.pending });
   return result;
@@ -334,9 +340,14 @@ async function processMessage(
   try {
     meta = await adapter.getMessageMeta(access, messageId);
   } catch (err) {
-    if (!(err instanceof MailNotFoundError)) throw err;
+    // A transient failure fails the tick (it is the mailbox, not this
+    // message); a permanent one is this message's alone — record it, or
+    // the listing would stop on it every tick.
+    const permanent = err instanceof MailFetchError && !err.transient;
+    if (!(err instanceof MailNotFoundError) && !permanent) throw err;
+    if (err instanceof MailFetchError) logger.warn("email message fetch failed", { rid, connId, messageId, status: err.status, reason: err.reason });
     // Deleted since History named it: record it, so it is never asked for again.
-    await ref.create({ connectionId: connId, messageId, internalDate: 0, verdict: "gone", kind: null, epoch, createdAt: now, updatedAt: now } satisfies IngestDoc).catch(alreadyRecorded);
+    await ref.create({ connectionId: connId, messageId, internalDate: 0, verdict: permanent ? "failed" : "gone", kind: null, epoch, createdAt: now, updatedAt: now } satisfies IngestDoc).catch(alreadyRecorded);
     return null;
   }
   const base = { connectionId: connId, messageId, internalDate: meta.internalDate, epoch, createdAt: now, updatedAt: now };
@@ -412,68 +423,88 @@ async function classifyCandidates(
   let classified = 0;
   let acceptedCount = 0;
   let settled = 0; // classified, gone, or given up on — no longer waiting
-  for (let i = 0; i < docs.length; i += CLASSIFY_BATCH) {
-    const batch = docs.slice(i, i + CLASSIFY_BATCH);
-    const inputs: ClassifyInput[] = [];
-    const gone = new Set<string>();
-    for (const d of batch) {
-      const ing = d.data() as IngestDoc;
-      const input: ClassifyInput = {
-        id: d.id,
-        from: ing.from ?? "",
-        subject: ing.subject ?? "",
-        snippet: ing.snippet ?? "",
-        attachments: (ing.attachments ?? []).map((a) => ({ filename: a.filename, sizeBytes: a.sizeBytes })),
-      };
-      if (ing.kind === "body") {
-        try {
-          input.bodyPreview = bodyText(await adapter.getMessageBody(access, ing.messageId)).slice(0, BODY_PREVIEW_CHARS);
-        } catch (err) {
-          if (!(err instanceof MailNotFoundError)) throw err;
-          gone.add(d.id); // deleted since stage 0 — nothing left to judge
+  let accounted = 0; // reserved units already kept or given back
+  try {
+    for (let i = 0; i < docs.length; i += CLASSIFY_BATCH) {
+      const batch = docs.slice(i, i + CLASSIFY_BATCH);
+      const inputs: ClassifyInput[] = [];
+      const gone = new Set<string>();
+      const unfetchable = new Set<string>();
+      for (const d of batch) {
+        const ing = d.data() as IngestDoc;
+        const input: ClassifyInput = {
+          id: d.id,
+          from: ing.from ?? "",
+          subject: ing.subject ?? "",
+          snippet: ing.snippet ?? "",
+          attachments: (ing.attachments ?? []).map((a) => ({ filename: a.filename, sizeBytes: a.sizeBytes })),
+        };
+        if (ing.kind === "body") {
+          try {
+            input.bodyPreview = bodyText(await adapter.getMessageBody(access, ing.messageId)).slice(0, BODY_PREVIEW_CHARS);
+          } catch (err) {
+            if (err instanceof MailFetchError && !err.transient) {
+              logger.warn("email body fetch failed", { rid, connId, messageId: ing.messageId, status: err.status, reason: err.reason });
+              unfetchable.add(d.id); // this message's alone: never judged, never blocks the rest
+              continue;
+            }
+            if (!(err instanceof MailNotFoundError)) throw err;
+            gone.add(d.id); // deleted since stage 0 — nothing left to judge
+            continue;
+          }
+        }
+        inputs.push(input);
+      }
+
+      let verdicts: Awaited<ReturnType<typeof classifyMessages>>;
+      try {
+        verdicts = await classifyMessages(inputs);
+      } catch (err) {
+        logger.warn("email-classify batch failed; retried next tick", { rid, connId, err });
+        verdicts = new Map();
+      }
+
+      const write = db().batch();
+      const now = Date.now();
+      for (const d of batch) {
+        if (gone.has(d.id)) {
+          settled += 1;
+          write.update(d.ref, { verdict: "gone", snippet: FieldValue.delete(), updatedAt: now });
           continue;
         }
+        if (unfetchable.has(d.id)) {
+          settled += 1;
+          write.update(d.ref, { verdict: "failed", snippet: FieldValue.delete(), updatedAt: now });
+          continue;
+        }
+        const v = verdicts.get(d.id);
+        if (v) {
+          const yes = accepted(v, threshold);
+          classified += 1;
+          settled += 1;
+          if (yes) acceptedCount += 1;
+          write.update(d.ref, {
+            verdict: yes ? "accepted" : "classified_no",
+            confidence: v.confidence,
+            // A rejected message keeps no preview and no hints (data minimization).
+            ...(yes ? { vendorHint: v.vendor, amountHint: v.amount } : { snippet: FieldValue.delete() }),
+            updatedAt: now,
+          });
+        } else {
+          const attempts = ((d.get("classifyAttempts") as number | undefined) ?? 0) + 1;
+          if (attempts >= MAX_CLASSIFY_ATTEMPTS) settled += 1;
+          write.update(d.ref, { classifyAttempts: attempts, ...(attempts >= MAX_CLASSIFY_ATTEMPTS ? { verdict: "failed" } : {}), updatedAt: now });
+        }
       }
-      inputs.push(input);
+      await write.commit();
+      accounted += batch.length;
+      await returnDaily(rid, "emailClassify", batch.filter((d) => !verdicts.has(d.id)).length);
     }
-
-    let verdicts: Awaited<ReturnType<typeof classifyMessages>>;
-    try {
-      verdicts = await classifyMessages(inputs);
-    } catch (err) {
-      logger.warn("email-classify batch failed; retried next tick", { rid, connId, err });
-      verdicts = new Map();
-    }
-
-    const write = db().batch();
-    const now = Date.now();
-    for (const d of batch) {
-      if (gone.has(d.id)) {
-        settled += 1;
-        write.update(d.ref, { verdict: "gone", snippet: FieldValue.delete(), updatedAt: now });
-        continue;
-      }
-      const v = verdicts.get(d.id);
-      if (v) {
-        const yes = accepted(v, threshold);
-        classified += 1;
-        settled += 1;
-        if (yes) acceptedCount += 1;
-        write.update(d.ref, {
-          verdict: yes ? "accepted" : "classified_no",
-          confidence: v.confidence,
-          // A rejected message keeps no preview and no hints (data minimization).
-          ...(yes ? { vendorHint: v.vendor, amountHint: v.amount } : { snippet: FieldValue.delete() }),
-          updatedAt: now,
-        });
-      } else {
-        const attempts = ((d.get("classifyAttempts") as number | undefined) ?? 0) + 1;
-        if (attempts >= MAX_CLASSIFY_ATTEMPTS) settled += 1;
-        write.update(d.ref, { classifyAttempts: attempts, ...(attempts >= MAX_CLASSIFY_ATTEMPTS ? { verdict: "failed" } : {}), updatedAt: now });
-      }
-    }
-    await write.commit();
-    await returnDaily(rid, "emailClassify", batch.filter((d) => !verdicts.has(d.id)).length);
+  } catch (err) {
+    // A transient fetch failure ends the tick: what was reserved and not
+    // yet judged goes back, or the day's cap shrinks for nothing.
+    await returnDaily(rid, "emailClassify", docs.length - accounted);
+    throw err;
   }
   return { classified, accepted: acceptedCount, waiting: waiting.size - settled };
 }

@@ -123,3 +123,21 @@ export class MailAuthError extends Error {
     this.name = "MailAuthError";
   }
 }
+
+/** Any other provider failure. `transient` = a later try may succeed (a
+ * rate limit, a 5xx, the network); otherwise the same request never will.
+ * `rateLimited` = the provider is throttling the whole mailbox, not
+ * refusing this request (implies `transient`). `status` 0 = no response at
+ * all; `reason` is the provider's own word. */
+export class MailFetchError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly reason: string | null = null,
+    readonly transient = false,
+    readonly rateLimited = false,
+  ) {
+    super(message);
+    this.name = "MailFetchError";
+  }
+}

@@ -1,6 +1,7 @@
 import { defineSecret } from "firebase-functions/params";
 import {
   MailAuthError,
+  MailFetchError,
   MailNotFoundError,
   type MailAccess,
   type MailAdapter,
@@ -45,32 +46,56 @@ const clientSecret = (): string => process.env.GMAIL_CLIENT_SECRET ?? "";
  * client id, so a secret alone never switches local dev onto Google. */
 const isConfigured = (): boolean => Boolean(clientId() && clientSecret());
 
-export class GmailError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+/** A Google failure; `reason` is Google's, when the body named one. */
+export class GmailError extends MailFetchError {}
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const ATTEMPTS = 3;
 const MAX_WAIT_MS = 10_000;
 
 /**
- * fetch with Google's rate limits in mind: a 429 or 5xx (and a network
- * error) is retried with exponential backoff — 1 s, then 2 s — honouring
- * Retry-After, capped at 10 s. Gmail's per-user burst limit is the usual
- * cause; the engine already pages one mailbox sequentially. Each attempt
- * gets its own 20 s timeout. The last response (or error) is returned.
+ * What a 403 means. Gmail answers its rate limits with 403, not 429
+ * (https://developers.google.com/workspace/gmail/api/guides/handle-errors),
+ * and also uses 403 for a missing scope and for policy refusals. Both the
+ * legacy `error.errors[].reason` and the newer `error.details[]` ErrorInfo
+ * reason are read.
+ */
+const RATE_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED"]);
+const AUTH_REASONS = new Set(["insufficientPermissions", "authError", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"]);
+
+export type ForbiddenKind = "rate" | "auth" | "other";
+
+/** Google's error reason from a JSON error body, or null. */
+export function errorReason(body: unknown): string | null {
+  const error = (body as { error?: { errors?: { reason?: unknown }[]; details?: { reason?: unknown }[] } } | null)?.error;
+  const reason = error?.errors?.[0]?.reason ?? error?.details?.find((d) => typeof d?.reason === "string")?.reason;
+  return typeof reason === "string" ? reason : null;
+}
+
+export function classifyForbidden(reason: string | null): ForbiddenKind {
+  if (reason && RATE_REASONS.has(reason)) return "rate";
+  if (reason && AUTH_REASONS.has(reason)) return "auth";
+  return "other";
+}
+
+/** A 403's reason, read from a clone (the caller still owns the body). */
+const forbiddenReason = async (res: Response): Promise<string | null> => errorReason(await res.clone().json().catch(() => null));
+
+/**
+ * fetch with Google's rate limits in mind: a 429, a rate-limit 403 or a
+ * 5xx (and a network error) is retried with exponential backoff — 1 s,
+ * then 2 s — honouring Retry-After, capped at 10 s. Gmail's per-user burst
+ * limit is the usual cause; the engine already pages one mailbox
+ * sequentially. Each attempt gets its own 20 s timeout. The last response
+ * (or error) is returned.
  */
 export async function fetchRetrying(url: string, init: Omit<RequestInit, "signal">, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Response> {
   for (let attempt = 1; ; attempt += 1) {
     let res: Response | null = null;
     try {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
-      if (!RETRYABLE.has(res.status) || attempt === ATTEMPTS) return res;
+      const retryable = RETRYABLE.has(res.status) || (res.status === 403 && classifyForbidden(await forbiddenReason(res)) === "rate");
+      if (!retryable || attempt === ATTEMPTS) return res;
     } catch (err) {
       if (attempt === ATTEMPTS) throw err;
     }
@@ -92,19 +117,33 @@ async function token(params: Record<string, string>): Promise<Record<string, unk
   return body;
 }
 
-/** An authenticated Gmail API GET. A 401 right after a refresh means the
- * grant is gone; a 404 means the message is gone (or, for History, the
- * cursor has expired). */
+/** An authenticated Gmail API GET. A 401 right after a refresh, or a 403
+ * for a missing scope, means the grant is gone; a 404 means the message
+ * is gone (or, for History, the cursor has expired). Anything else is a
+ * GmailError that says whether a later try could succeed. */
 async function call<T>(access: MailAccess, path: string, query: Record<string, string | string[]> = {}): Promise<T> {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) for (const one of [v].flat()) q.append(k, one);
   const qs = q.toString();
-  const res = await fetchRetrying(`${API}${path}${qs ? `?${qs}` : ""}`, {
-    headers: { Authorization: `Bearer ${access.accessToken}` },
-  });
+  let res: Response;
+  try {
+    res = await fetchRetrying(`${API}${path}${qs ? `?${qs}` : ""}`, {
+      headers: { Authorization: `Bearer ${access.accessToken}` },
+    });
+  } catch (err) {
+    // Network error or timeout on every attempt.
+    throw new GmailError(0, `Gmail ${path} → ${String(err)}`, null, true);
+  }
   if (res.status === 401) throw new MailAuthError();
   if (res.status === 404) throw new MailNotFoundError();
-  if (!res.ok) throw new GmailError(res.status, `Gmail ${path} → ${res.status}`);
+  if (!res.ok) {
+    const reason = errorReason(await res.json().catch(() => null));
+    const kind = res.status === 403 ? classifyForbidden(reason) : null;
+    if (kind === "auth") throw new MailAuthError();
+    const rateLimited = res.status === 429 || kind === "rate";
+    const transient = RETRYABLE.has(res.status) || rateLimited;
+    throw new GmailError(res.status, `Gmail ${path} → ${res.status}${reason ? ` ${reason}` : ""}`, reason, transient, rateLimited);
+  }
   return (await res.json()) as T;
 }
 

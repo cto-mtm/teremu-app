@@ -691,6 +691,10 @@ async function route(req: Request, res: Response): Promise<unknown> {
         const snap = await ref.get();
         if (!snap.exists) return json(res, 404, { error: "invoice not found" });
         const inv = snap.data() as InvoiceDoc;
+        // An emailed document that was never stored (fetch_failed, or an
+        // unreadable file) has nothing to re-read: no extraction call.
+        const pages = (inv.imagePaths?.length ? inv.imagePaths : [inv.imagePath]).filter(Boolean);
+        if (!pages.length && !inv.email?.textPath) return json(res, 409, { error: "nothing_to_reprocess" });
         // A multi-page capture abandoned mid-upload retries with the
         // pages it has — clearing pagesPending unsticks it for good.
         // A fresh read may see a different currency, so every money
@@ -709,7 +713,7 @@ async function route(req: Request, res: Response): Promise<unknown> {
         // page images are Gmail data and go to Vertex, not the default
         // provider (Limited Use) — the `email` field marks the source.
         if (inv.email?.textPath && inv.extraction !== "vision") await processInvoiceText(rid, id, inv.email.textPath);
-        else await processInvoiceImage(rid, id, inv.imagePaths ?? [inv.imagePath], inv.email ? "vertex" : "default");
+        else await processInvoiceImage(rid, id, pages, inv.email ? "vertex" : "default");
         return json(res, 200, invoiceView(await ref.get()));
       }
       if (m === "GET" && action === "text") {

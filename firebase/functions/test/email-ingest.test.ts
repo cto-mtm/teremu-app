@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFirestore } from "firebase-admin/firestore";
-import { FAKE_PDFS } from "../src/email/fake";
+import { FAKE_PDFS, fakeMailAdapter } from "../src/email/fake";
+import { MAX_FETCH_ATTEMPTS } from "../src/email/ingest";
 import { inspectPdf } from "../src/email/pdf";
+import { syncInbox } from "../src/email/sync";
+import { MailFetchError } from "../src/email/types";
 import { extractInvoiceFromText } from "../src/ocr";
+import { getPlanInfo } from "../src/plan";
 import { api, clearFirestore, get, makeOwner, makeUserToken, seedMember, setPlan, uniqueId, type Owner } from "./helpers";
 import { NO_PERMS } from "./pos-helpers";
 
@@ -360,5 +364,136 @@ describe("email ingest: review signals", () => {
     const emailed = (await byMessage(o)).get("002")![0];
     expect(emailed.warnings).toContain("possible_duplicate");
     expect((await twin.get()).get("warnings")).toContain("possible_duplicate");
+  });
+});
+
+describe("email ingest: what the mailbox won't hand over (docs/email-ingestion.md §Readings)", () => {
+  // In-process, as the scheduler runs it (email-sync.test.ts): the engine
+  // reads this process's fake inbox, so a spy can make one fetch fail.
+  const tick = async () => syncInbox(CONN, (await getPlanInfo(o.rid)).limits);
+  const permanent = () => new MailFetchError(403, "refused", "domainPolicy");
+  const transient = () => new MailFetchError(503, "unavailable", null, true);
+  const rateLimited = () => new MailFetchError(403, "throttled", "userRateLimitExceeded", true, true);
+
+  const realAttachment = fakeMailAdapter.getAttachment.bind(fakeMailAdapter);
+  const failAttachment = (id: string, err: () => MailFetchError) =>
+    vi.spyOn(fakeMailAdapter, "getAttachment").mockImplementation(async (access, messageId, attachmentId) => {
+      if (attachmentId === id) throw err();
+      return realAttachment(access, messageId, attachmentId);
+    });
+  const realBody = fakeMailAdapter.getMessageBody.bind(fakeMailAdapter);
+  const failBody = (n: string, err: () => MailFetchError) =>
+    vi.spyOn(fakeMailAdapter, "getMessageBody").mockImplementation(async (access, id) => {
+      if (id === `fake-msg-${n}`) throw err();
+      return realBody(access, id);
+    });
+  const PHOTO = "fake-msg-005-att-0";
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a part refused for good becomes a free fetch_failed doc, and reprocess has nothing to re-read", async () => {
+    await connect(o);
+    failAttachment(PHOTO, permanent);
+    expect(await tick()).toMatchObject({ failed: 1 });
+
+    const inv = await byMessage(o);
+    const photo = inv.get("005")!;
+    expect(photo).toEqual([expect.objectContaining({ status: "failed", error: "fetch_failed", extraction: "vision", imagePaths: [] })]);
+    expect(photo[0].scanPeriod).toBeUndefined();
+    expect(await scanCount(o.rid)).toBe(5); // a clean run's 6, less the photo
+    expect((await ingest(o.rid, "005").get()).get("verdict")).toBe("ingested");
+    expect(inv.get("002")).toEqual([expect.objectContaining({ status: "needs_review" })]); // the pass went on
+
+    const re = await api(`/invoices/${photo[0].id}/reprocess`, { token: o.token, method: "POST" });
+    expect(re.status).toBe(409);
+    expect(re.body.error).toBe("nothing_to_reprocess");
+    expect((await db().doc(`restaurants/${o.rid}/invoices/${photo[0].id}`).get()).get("error")).toBe("fetch_failed");
+  });
+
+  it("a body refused for good is stored as a vision doc: Triage never asks for text that was never stored", async () => {
+    await connect(o);
+    // Allowlisted, so stage 1 never reads the body: only ingest does.
+    await db().doc(`restaurants/${o.rid}/emailSenders/billing@cloudtpv.test`).set({ kinds: ["body"] });
+    failBody("006", permanent);
+    await tick();
+    const body = (await byMessage(o)).get("006")!;
+    expect(body).toEqual([expect.objectContaining({ status: "failed", error: "fetch_failed", extraction: "vision" })]);
+  });
+
+  it("a transient failure ends the pass and retries next tick, then gives the part up", async () => {
+    await connect(o);
+    failAttachment(PHOTO, transient);
+    for (let n = 1; n < MAX_FETCH_ATTEMPTS; n += 1) {
+      expect(await tick()).toMatchObject({ failed: 0 });
+      expect((await ingest(o.rid, "005").get()).data()).toMatchObject({ verdict: "accepted", fetchAttempts: n });
+      expect((await inbox().get()).get("ingestPending")).toBe(true);
+    }
+    // Newest first: what is older than the photo waited behind it.
+    expect((await byMessage(o)).has("004")).toBe(false);
+
+    expect(await tick()).toMatchObject({ failed: 1 });
+    const inv = await byMessage(o);
+    expect(inv.get("005")).toEqual([expect.objectContaining({ status: "failed", error: "fetch_failed" })]);
+    expect(inv.get("002")).toEqual([expect.objectContaining({ status: "needs_review" })]);
+    const rec = (await ingest(o.rid, "005").get()).data()!;
+    expect(rec.verdict).toBe("ingested");
+    expect(rec.fetchAttempts).toBeUndefined();
+  });
+
+  it("a rate limit is the mailbox's: the part waits without spending an attempt", async () => {
+    await connect(o);
+    failAttachment(PHOTO, rateLimited);
+    for (let n = 0; n <= MAX_FETCH_ATTEMPTS; n += 1) expect(await tick()).toMatchObject({ failed: 0 });
+    const rec = (await ingest(o.rid, "005").get()).data()!;
+    expect(rec.verdict).toBe("accepted");
+    expect(rec.fetchAttempts).toBeUndefined();
+    expect((await byMessage(o)).has("005")).toBe(false);
+  });
+
+  it("counts attempts per part: one that came through starts the next afresh", async () => {
+    await connect(o);
+    const [albaran, factura] = ["fake-msg-004-att-0", "fake-msg-004-att-1"];
+    const spy = failAttachment(albaran, transient);
+    for (let n = 1; n < MAX_FETCH_ATTEMPTS; n += 1) await tick();
+    expect((await ingest(o.rid, "004").get()).get("fetchAttempts")).toBe(MAX_FETCH_ATTEMPTS - 1);
+
+    spy.mockRestore();
+    failAttachment(factura, transient);
+    // The factura's first failure, not the message's third: it waits.
+    expect(await tick()).toMatchObject({ failed: 0 });
+    expect((await ingest(o.rid, "004").get()).data()).toMatchObject({ verdict: "accepted", done: [albaran], fetchAttempts: 1 });
+  });
+
+  it("stage 0: a message refused for good is recorded failed and the listing goes on", async () => {
+    await connect(o);
+    const realMeta = fakeMailAdapter.getMessageMeta.bind(fakeMailAdapter);
+    vi.spyOn(fakeMailAdapter, "getMessageMeta").mockImplementation(async (access, id) => {
+      if (id === "fake-msg-012") throw permanent();
+      return realMeta(access, id);
+    });
+    expect(await tick()).toMatchObject({ backfillDone: true });
+    expect((await ingest(o.rid, "012").get()).get("verdict")).toBe("failed");
+    expect((await ingest(o.rid, "002").get()).get("verdict")).toBe("ingested");
+  });
+
+  it("stage 1: a body refused for good is recorded failed; the other candidates are judged", async () => {
+    await connect(o);
+    failBody("006", permanent);
+    await tick();
+    expect((await ingest(o.rid, "006").get()).get("verdict")).toBe("failed");
+    expect((await byMessage(o)).has("006")).toBe(false);
+    expect((await ingest(o.rid, "010").get()).get("verdict")).toBe("classified_no");
+    expect((await ingest(o.rid, "002").get()).get("verdict")).toBe("ingested");
+  });
+
+  it("stage 1: a transient failure ends the tick and gives back the day's unused classify reservation", async () => {
+    await connect(o);
+    failBody("006", transient);
+    await expect(tick()).rejects.toBeInstanceOf(MailFetchError);
+    expect((await ingest(o.rid, "006").get()).get("verdict")).toBe("candidate");
+    const day = new Date().toISOString().slice(0, 10);
+    const used = (await db().doc(`restaurants/${o.rid}/dailyUsage/${day}`).get()).get("emailClassify") as number | undefined;
+    expect(used ?? 0).toBe(0);
   });
 });

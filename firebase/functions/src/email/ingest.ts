@@ -1,3 +1,4 @@
+import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { emailQuotaEmail, mailKeyHash, ownerRecipient, sendMail } from "../mail.js";
@@ -10,7 +11,7 @@ import { clearQuotaPause } from "./planChange.js";
 import { connectionRef, db, ingests, type ConnectionDoc } from "./store.js";
 import { PREVIEW_FIELDS, waitingItems, type IngestDoc } from "./sync.js";
 import { recordOutcome } from "./stats.js";
-import { MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js";
+import { MailFetchError, MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js";
 
 /**
  * Accepted messages → invoice documents (docs/email-ingestion.md
@@ -23,6 +24,12 @@ import { MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js
  * write pages/text + the doc → extract. An unreadable file becomes a
  * `failed / unreadable` doc and costs nothing. A refused scan pauses the
  * inbox: the message waits (`deferred_quota`) instead of being dropped.
+ *
+ * A part the provider will not hand over becomes a `failed / fetch_failed`
+ * doc, also free, so the owner sees the invoice exists. A transient refusal
+ * (rate limit, 5xx, network) ends this pass and the message tries again
+ * next tick — at most MAX_FETCH_ATTEMPTS times, so one bad message can
+ * never hold the inbox for good.
  */
 
 /** Documents created per scheduler tick and inbox (each one is an
@@ -30,20 +37,25 @@ import { MailNotFoundError, type MailAccess, type MailAdapter } from "./types.js
 export const INGEST_PER_TICK = 20;
 /** A deferred message older than this when its turn comes is let go. */
 const DEFERRED_MAX_AGE_MS = 31 * 86_400_000;
+/** Ticks a message's transient fetch failures are retried before its part is given up on. */
+export const MAX_FETCH_ATTEMPTS = 3;
 
 type Prepared =
   | { kind: "document"; extraction: ExtractionPath; pages: Buffer[]; text: string | null; truncated: boolean }
   | { kind: "unreadable" }
+  | { kind: "fetch_failed" }
   | { kind: "empty" };
 
 export interface IngestResult {
   created: number;
-  /** Accepted messages still waiting for a later tick (the cap, not the quota). */
+  /** Accepted messages still waiting for a later tick (the cap, a transient fetch failure — not the quota). */
   pending: boolean;
   /** The meter holds this inbox's invoices after this pass. */
   paused: boolean;
   /** Deferred messages let go this pass (waited past 31 days). */
   expired: number;
+  /** Parts the provider would not hand over, now `fetch_failed` docs in Triage. */
+  failed: number;
 }
 
 /** Turn this inbox's accepted (and, when the meter allows, deferred)
@@ -68,7 +80,7 @@ export async function ingestAccepted(
     .where("internalDate", "<", Date.now() - DEFERRED_MAX_AGE_MS)
     .get();
   for (const d of expired.docs) await d.ref.update({ verdict: "expired_quota", ...PREVIEW_FIELDS, updatedAt: Date.now() });
-  const result: IngestResult = { created: 0, pending: false, paused: conn.quotaPausedPeriod === period, expired: expired.size };
+  const result: IngestResult = { created: 0, pending: false, paused: conn.quotaPausedPeriod === period, expired: expired.size, failed: 0 };
 
   // A pause from a month that is over lifts whether or not anything is
   // left to import — otherwise the stamp keeps the inbox due every hour.
@@ -88,6 +100,8 @@ export async function ingestAccepted(
     const parts = ing.kind === "body" ? ["body"] : (ing.attachments ?? []).map((a) => a.attachmentId);
     const done = new Set(ing.done ?? []);
     const invoiceIds = [...(ing.invoiceIds ?? [])];
+    // Failed fetches of the part being worked on; the next part starts afresh.
+    let fetchAttempts = ing.fetchAttempts ?? 0;
 
     for (const part of parts.filter((p) => !done.has(p))) {
       if (result.created >= maxDocs) {
@@ -98,9 +112,23 @@ export async function ingestAccepted(
       try {
         prepared = await prepare(ing, part, access, adapter);
       } catch (err) {
-        if (!(err instanceof MailNotFoundError)) throw err;
-        await msg.ref.update({ verdict: "gone", ...PREVIEW_FIELDS, updatedAt: Date.now() });
-        break;
+        if (err instanceof MailNotFoundError) {
+          await msg.ref.update({ verdict: "gone", ...PREVIEW_FIELDS, updatedAt: Date.now() });
+          break;
+        }
+        if (!(err instanceof MailFetchError)) throw err;
+        // A rate limit is the mailbox's, not this part's: it costs no attempt.
+        const attempts = fetchAttempts + (err.rateLimited ? 0 : 1);
+        // Ids, status and reason only — never tokens or content.
+        logger.warn("email part fetch failed", { rid, connId, messageId: ing.messageId, part, status: err.status, reason: err.reason, transient: err.transient, attempts });
+        if (err.transient && attempts < MAX_FETCH_ATTEMPTS) {
+          // Stop here; the next tick resumes at this same part.
+          if (attempts !== fetchAttempts) await msg.ref.update({ fetchAttempts: attempts, updatedAt: Date.now() });
+          result.pending = true;
+          return result;
+        }
+        prepared = { kind: "fetch_failed" };
+        result.failed += 1;
       }
       if (prepared.kind === "document") {
         const quota = await consumeScan(rid);
@@ -128,7 +156,9 @@ export async function ingestAccepted(
         result.created += 1;
       }
       done.add(part);
-      await msg.ref.update({ done: [...done], invoiceIds, updatedAt: Date.now() });
+      const reset = fetchAttempts > 0 ? { fetchAttempts: FieldValue.delete() } : {};
+      fetchAttempts = 0;
+      await msg.ref.update({ done: [...done], invoiceIds, ...reset, updatedAt: Date.now() });
     }
     if (parts.every((p) => done.has(p))) {
       // In Triage now: the message record keeps no preview and no hints.
@@ -197,9 +227,10 @@ async function createInvoice(
     source: "email" as const,
   };
 
-  if (prepared.kind === "unreadable") {
-    // Surfaces in Triage instead of vanishing; no scan was spent.
-    const doc: InvoiceDoc = { ...base, status: "failed", error: "unreadable", imagePath: "", imagePaths: [], warnings: [], extraction: "vision", email };
+  if (prepared.kind === "unreadable" || prepared.kind === "fetch_failed") {
+    // Surfaces in Triage instead of vanishing; no scan was spent. Nothing
+    // is stored, so it is never a "body" doc (Triage would ask for its text).
+    const doc: InvoiceDoc = { ...base, status: "failed", error: prepared.kind, imagePath: "", imagePaths: [], warnings: [], extraction: "vision", email };
     await ref.set(doc);
     return ref.id;
   }

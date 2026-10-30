@@ -6,8 +6,8 @@ import { candidateAttachments, mockAmount, mockVerdict, senderAddress, senderNam
 import { emailQuotaEmail, sendersPhrase } from "../src/mail";
 import { FAKE_PDFS } from "../src/email/fake";
 import { inspectPdf, normalizeImage, UnreadableDocumentError, rasterizePdf } from "../src/email/pdf";
-import type { MailMessageMeta } from "../src/email/types";
-import { fetchRetrying } from "../src/email/gmail";
+import { MailAuthError, MailFetchError, type MailMessageMeta } from "../src/email/types";
+import { classifyForbidden, errorReason, fetchRetrying, gmail } from "../src/email/gmail";
 import { acceptThreshold } from "../src/email/stats";
 import { emailImportOffered } from "../src/email/index";
 import { llmEnabled, llmModel, vertexConfigured } from "../src/llm";
@@ -166,6 +166,76 @@ describe("Gmail backoff (fetchRetrying)", () => {
     const calls = respond([404]);
     expect((await fetchRetrying("https://gmail.example/x", {}, async () => undefined)).status).toBe(404);
     expect(calls).toHaveLength(1);
+  });
+
+  const forbidden = (reason: string) => JSON.stringify({ error: { code: 403, errors: [{ reason }], message: "x" } });
+  const respondBodies = (replies: [number, string][]) => {
+    const calls: number[] = [];
+    globalThis.fetch = (async () => {
+      const [status, body] = replies[Math.min(calls.length, replies.length - 1)];
+      calls.push(status);
+      return new Response(body, { status });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  it("retries Gmail's rate-limit 403 like a 429, and the body is still readable after", async () => {
+    const calls = respondBodies([[403, forbidden("userRateLimitExceeded")], [200, '{"ok":true}']]);
+    const res = await fetchRetrying("https://gmail.example/x", {}, async () => undefined);
+    expect(calls).toEqual([403, 200]);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("does not retry a scope or policy 403", async () => {
+    const calls = respondBodies([[403, forbidden("insufficientPermissions")]]);
+    const res = await fetchRetrying("https://gmail.example/x", {}, async () => undefined);
+    expect(calls).toHaveLength(1);
+    expect(errorReason(await res.json())).toBe("insufficientPermissions");
+  });
+});
+
+describe("Gmail 403 classification", () => {
+  it("reads the legacy errors[] reason and the newer ErrorInfo reason", () => {
+    expect(errorReason({ error: { errors: [{ reason: "rateLimitExceeded" }] } })).toBe("rateLimitExceeded");
+    expect(errorReason({ error: { details: [{ "@type": "x" }, { reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } })).toBe("ACCESS_TOKEN_SCOPE_INSUFFICIENT");
+    expect(errorReason(null)).toBeNull();
+    expect(errorReason({ error: "invalid" })).toBeNull();
+  });
+
+  it("splits rate limits, auth and everything else", () => {
+    for (const r of ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "RATE_LIMIT_EXCEEDED"]) expect(classifyForbidden(r)).toBe("rate");
+    for (const r of ["insufficientPermissions", "authError", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"]) expect(classifyForbidden(r)).toBe("auth");
+    for (const r of ["domainPolicy", "forbidden", null]) expect(classifyForbidden(r)).toBe("other");
+  });
+
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  // Retry-After of 1 ms keeps the backoff out of the test's time.
+  const refuse = (status: number, reason: string) => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: { code: status, errors: [{ reason }] } }), { status, headers: { "retry-after": "0.001" } })) as typeof fetch;
+  };
+  const access = { accessToken: "t", expiresAt: Date.now() + 60_000 };
+  const fetchAttachment = () => gmail.adapter.getAttachment(access, "m1", "a1");
+
+  it("a missing scope is an auth failure (the inbox goes to needs_reauth)", async () => {
+    refuse(403, "insufficientPermissions");
+    await expect(fetchAttachment()).rejects.toBeInstanceOf(MailAuthError);
+  });
+
+  it("a policy 403 is permanent and names Google's reason", async () => {
+    refuse(403, "domainPolicy");
+    const err = await fetchAttachment().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MailFetchError);
+    expect(err).toMatchObject({ status: 403, reason: "domainPolicy", transient: false, rateLimited: false });
+  });
+
+  it("a rate limit that outlasts the backoff is transient and the mailbox's", async () => {
+    refuse(403, "userRateLimitExceeded");
+    const err = await fetchAttachment().catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 403, reason: "userRateLimitExceeded", transient: true, rateLimited: true });
   });
 });
 

@@ -210,6 +210,11 @@ const pageCount = computed(() => invoice.value?.imagePaths?.length ?? 1)
 // An invoice written in an email body has no image: Triage shows the
 // text the model read instead (GET /invoices/:id/text).
 const isBody = computed(() => invoice.value?.extraction === 'body')
+// Mirrors the reprocess route: stored pages, or an email body's text.
+const rereadable = computed(() => {
+  const inv = invoice.value
+  return Boolean(inv && (isBody.value || inv.imagePath || inv.imagePaths?.length))
+})
 const bodyText = ref<string | null>(null)
 watch(
   [invoiceId, isBody],
@@ -482,10 +487,13 @@ async function approve(): Promise<void> {
             ? t('triage.failedUnreadable')
             : invoice.error === 'not_a_document'
               ? t('triage.failedNotDocument')
-              : t('triage.failedProcessing')
+              : invoice.error === 'fetch_failed'
+                ? t('triage.failedFetch')
+                : t('triage.failedProcessing')
         }}
       </span>
-      <BaseButton v-if="canEdit" variant="ghost" :disabled="retrying" @click="retry">
+      <!-- An emailed file that was never stored has nothing to re-read. -->
+      <BaseButton v-if="canEdit && rereadable" variant="ghost" :disabled="retrying" @click="retry">
         {{ retrying ? t('common.loading') : t('common.action.retry') }}
       </BaseButton>
     </div>
