@@ -57,5 +57,10 @@
     "tsx": "^4.23.15",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "^1.14.0"
+    }
   }
 }
