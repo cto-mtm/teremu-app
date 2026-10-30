@@ -6,6 +6,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import { REGION } from "./region.js";
+import { setSecurityHeaders } from "./helpers/securityHeaders.js";
 import {
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
@@ -97,6 +98,7 @@ export const stripeWebhook = onRequest(
  * provider's dashboard. No secrets: it never touches credentials.
  */
 export const posOauthCallback = onRequest({ region: REGION }, async (req, res) => {
+  setSecurityHeaders(res);
   try {
     res.redirect(302, await oauthReturnUrl(req.query));
   } catch (err) {
@@ -113,6 +115,7 @@ export const posOauthCallback = onRequest({ region: REGION }, async (req, res) =
  * EMAIL_OAUTH_REDIRECT_URL) on the Google OAuth client. No secrets.
  */
 export const emailOauthCallback = onRequest({ region: REGION }, async (req, res) => {
+  setSecurityHeaders(res);
   try {
     res.redirect(302, await emailOauthReturnUrl(req.query));
   } catch (err) {

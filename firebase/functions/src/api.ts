@@ -8,6 +8,7 @@ import { getStorage } from "firebase-admin/storage";
 import type { Response } from "express";
 import { ZodError } from "zod";
 import { handleCors } from "./helpers/cors.js";
+import { setSecurityHeaders } from "./helpers/securityHeaders.js";
 import { REGION } from "./region.js";
 import { can, emailKey, requireMember, type Member } from "./tenancy.js";
 import {
@@ -1527,6 +1528,7 @@ export const api = onRequest(
     timeoutSeconds: 120,
   },
   async (req, res) => {
+    setSecurityHeaders(res);
     if (handleCors(req, res)) return;
     try {
       await route(req, res);
