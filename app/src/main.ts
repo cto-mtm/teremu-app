@@ -13,6 +13,7 @@ import { idToken } from './lib/firebase'
 import { getActiveRid } from './lib/activeLocation'
 import { screenDenied } from './lib/assistantAccess'
 import { useAuthStore } from './stores/auth'
+import { reloadOnce } from './lib/reloadOnce'
 import './assets/css/main.css'
 import './assistant/theme.css'
 
@@ -53,6 +54,15 @@ app.use(assistant, {
   },
 })
 app.mount('#app')
+
+// A lazy chunk that no longer exists — a deploy since this tab loaded —
+// fires this before the import rejects. Reload onto the new files once;
+// if that just happened, let the error through (the router shows
+// PageLoadError with a Retry button). The entry itself is covered by
+// Hosting serving index.html with no-cache (firebase/firebase.json).
+window.addEventListener('vite:preloadError', (event) => {
+  if (reloadOnce()) event.preventDefault()
+})
 
 // Android hardware back button, no-op in the browser.
 registerNative(router)
