@@ -673,5 +673,12 @@ async function cancelInvite(emailKey: string): Promise<void> {
         <span v-else-if="error" class="chip-up">{{ error }}</span>
       </div>
     </div>
+
+    <!-- Sign out: always the last thing on the page -->
+    <div class="card">
+      <BaseButton variant="ghost" @click="auth.signOut">
+        {{ t('auth.signOut') }}
+      </BaseButton>
+    </div>
   </div>
 </template>

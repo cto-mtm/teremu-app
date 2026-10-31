@@ -7,7 +7,7 @@
  * from the parent's classes on this component.
  */
 defineProps<{
-  name: 'pulse' | 'scan' | 'triage' | 'menu' | 'pantry' | 'vendors' | 'settings' | 'assistant' | 'signout'
+  name: 'pulse' | 'scan' | 'triage' | 'menu' | 'pantry' | 'vendors' | 'settings' | 'assistant'
 }>()
 </script>
 
@@ -38,9 +38,6 @@ defineProps<{
     <template v-else-if="name === 'assistant'">
       <path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z" />
       <path d="M19 15l.6 1.9L21.5 17.5l-1.9.6L19 20l-.6-1.9L16.5 17.5l1.9-.6L19 15Z" />
-    </template>
-    <template v-else-if="name === 'signout'">
-      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
     </template>
     <template v-else>
       <!-- settings -->

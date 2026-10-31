@@ -192,10 +192,12 @@ watch(
       </svg>
     </button>
 
-    <!-- Backdrop for the mobile drawer -->
+    <!-- Backdrop for the mobile drawer. Drawer + backdrop sit above the
+         mobile FABs (z-55) and the install card (z-56), below the launcher
+         and the assistant (z-60). -->
     <div
       v-if="navOpen"
-      class="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm md:hidden"
+      class="fixed inset-0 z-[57] bg-black/30 backdrop-blur-sm md:hidden"
       aria-hidden="true"
       @click="navOpen = false"
     />
@@ -203,7 +205,7 @@ watch(
     <!-- Left nav: off-canvas drawer on mobile, sticky sidebar from md up -->
     <aside
       v-if="authStore.user && !bare"
-      class="pt-safe pb-safe glass fixed inset-y-0 left-0 z-50 flex h-screen w-[280px] max-w-[85vw] shrink-0 flex-col border-y-0 border-l-0 transition-transform duration-200 md:sticky md:top-0 md:z-auto md:w-56 md:max-w-none md:translate-x-0"
+      class="pt-safe pb-safe glass fixed inset-y-0 left-0 z-[58] flex h-screen w-[280px] max-w-[85vw] shrink-0 flex-col border-y-0 border-l-0 transition-transform duration-200 md:sticky md:top-0 md:z-auto md:w-56 md:max-w-none md:translate-x-0"
       :class="navOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'"
     >
       <div class="flex items-center justify-between px-4 py-4 md:px-3 md:py-5">
@@ -265,14 +267,6 @@ watch(
           <NavIcon name="settings" class="h-5 w-5 shrink-0" />
           <span>{{ t('shell.settings') }}</span>
         </RouterLink>
-        <button
-          class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-smoke hover:bg-gray-50 hover:text-ink md:py-2.5"
-          :aria-label="t('auth.signOut')"
-          @click="authStore.signOut"
-        >
-          <NavIcon name="signout" class="h-5 w-5 shrink-0" />
-          <span>{{ t('auth.signOut') }}</span>
-        </button>
       </div>
     </aside>
 

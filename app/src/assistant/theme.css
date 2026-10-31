@@ -17,6 +17,6 @@
   --assistant-font-heading: var(--font-display);
   --assistant-radius: 1rem;
   --assistant-radius-sm: 0.75rem;
-  /* Above the sidebar/nav (z-40) and the mobile FAB (z-55). */
+  /* Above the mobile FABs (z-55) and the mobile nav drawer (z-58). */
   --assistant-z: 60;
 }
