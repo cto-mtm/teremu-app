@@ -14,8 +14,12 @@ import { getActiveRid } from './lib/activeLocation'
 import { screenDenied } from './lib/assistantAccess'
 import { useAuthStore } from './stores/auth'
 import { reloadOnce } from './lib/reloadOnce'
+import { captureSignupSource } from './lib/signupSource'
 import './assets/css/main.css'
 import './assistant/theme.css'
+
+// `?src=` from the website's CTA, before the router can rewrite the URL.
+captureSignupSource()
 
 const app = createApp(App)
 app.use(createPinia())

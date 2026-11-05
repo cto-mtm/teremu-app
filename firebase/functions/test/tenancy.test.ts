@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { getFirestore } from "firebase-admin/firestore";
 import type { Perms } from "../src/models";
 import {
+  api,
   clearFirestore,
   get,
   makeOwner,
@@ -65,6 +67,29 @@ describe("tenancy & permissions", () => {
     expect(body.usage).toEqual({ scans: 0, scanLimit: 25 });
     expect(typeof body.restaurantId).toBe("string");
     expect(body.restaurantId.length).toBeGreaterThan(0);
+  });
+
+  it("stamps signupSource from X-Signup-Source only on the bootstrap call, lower-cased and validated", async () => {
+    const uid = `owner-${uniqueId()}`;
+    const email = `${uid}@example.com`;
+    const token = await makeUserToken({ uid, email });
+
+    const first = await api("/me", { token, headers: { "X-Signup-Source": " Instagram:Q4-2026 " } });
+    expect(first.status).toBe(200);
+    const restRef = getFirestore().collection("restaurants").doc(first.body.restaurantId);
+    expect((await restRef.get()).get("signupSource")).toBe("instagram:q4-2026");
+
+    // A later request with a different value never rewrites attribution.
+    const again = await api("/me", { token, headers: { "X-Signup-Source": "partner:acme" } });
+    expect(again.status).toBe(200);
+    expect((await restRef.get()).get("signupSource")).toBe("instagram:q4-2026");
+
+    // Garbage is dropped, not rejected: the restaurant is created without the field.
+    const uid2 = `owner-${uniqueId()}`;
+    const token2 = await makeUserToken({ uid: uid2, email: `${uid2}@example.com` });
+    const bad = await api("/me", { token: token2, headers: { "X-Signup-Source": "<script>alert(1)</script>" } });
+    expect(bad.status).toBe(200);
+    expect((await getFirestore().collection("restaurants").doc(bad.body.restaurantId).get()).get("signupSource")).toBeUndefined();
   });
 
   it("attaches a pending invite on first sign-in with exactly the granted perms", async () => {

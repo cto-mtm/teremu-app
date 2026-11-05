@@ -83,8 +83,11 @@ async function attachPendingInvites(uid: string, email: string): Promise<number>
   return invitesSnap.size;
 }
 
-/** Bootstrap a fresh solo restaurant with this user as owner (free plan). */
-async function bootstrapRestaurant(uid: string, email: string): Promise<void> {
+/** Bootstrap a fresh solo restaurant with this user as owner (free plan).
+ * `signupSource` is the attribution slug the client captured from `?src=`
+ * on its first landing (a marketing campaign id, a partner code); written
+ * once here, never updated, and only ever counted (metrics-plan.md §6). */
+async function bootstrapRestaurant(uid: string, email: string, signupSource?: string): Promise<void> {
   const db = getFirestore();
   const restRef = db.collection("restaurants").doc();
   const addedAt = Date.now();
@@ -98,6 +101,7 @@ async function bootstrapRestaurant(uid: string, email: string): Promise<void> {
     plan: "free",
     scanPeriod: null,
     scanCount: 0,
+    ...(signupSource ? { signupSource } : {}),
     ...newRestaurantSetupFields(),
   });
   batch.set(restRef.collection("members").doc(uid), member);
@@ -109,7 +113,7 @@ async function bootstrapRestaurant(uid: string, email: string): Promise<void> {
 /** Ensure the caller has at least one membership: attach any pending
  * invites, and bootstrap a solo restaurant only for truly new users
  * (zero memberships AND zero invites attached just now). */
-async function ensureMemberships(uid: string, email: string): Promise<void> {
+async function ensureMemberships(uid: string, email: string, signupSource?: string): Promise<void> {
   const db = getFirestore();
   // Both reads in one round trip — this runs on EVERY request. Bootstrap
   // only a caller with no membership who wasn't just invited somewhere.
@@ -118,7 +122,7 @@ async function ensureMemberships(uid: string, email: string): Promise<void> {
     db.collection(`users/${uid}/memberships`).limit(1).get(),
   ]);
   if (memberships.empty && attached === 0) {
-    await bootstrapRestaurant(uid, email);
+    await bootstrapRestaurant(uid, email, signupSource);
   }
 }
 
@@ -155,12 +159,13 @@ export async function resolveMember(
   uid: string,
   email: string,
   requestedRid?: string,
+  signupSource?: string,
 ): Promise<Member> {
   // The requested location's member doc loads alongside the sign-in
   // bookkeeping: for an existing member (every request after the first)
   // that is one round trip instead of three.
   const [, member] = await Promise.all([
-    ensureMemberships(uid, email),
+    ensureMemberships(uid, email, signupSource),
     requestedRid ? loadMember(uid, email, requestedRid) : Promise.resolve(null),
   ]);
   if (member) return member;
@@ -182,6 +187,20 @@ const headerRid = (req: Request): string | undefined => {
   return typeof rid === "string" && rid.length > 0 ? rid : undefined;
 };
 
+/** Attribution slugs: a campaign id, a partner code, `instagram:bio`…
+ * Lower-case, short, no spaces; anything else is dropped, never rejected. */
+const SIGNUP_SOURCE_RE = /^[a-z0-9][a-z0-9:._-]{0,63}$/;
+
+/** The `X-Signup-Source` header the client sends on its first `/me` after
+ * landing with `?src=`; only used when that call bootstraps a restaurant. */
+const headerSignupSource = (req: Request): string | undefined => {
+  const value = req.headers["x-signup-source"];
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") return undefined;
+  const slug = raw.trim().toLowerCase();
+  return SIGNUP_SOURCE_RE.test(slug) ? slug : undefined;
+};
+
 /**
  * Verify the bearer token and resolve the caller's active membership.
  * null = not authenticated (no token, or one that doesn't verify) → 401.
@@ -200,7 +219,7 @@ export async function requireMember(req: Request): Promise<Member | null> {
     return null;
   }
   const email = decoded.email ?? `${decoded.uid}@no-email.local`;
-  return resolveMember(decoded.uid, email, headerRid(req));
+  return resolveMember(decoded.uid, email, headerRid(req), headerSignupSource(req));
 }
 
 const RANK: Record<PermLevel, number> = { none: 0, read: 1, edit: 2 };

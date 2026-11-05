@@ -4,6 +4,7 @@ import type { User } from 'firebase/auth'
 import { signInWithEmail, signInWithGoogle, signOut as fbSignOut, watchAuth } from '../lib/firebase'
 import { apiFetch } from '../lib/api'
 import { setActiveRid } from '../lib/activeLocation'
+import { clearSignupSource, getSignupSource } from '../lib/signupSource'
 import { DEFAULT_CURRENCY, meSchema } from '../lib/schemas'
 import { detectRegion } from '../lib/regions'
 import { currentLocale, setCurrency, setLocale, type SupportedLocale } from '../i18n'
@@ -68,12 +69,15 @@ export const useAuthStore = defineStore('auth', () => {
   })
 
   async function loadProfile(): Promise<void> {
-    const res = await apiFetch<Me>('/me', undefined, meSchema)
+    // First sign-in may bootstrap a restaurant: attribute it from `?src=`.
+    const src = getSignupSource()
+    const res = await apiFetch<Me>('/me', src ? { headers: { 'X-Signup-Source': src } } : undefined, meSchema)
     if (import.meta.env.DEV) {
       console.warn('[auth] loadProfile result:', res.ok ? 'ok' : `FAILED: ${res.error}`)
     }
     profile.value = res.ok ? res.data : null
     if (res.ok) {
+      if (src) clearSignupSource()
       // Cold start (no/stale X-Restaurant-Id) resolves a default
       // server-side — persist whatever actually got applied so the
       // next request carries the right header.

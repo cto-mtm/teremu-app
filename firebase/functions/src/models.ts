@@ -432,6 +432,9 @@ export const restaurantDocSchema = z.object({
   plan: z.enum(["free", "pro", "max"]),
   scanPeriod: z.string().nullable(),
   scanCount: z.number(),
+  // Where the signup came from (`?src=` captured by the client, written once
+  // at bootstrap by tenancy.ts). Only ever counted; absent = direct/unknown.
+  signupSource: z.string().optional(),
   // Kitchen labor per hour, in the restaurant's currency — feeds prep-time
   // plate costing in the app. Absent/null = labor costing off.
   laborRatePerHour: z.number().min(0).nullable().optional(),
